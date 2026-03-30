@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python runPRyM_julia.py)",
+      "Bash(python -c \"import julia; print\\(''julia package available''\\)\")",
+      "Bash(python -c \"import diffeqpy; print\\(''diffeqpy available''\\)\")",
+      "Bash(brew install:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(brew link:*)",
+      "Bash(julia:*)",
+      "Bash(NUMBA_DISABLE_JIT=1 python runPRyM_julia.py 2>&1)",
+      "Bash(/Users/ttait/opt/anaconda3/julia_env/pyjuliapkg/install/bin/julia --version 2>&1)",
+      "Bash(PYTHON_JULIAPKG_EXE=/usr/local/bin/julia python -c \"\nimport os\nos.environ['PYTHON_JULIAPKG_EXE'] = '/usr/local/bin/julia'\nimport juliapkg\nprint\\('project:', juliapkg.project\\(\\)\\)\nprint\\('executable:', juliapkg.executable\\(\\)\\)\n\" 2>&1)",
+      "Bash(gh auth:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

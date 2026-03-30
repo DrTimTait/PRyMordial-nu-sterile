@@ -1,0 +1,46 @@
+PRyMordial-legacy Reference Results (Julia Solvers)
+=====================================================
+Generated: 2026-03-30
+Flags: compute_bckg_flag=True, compute_nTOp_flag=True, compute_nTOp_thermal_flag=False
+       julia_flag=True, aTid_flag=True, numba_flag=False
+Julia: 1.12.5 (Homebrew), PyJulia 0.6.2, diffeqpy 1.2.0
+
+Small Network (12 reactions) -- Julia call
+-------------------------------------------
+Neff                   =  3.044375146380884
+Omega_nu h2 x 10^6    =  5.699382130406115
+Sum_m_nu/Omega_nu h2   =  93.03391450038684
+YP (CMB)               =  0.2455566963764376
+YP (BBN)               =  0.24688258343686112
+D/H x 10^5            =  2.46131354680117
+He3/H x 10^5          =  1.0428239687339973
+Li7/H x 10^10         =  5.4734164825439375
+Running time: 7.83 seconds
+
+Large Network (63 reactions) -- Julia call
+-------------------------------------------
+Neff                   =  3.044375146380884
+Omega_nu h2 x 10^6    =  5.699382130406115
+Sum_m_nu/Omega_nu h2   =  93.03391450038684
+YP (CMB)               =  0.24555244009217708
+YP (BBN)               =  0.24687831169114324
+D/H x 10^5            =  2.455741065716205
+He3/H x 10^5          =  1.040597969886246
+Li7/H x 10^10         =  5.446343192064972
+Running time: 9.04 seconds
+
+Notes:
+- Julia solvers (Tsit5, RadauIIA5, FBDF, CVODE_BDF) used for ODE integration
+- Numba disabled to avoid LLVM library conflict between numba's llvmlite and Julia
+- Small differences vs Python scipy results are expected due to different ODE solver
+  algorithms and tolerances
+- Thermodynamic quantities (Neff, Omega_nu, Sum_m_nu) differ slightly from Python run
+  because the thermodynamic background ODE is also solved with Julia (Tsit5 vs scipy)
+
+Comparison with Python scipy results:
+                        Python (small)    Julia (small)    Python (large)    Julia (large)
+Neff                    3.04439           3.04438          3.04439           3.04438
+YP (BBN)                0.24688           0.24688          0.24689           0.24688
+D/H x 10^5             2.4578            2.4613           2.4571            2.4557
+He3/H x 10^5           1.0418            1.0428           1.0413            1.0406
+Li7/H x 10^10          5.489             5.473            5.436             5.446

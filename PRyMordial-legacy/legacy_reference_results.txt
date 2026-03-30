@@ -1,0 +1,36 @@
+PRyMordial-legacy Reference Results
+====================================
+Generated: 2026-03-30
+Flags: compute_bckg_flag=True, compute_nTOp_flag=True, compute_nTOp_thermal_flag=False
+       julia_flag=False, aTid_flag=True
+
+Small Network (12 reactions)
+----------------------------
+Neff                   =  3.044388520277019
+Omega_nu h2 x 10^6    =  5.699407167709663
+Sum_m_nu/Omega_nu h2   =  93.03360797908101
+YP (CMB)               =  0.2455541217304131
+YP (BBN)               =  0.24687999943816072
+D/H x 10^5            =  2.4578304365226527
+He3/H x 10^5          =  1.0417516674401104
+Li7/H x 10^10         =  5.488628019821845
+Running time: 18.92 seconds
+
+Large Network (63 reactions)
+----------------------------
+Neff                   =  3.044388520277019
+Omega_nu h2 x 10^6    =  5.699407167709663
+Sum_m_nu/Omega_nu h2   =  93.03360797908101
+YP (CMB)               =  0.24556093057156567
+YP (BBN)               =  0.24688683301294695
+D/H x 10^5            =  2.457142452629672
+He3/H x 10^5          =  1.0413400150801702
+Li7/H x 10^10         =  5.4364678434287885
+Running time: 10.89 seconds
+
+Notes:
+- Julia solvers not tested (julia/diffeqpy not installed)
+- Thermodynamic quantities (Neff, Omega_nu, Sum_m_nu) are identical between networks
+  (as expected -- they depend only on the thermodynamic background, not the nuclear network)
+- Small differences in YP, D/H, He3/H, Li7/H between networks reflect the additional
+  reactions in the 63-reaction network

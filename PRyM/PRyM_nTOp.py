@@ -28,6 +28,9 @@ def RecomputeWeakRates(Tvec):
     ##########################
     # Change of units to CGS #
     ##########################
+    if(PRyMini.general_nu_flag and not PRyMini.compute_nTOp_flag):
+        raise ValueError("general_nu_flag requires compute_nTOp_flag = True: "
+                         "pre-stored thermal weak rates are invalid for general distributions.")
     if(PRyMini.verbose_flag):
         print("Switch from natural units to CGS.")
     if(PRyMini.compute_nTOp_flag):

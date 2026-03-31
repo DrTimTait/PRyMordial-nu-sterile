@@ -66,6 +66,16 @@ aTid_flag = True
 compute_bckg_flag = True
 # Set flag to True to save background thermodynamics, if recomputed
 save_bckg_flag = False
+# Set flag to True for general (non-thermal) neutrino distribution functions
+# When True, the user supplies f_nue(p,Tg), f_nuebar(p,Tg), f_numu(p,Tg), f_numubar(p,Tg)
+# via the PRyMclass constructor. The code computes rho_nu, P_nu, weak rates, and collision
+# terms by numerically integrating over these distributions instead of using analytic T^4 formulas.
+general_nu_flag = False
+# Quadrature for numerical integration over general distributions
+# Uses dimensionless variable x = p/Tg with GL quadrature on [0, x_max_nu]
+# so the grid automatically scales with temperature.
+x_max_nu = 30. # dimensionless, upper limit p/Tg for quadrature
+p_npoints_nu = 200 # number of Gauss-Legendre quadrature points
 # Set flag to True for some new species with temperature T_NP
 NP_thermo_flag = False
 # Set the initial temperature of the NP species via relation TNP_start = xi_NP*T_start

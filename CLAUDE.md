@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PRyMordial is a Python package for precise Big Bang Nucleosynthesis (BBN) computations within and beyond the Standard Model. It predicts primordial light element abundances (Yp, D/H, He3/H, Li7/H) and related cosmological observables (Neff, etc.). Reference paper: [arXiv:2307.07061](https://arxiv.org/abs/2307.07061).
+PRyMordial is a Python package for precise Big Bang Nucleosynthesis (BBN) computations within and beyond the Standard Model. It predicts primordial light element abundances (Yp, D/H, He3/H, Li7/H) and related cosmological observables (Neff, etc.). Reference paper: [arXiv:2307.07061](https://arxiv.org/abs/2307.07061).  
+
+This project is to modify PRyMordial to allow for an option to describe general (non-thermal) neutrino distribution functions self-consistently, as an alternate option to the current implementation which hard-codes results based on thermal distributions described by the neutrino temperature.  The Sabti-BBN.pdf reference contains an illustration of how to implement general distribution functions for a specific case of HNL decays.  We don't want their specific case, but we do want to follow their general implementation of the neutrino distribution functions.
+
+The PRyMordial-legacy results are considered our oracle, and we don't want to accept any changes which result in greater than 0.1% deviations in the calculations of the final quantities.
 
 ## Running
 

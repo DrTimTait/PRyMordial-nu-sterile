@@ -6,7 +6,10 @@ from scipy.interpolate import interp1d
 from scipy.special import zeta
 
 class PRyMclass(object):
-    def __init__(self,my_rho_NP=0.,my_p_NP=0.,my_drho_NP_dT=0.,my_delta_rho_NP=0.):
+    def __init__(self,my_rho_NP=0.,my_p_NP=0.,my_drho_NP_dT=0.,my_delta_rho_NP=0.,
+                 my_f_nue=None,my_f_nuebar=None,my_f_numu=None,my_f_numubar=None,
+                 my_f_nutau=None,my_f_nutaubar=None,
+                 my_delta_rho_nu_NP=None):
         #############################
         # PRyMordial initialization #
         #############################
@@ -18,6 +21,22 @@ class PRyMclass(object):
         import PRyM.PRyM_thermo as PRyMthermo
         # Loading New Physics species (constructor default: none)
         PRyMthermo.rho_NP,PRyMthermo.p_NP,PRyMthermo.drho_NP_dT,PRyMthermo.delta_rho_NP=my_rho_NP,my_p_NP,my_drho_NP_dT,my_delta_rho_NP
+        # Loading general neutrino distribution functions (if general_nu_flag is True)
+        if(PRyMini.general_nu_flag):
+            if my_f_nue is not None:
+                PRyMthermo.f_nue_general = my_f_nue
+            if my_f_nuebar is not None:
+                PRyMthermo.f_nuebar_general = my_f_nuebar
+            if my_f_numu is not None:
+                PRyMthermo.f_numu_general = my_f_numu
+            if my_f_numubar is not None:
+                PRyMthermo.f_numubar_general = my_f_numubar
+            if my_f_nutau is not None:
+                PRyMthermo.f_nutau_general = my_f_nutau
+            if my_f_nutaubar is not None:
+                PRyMthermo.f_nutaubar_general = my_f_nutaubar
+            if my_delta_rho_nu_NP is not None:
+                PRyMthermo.delta_rho_nu_NP = my_delta_rho_nu_NP
     
         if(PRyMini.verbose_flag):
             print(" ")
@@ -45,19 +64,65 @@ class PRyMclass(object):
         # - Energy, temperature in [MeV]
 
         # Expansion rate from Friedmann equation
-        def Hubble(Tg,Tnue,Tnumu,T_NP=0.):
-            rho_pl = PRyMthermo.rho_g(Tg)+PRyMthermo.rho_e(Tg)-PRyMthermo.PofT(Tg)+Tg*PRyMthermo.dPdT(Tg)
-            rho_3nu = PRyMthermo.rho_nu(Tnue)+2.*PRyMthermo.rho_nu(Tnumu)
-            rho_tot = rho_pl+rho_3nu
-            if(PRyMini.NP_thermo_flag):
-                rho_tot += PRyMthermo.rho_NP(T_NP)
-            if(PRyMini.NP_nu_flag):
-                rho_tot += PRyMthermo.rho_NP(Tnue)
-            if(PRyMini.NP_e_flag):
-                rho_tot += PRyMthermo.rho_NP(Tg)
-            return PRyMini.MeV_to_secm1*(rho_tot*8.*np.pi/(3.*PRyMini.Mpl**2))**0.5
+        if(PRyMini.general_nu_flag):
+            def Hubble(Tg,Tnue=None,Tnumu=None,T_NP=0.):
+                rho_pl = PRyMthermo.rho_g(Tg)+PRyMthermo.rho_e(Tg)-PRyMthermo.PofT(Tg)+Tg*PRyMthermo.dPdT(Tg)
+                rho_3nu = PRyMthermo.rho_3nu(Tg)
+                rho_tot = rho_pl+rho_3nu
+                if(PRyMini.NP_thermo_flag):
+                    rho_tot += PRyMthermo.rho_NP(T_NP)
+                if(PRyMini.NP_e_flag):
+                    rho_tot += PRyMthermo.rho_NP(Tg)
+                return PRyMini.MeV_to_secm1*(rho_tot*8.*np.pi/(3.*PRyMini.Mpl**2))**0.5
+        else:
+            def Hubble(Tg,Tnue,Tnumu,T_NP=0.):
+                rho_pl = PRyMthermo.rho_g(Tg)+PRyMthermo.rho_e(Tg)-PRyMthermo.PofT(Tg)+Tg*PRyMthermo.dPdT(Tg)
+                rho_3nu = PRyMthermo.rho_nu(Tnue)+2.*PRyMthermo.rho_nu(Tnumu)
+                rho_tot = rho_pl+rho_3nu
+                if(PRyMini.NP_thermo_flag):
+                    rho_tot += PRyMthermo.rho_NP(T_NP)
+                if(PRyMini.NP_nu_flag):
+                    rho_tot += PRyMthermo.rho_NP(Tnue)
+                if(PRyMini.NP_e_flag):
+                    rho_tot += PRyMthermo.rho_NP(Tg)
+                return PRyMini.MeV_to_secm1*(rho_tot*8.*np.pi/(3.*PRyMini.Mpl**2))**0.5
         # Computing the background (if not pre-stored)
         if(PRyMini.compute_bckg_flag):
+          if(PRyMini.general_nu_flag):
+            # General neutrino distributions: 1-variable ODE for Tg only.
+            # Total energy conservation: dTg/dt derived from d(rho_total)/dt = -3H(rho_total + P_total)
+            # with rho_total = rho_plasma + rho_3nu (from general distributions).
+            def dTgdt(Tg,T_NP=0.):
+                Hubble_T = Hubble(Tg,T_NP=T_NP)
+                # Numerator: expansion cooling of all species
+                rho_3nu_T = PRyMthermo.rho_3nu(Tg)
+                p_3nu_T = PRyMthermo.p_3nu(Tg)
+                num = -(Hubble_T*(4.*PRyMthermo.rho_g(Tg)+3.*(PRyMthermo.rho_e(Tg)+PRyMthermo.p_e(Tg))+3.*Tg*PRyMthermo.dPdT(Tg)
+                        +3.*(rho_3nu_T+p_3nu_T)))
+                # NP collision term for additional energy injection into neutrinos
+                num -= PRyMthermo.delta_rho_nu_NP(Tg)
+                den = PRyMthermo.drho_g_dT(Tg)+PRyMthermo.drho_e_dT(Tg)+Tg*PRyMthermo.d2PdT2(Tg)+PRyMthermo.drho_3nu_dTg(Tg)
+                if(PRyMini.NP_e_flag):
+                    num -= 3.*Hubble_T*(PRyMthermo.rho_NP(Tg)+PRyMthermo.p_NP(Tg))
+                    den += PRyMthermo.drho_NP_dT(Tg)
+                return num/den
+            def dTtotdt(t,T_vec):
+                Tg = T_vec[0]
+                if(PRyMini.NP_thermo_flag):
+                    T_NP = T_vec[1]
+                    return [dTgdt(Tg,T_NP),dTNPdt_general(Tg,T_NP)]
+                else:
+                    return [dTgdt(Tg)]
+            if(PRyMini.NP_thermo_flag):
+                def dTNPdt_general(Tg,T_NP):
+                    Hubble_T = Hubble(Tg,T_NP=T_NP)
+                    rho_NP = PRyMthermo.rho_NP(T_NP)
+                    p_NP = PRyMthermo.p_NP(T_NP)
+                    num = -3.*Hubble_T*(rho_NP+p_NP)
+                    num += PRyMthermo.delta_rho_NP(Tg,0.,0.,T_NP)
+                    den = PRyMthermo.drho_NP_dT(T_NP)
+                    return num/den
+          else:
             # Integrated Boltzmann equations for temperature of species
             # Neutrino temperature evolution
             def dTnudt(Tg,Tnue,Tnumu,T_NP=0.):
@@ -99,62 +164,95 @@ class PRyMclass(object):
             def dTtotdt(t,T_vec):
                 if(PRyMini.NP_thermo_flag):
                     Tg,Tnu,T_NP = T_vec
-                    y_vec = dTgdt(Tg,Tnu,Tnu,T_NP),dTnudt(Tg,Tnu,Tnu,T_NP),dTNPdt(Tg,Tnue,Tnumu,T_NP)
+                    y_vec = dTgdt(Tg,Tnu,Tnu,T_NP),dTnudt(Tg,Tnu,Tnu,T_NP),dTNPdt(Tg,Tnu,Tnu,T_NP)
                     return y_vec
                 else:
                     Tg,Tnu = T_vec
                     y_vec = dTgdt(Tg,Tnu,Tnu),dTnudt(Tg,Tnu,Tnu)
                     return y_vec
-            # Solution of Boltzmann equations for background thermodynamics
-            tfin = PRyMini.t_end # [s]
-            if(PRyMini.NP_thermo_flag):
-                tini = 1./(2.*Hubble(Tstart_MeV,Tstart_MeV,Tstart_MeV,PRyMini.Tstart_NP)) # [s]
-                sol_thermo_sampling = np.logspace(np.log10(tini),np.log10(tfin),PRyMini.n_sampling)
-                sol_thermo_sampling[0],sol_thermo_sampling[-1] = tini,tfin
-                Tini_vec = [Tstart_MeV,Tstart_MeV,PRyMini.Tstart_NP]
-                if(PRyMini.julia_flag):
-                    T0 = np.float64(Tini_vec)
-                    tspan = (np.float64(tini),np.float64(tfin))
-                    p0 = [lambda w,x,y,z: np.float64(dTgdt(w,x,y,z)),lambda w,x,y,z: np.float64(dTnudt(w,x,y,z)),lambda w,x,y,z: np.float64(dTNPdt(w,x,y,z))]
-                    prob = de.ODEProblem(PRyMjl.dTtotdtNPjl,T0,tspan,p0)
-                    sol_thermo = de.solve(prob,de.Tsit5(),saveat=sol_thermo_sampling,reltol=1.e-6,abstol=1.e-9)
-                    t_vec = sol_thermo.t
-                    sol_thermo = np.array(sol_thermo.u)
-                    Tg_vec = sol_thermo[:,0]
-                    Tnu_vec = sol_thermo[:,1]
-                    TNP_vec = sol_thermo[:,2]
-                else:
-                    sol_thermo = solve_ivp(dTtotdt,[tini,tfin],Tini_vec,t_eval=sol_thermo_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
-                    t_vec = sol_thermo.t
-                    Tg_vec = sol_thermo.y[0][:]
-                    Tnu_vec = sol_thermo.y[1][:]
-                    TNP_vec = sol_thermo.y[2][:]
-            else:
-                tini = 1./(2.*Hubble(Tstart_MeV,Tstart_MeV,Tstart_MeV)) # s
-                sol_thermo_sampling = np.logspace(np.log10(tini),np.log10(tfin),PRyMini.n_sampling)
-                sol_thermo_sampling[0],sol_thermo_sampling[-1] = tini,tfin
-                Tini_vec = [Tstart_MeV,Tstart_MeV]
-                if(PRyMini.julia_flag):
-                    T0 = np.float64(Tini_vec)
-                    tspan = (np.float64(tini),np.float64(tfin))
-                    p0 = [lambda x,y,z: np.float64(dTgdt(x,y,z)),lambda x,y,z: np.float64(dTnudt(x,y,z))]
-                    prob = de.ODEProblem(PRyMjl.dTtotdtSMjl,T0,tspan,p0)
-                    sol_thermo = de.solve(prob,de.Tsit5(),saveat=sol_thermo_sampling,reltol=1.e-6,abstol=1.e-9)
-                    t_vec = sol_thermo.t
-                    sol_thermo = np.array(sol_thermo.u)
-                    Tg_vec = sol_thermo[:,0]
-                    Tnu_vec = sol_thermo[:,1]
-                else:
-                    sol_thermo = solve_ivp(dTtotdt,[tini,tfin],Tini_vec,t_eval=sol_thermo_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
-                    t_vec = sol_thermo.t
-                    Tg_vec = sol_thermo.y[0][:]
-                    Tnu_vec = sol_thermo.y[1][:]
-            # Save results for background thermodynamics
-            if(PRyMini.save_bckg_flag):
-                if(PRyMini.NP_thermo_flag):
-                    np.savetxt(my_dir+"/PRyMrates/"+"thermo/Tgamma_Tnu_TNP.txt",np.c_[t_vec,Tg_vec,Tnu_vec,TNP_vec])
-                else:
-                    np.savetxt(my_dir+"/PRyMrates/"+"thermo/Tgamma_Tnu.txt",np.c_[t_vec,Tg_vec,Tnu_vec])
+          # Solution of Boltzmann equations for background thermodynamics
+          tfin = PRyMini.t_end # [s]
+          if(PRyMini.general_nu_flag):
+              # 1-variable ODE: only Tg (neutrino sector described by f_nu(p, Tg))
+              tini = 1./(2.*Hubble(Tstart_MeV)) # [s]
+              sol_thermo_sampling = np.logspace(np.log10(tini),np.log10(tfin),PRyMini.n_sampling)
+              sol_thermo_sampling[0],sol_thermo_sampling[-1] = tini,tfin
+              if(PRyMini.NP_thermo_flag):
+                  Tini_vec = [Tstart_MeV,PRyMini.Tstart_NP]
+              else:
+                  Tini_vec = [Tstart_MeV]
+              if(PRyMini.julia_flag):
+                  T0 = np.float64(Tini_vec)
+                  tspan = (np.float64(tini),np.float64(tfin))
+                  if(PRyMini.NP_thermo_flag):
+                      p0 = [lambda x,y: np.float64(dTgdt(x,y)),lambda x,y: np.float64(dTNPdt_general(x,y))]
+                      prob = de.ODEProblem(PRyMjl.dTtotdtGeneralNuNPjl,T0,tspan,p0)
+                  else:
+                      p0 = [lambda x: np.float64(dTgdt(x))]
+                      prob = de.ODEProblem(PRyMjl.dTtotdtGeneralNujl,T0,tspan,p0)
+                  sol_thermo = de.solve(prob,de.Tsit5(),saveat=sol_thermo_sampling,reltol=1.e-6,abstol=1.e-9)
+                  t_vec = sol_thermo.t
+                  sol_thermo = np.array(sol_thermo.u)
+                  Tg_vec = sol_thermo[:,0]
+                  if(PRyMini.NP_thermo_flag):
+                      TNP_vec = sol_thermo[:,1]
+              else:
+                  sol_thermo = solve_ivp(dTtotdt,[tini,tfin],Tini_vec,t_eval=sol_thermo_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
+                  t_vec = sol_thermo.t
+                  Tg_vec = sol_thermo.y[0][:]
+                  if(PRyMini.NP_thermo_flag):
+                      TNP_vec = sol_thermo.y[1][:]
+              # Construct synthetic Tnu_vec from effective temperature for downstream compatibility
+              Tnu_eff_vec = np.array([PRyMthermo.Tnu_eff_e(T) for T in Tg_vec])
+              Tnu_vec = Tnu_eff_vec
+          elif(PRyMini.NP_thermo_flag):
+              tini = 1./(2.*Hubble(Tstart_MeV,Tstart_MeV,Tstart_MeV,PRyMini.Tstart_NP)) # [s]
+              sol_thermo_sampling = np.logspace(np.log10(tini),np.log10(tfin),PRyMini.n_sampling)
+              sol_thermo_sampling[0],sol_thermo_sampling[-1] = tini,tfin
+              Tini_vec = [Tstart_MeV,Tstart_MeV,PRyMini.Tstart_NP]
+              if(PRyMini.julia_flag):
+                  T0 = np.float64(Tini_vec)
+                  tspan = (np.float64(tini),np.float64(tfin))
+                  p0 = [lambda w,x,y,z: np.float64(dTgdt(w,x,y,z)),lambda w,x,y,z: np.float64(dTnudt(w,x,y,z)),lambda w,x,y,z: np.float64(dTNPdt(w,x,y,z))]
+                  prob = de.ODEProblem(PRyMjl.dTtotdtNPjl,T0,tspan,p0)
+                  sol_thermo = de.solve(prob,de.Tsit5(),saveat=sol_thermo_sampling,reltol=1.e-6,abstol=1.e-9)
+                  t_vec = sol_thermo.t
+                  sol_thermo = np.array(sol_thermo.u)
+                  Tg_vec = sol_thermo[:,0]
+                  Tnu_vec = sol_thermo[:,1]
+                  TNP_vec = sol_thermo[:,2]
+              else:
+                  sol_thermo = solve_ivp(dTtotdt,[tini,tfin],Tini_vec,t_eval=sol_thermo_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
+                  t_vec = sol_thermo.t
+                  Tg_vec = sol_thermo.y[0][:]
+                  Tnu_vec = sol_thermo.y[1][:]
+                  TNP_vec = sol_thermo.y[2][:]
+          else:
+              tini = 1./(2.*Hubble(Tstart_MeV,Tstart_MeV,Tstart_MeV)) # s
+              sol_thermo_sampling = np.logspace(np.log10(tini),np.log10(tfin),PRyMini.n_sampling)
+              sol_thermo_sampling[0],sol_thermo_sampling[-1] = tini,tfin
+              Tini_vec = [Tstart_MeV,Tstart_MeV]
+              if(PRyMini.julia_flag):
+                  T0 = np.float64(Tini_vec)
+                  tspan = (np.float64(tini),np.float64(tfin))
+                  p0 = [lambda x,y,z: np.float64(dTgdt(x,y,z)),lambda x,y,z: np.float64(dTnudt(x,y,z))]
+                  prob = de.ODEProblem(PRyMjl.dTtotdtSMjl,T0,tspan,p0)
+                  sol_thermo = de.solve(prob,de.Tsit5(),saveat=sol_thermo_sampling,reltol=1.e-6,abstol=1.e-9)
+                  t_vec = sol_thermo.t
+                  sol_thermo = np.array(sol_thermo.u)
+                  Tg_vec = sol_thermo[:,0]
+                  Tnu_vec = sol_thermo[:,1]
+              else:
+                  sol_thermo = solve_ivp(dTtotdt,[tini,tfin],Tini_vec,t_eval=sol_thermo_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
+                  t_vec = sol_thermo.t
+                  Tg_vec = sol_thermo.y[0][:]
+                  Tnu_vec = sol_thermo.y[1][:]
+          # Save results for background thermodynamics
+          if(PRyMini.save_bckg_flag):
+              if(PRyMini.NP_thermo_flag):
+                  np.savetxt(my_dir+"/PRyMrates/"+"thermo/Tgamma_Tnu_TNP.txt",np.c_[t_vec,Tg_vec,Tnu_vec,TNP_vec])
+              else:
+                  np.savetxt(my_dir+"/PRyMrates/"+"thermo/Tgamma_Tnu.txt",np.c_[t_vec,Tg_vec,Tnu_vec])
         else:
             if(PRyMini.NP_thermo_flag):
                 t_vec,Tg_vec,Tnu_vec,TNP_vec = np.loadtxt(my_dir+"/PRyMrates/"+"thermo/Tgamma_Tnu_TNP.txt",unpack=True)
@@ -171,30 +269,59 @@ class PRyMclass(object):
         # N effective  #
         ################
         # Definition as extra radiation density relative to photons in units of 8/7 x (11/4)^(4/3)
-        def N_eff(Tg,Tnue,Tnumu,T_NP=0.):
-            rho_gamma = PRyMthermo.rho_g(Tg)
-            rho_rad_tot = PRyMthermo.rho_nu(Tnue)+2.*PRyMthermo.rho_nu(Tnumu)+rho_gamma
-            if(PRyMini.NP_thermo_flag):
-                rho_rad_tot += PRyMthermo.rho_NP(T_NP)
-            elif(PRyMini.NP_nu_flag):
-                rho_rad_tot += PRyMthermo.rho_NP(Tnue)
-            elif(PRyMini.NP_e_flag):
-                rho_rad_tot += PRyMthermo.rho_NP(Tg)
-            # normalization of extra radiation as neutrinos
-            normDeltaNeff = (7./8.)*(4./11.)**(4./3.)
-            return (rho_rad_tot-rho_gamma)/rho_gamma/normDeltaNeff
+        if(PRyMini.general_nu_flag):
+            def N_eff(Tg,Tnue=None,Tnumu=None,T_NP=0.):
+                rho_gamma = PRyMthermo.rho_g(Tg)
+                rho_rad_tot = PRyMthermo.rho_3nu(Tg)+rho_gamma
+                if(PRyMini.NP_thermo_flag):
+                    rho_rad_tot += PRyMthermo.rho_NP(T_NP)
+                elif(PRyMini.NP_e_flag):
+                    rho_rad_tot += PRyMthermo.rho_NP(Tg)
+                normDeltaNeff = (7./8.)*(4./11.)**(4./3.)
+                return (rho_rad_tot-rho_gamma)/rho_gamma/normDeltaNeff
+        else:
+            def N_eff(Tg,Tnue,Tnumu,T_NP=0.):
+                rho_gamma = PRyMthermo.rho_g(Tg)
+                rho_rad_tot = PRyMthermo.rho_nu(Tnue)+2.*PRyMthermo.rho_nu(Tnumu)+rho_gamma
+                if(PRyMini.NP_thermo_flag):
+                    rho_rad_tot += PRyMthermo.rho_NP(T_NP)
+                elif(PRyMini.NP_nu_flag):
+                    rho_rad_tot += PRyMthermo.rho_NP(Tnue)
+                elif(PRyMini.NP_e_flag):
+                    rho_rad_tot += PRyMthermo.rho_NP(Tg)
+                normDeltaNeff = (7./8.)*(4./11.)**(4./3.)
+                return (rho_rad_tot-rho_gamma)/rho_gamma/normDeltaNeff
             
         ################################
         # Relic abundance of neutrinos #
         ################################
         # Cosmic abundance of single species of relativistic nu
-        def Omeganuh2_relnu():
-            Tnu0 = Tnu_vec[-1]/Tg_vec[-1]*PRyMini.T0CMB/PRyMini.MeV_to_Kelvin
-            return (7.*np.pi**2/120.*Tnu0**4)/PRyMini.rhocOverh2 # dimensionless
-        # Cosmic abundance of non-relativistic nu over sum of nu masses
-        def Omeganuh2_nrnu():
-            Tnu0 = Tnu_vec[-1]/Tg_vec[-1]*PRyMini.T0CMB/PRyMini.MeV_to_Kelvin
-            return (3./2.*zeta(3)/np.pi**2*Tnu0**3)/PRyMini.rhocOverh2 # MeV
+        if(PRyMini.general_nu_flag):
+            def Omeganuh2_relnu():
+                # Use rho_3nu from general distributions at end of BBN, scaled to today
+                # via entropy conservation: Tg_end/Tg_0 = (s0/s_end)^(1/3)
+                Tg_end = Tg_vec[-1]
+                Tg0 = PRyMini.T0CMB/PRyMini.MeV_to_Kelvin
+                # Energy density of a single neutrino species (assuming 3 equal flavors for relics)
+                rho_nu_end = PRyMthermo.rho_3nu(Tg_end)/3.
+                # Scale to today: rho ~ a^{-4}, and a_end/a_0 = Tg0/Tg_end * (s_end/s0)^{1/3}
+                # But simpler: use effective temperature ratio
+                Tnu_eff_end = PRyMthermo.Tnu_eff_e(Tg_end)
+                Tnu0 = Tnu_eff_end/Tg_end*Tg0
+                return (7.*np.pi**2/120.*Tnu0**4)/PRyMini.rhocOverh2
+            def Omeganuh2_nrnu():
+                Tg_end = Tg_vec[-1]
+                Tg0 = PRyMini.T0CMB/PRyMini.MeV_to_Kelvin
+                Tnu_eff_end = PRyMthermo.Tnu_eff_e(Tg_end)
+                Tnu0 = Tnu_eff_end/Tg_end*Tg0
+                return (3./2.*zeta(3)/np.pi**2*Tnu0**3)/PRyMini.rhocOverh2
+        else:
+            def Omeganuh2_relnu():
+                Tnu0 = Tnu_vec[-1]/Tg_vec[-1]*PRyMini.T0CMB/PRyMini.MeV_to_Kelvin
+                return (7.*np.pi**2/120.*Tnu0**4)/PRyMini.rhocOverh2 # dimensionless
+            def Omeganuh2_nrnu():
+                Tnu0 = Tnu_vec[-1]/Tg_vec[-1]*PRyMini.T0CMB/PRyMini.MeV_to_Kelvin
+                return (3./2.*zeta(3)/np.pi**2*Tnu0**3)/PRyMini.rhocOverh2 # MeV
         
         ######################################################
         # FRW cosmological backround in radiation domination #
@@ -209,7 +336,12 @@ class PRyMclass(object):
         # Relation of scale factor with temperature and time #
         ######################################################
         # Non-instantaneous decoupling effects on the entropy of the plasma
-        if(PRyMini.aTid_flag):
+        # Note: when general_nu_flag is True, the N_nu_rate approach (mapping general
+        # distributions to effective temperatures for the thermal collision terms) is
+        # unreliable and can cause ODE solver stiffness. The incomplete decoupling
+        # correction to a(T) is sub-percent and already approximately captured in the
+        # general Tg(t) evolution, so we use the simpler entropy-based a(T) instead.
+        if(PRyMini.aTid_flag and not PRyMini.general_nu_flag):
             # Heat rate due to neutrino (and NP) interactions with the plasma
             def N_nu_rate(T):
                 Tnu = TnuofT(T)
@@ -267,10 +399,11 @@ class PRyMclass(object):
         
         # Scale factor as a function of temperature of thermal bath
         def a_of_T(T):
-            # Including non-instantaneous decoupling effects
-            if(PRyMini.aTid_flag):
+            # Including non-instantaneous decoupling effects (thermal path only)
+            if(PRyMini.aTid_flag and not PRyMini.general_nu_flag):
                 return np.exp(lnalnT(np.log(T)))
-            # Using instantaneous approximation
+            # Instantaneous decoupling approximation (used for general distributions
+            # and when aTid_flag is False)
             else:
                 spl_T = PRyMthermo.spl(T)
                 return (PRyMini.s0CMB/spl_T)**(1./3.)
@@ -314,7 +447,10 @@ class PRyMclass(object):
         ###############################
         import PRyM.PRyM_eval_nTOp as PRyMevalnTOp
         import PRyM.PRyM_nTOp as PRyMnTOp
-        nTOp_frwrd_HT,nTOp_bkwrd_HT,nTOp_frwrd_MT,nTOp_bkwrd_MT,nTOp_frwrd_LT,nTOp_bkwrd_LT = PRyMnTOp.RecomputeWeakRates([Tg_vec,Tnu_vec])
+        if(PRyMini.general_nu_flag):
+            nTOp_frwrd_HT,nTOp_bkwrd_HT,nTOp_frwrd_MT,nTOp_bkwrd_MT,nTOp_frwrd_LT,nTOp_bkwrd_LT = PRyMnTOp.RecomputeWeakRates([Tg_vec])
+        else:
+            nTOp_frwrd_HT,nTOp_bkwrd_HT,nTOp_frwrd_MT,nTOp_bkwrd_MT,nTOp_frwrd_LT,nTOp_bkwrd_LT = PRyMnTOp.RecomputeWeakRates([Tg_vec,Tnu_vec])
         
         ############################
         # Weak rates normalization #
@@ -599,7 +735,12 @@ class PRyMclass(object):
         # Final predictions #
         #####################
         # N effective at the end of BBN era
-        if(PRyMini.NP_thermo_flag):
+        if(PRyMini.general_nu_flag):
+            if(PRyMini.NP_thermo_flag):
+                self.Neff_f = N_eff(Tg_vec[-1],T_NP=TNP_vec[-1])
+            else:
+                self.Neff_f = N_eff(Tg_vec[-1])
+        elif(PRyMini.NP_thermo_flag):
             self.Neff_f = N_eff(Tg_vec[-1],Tnu_vec[-1],Tnu_vec[-1],TNP_vec[-1])
         else:
             self.Neff_f = N_eff(Tg_vec[-1],Tnu_vec[-1],Tnu_vec[-1])

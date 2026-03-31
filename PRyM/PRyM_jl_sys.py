@@ -16,6 +16,19 @@ function dTtotdtNP_jl(dT,T,p,t)
   dT[3] = p[3](Tg,Tnu,Tnu,TNP)
 end""")
 
+dTtotdtGeneralNujl = Main.eval("""
+function dTtotdtGeneralNu_jl(dT,T,p,t)
+  Tg = T[1]
+  dT[1] = p[1](Tg)
+end""")
+
+dTtotdtGeneralNuNPjl = Main.eval("""
+function dTtotdtGeneralNuNP_jl(dT,T,p,t)
+  Tg, TNP = T
+  dT[1] = p[1](Tg,TNP)
+  dT[2] = p[2](Tg,TNP)
+end""")
+
 dlnajl = Main.eval("""
 function dlna_jl(dlna,a,p,lnT)
   dlna[1] = p[1](lnT)

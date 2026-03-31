@@ -97,10 +97,19 @@ def ComputeWeakRates(Tvec):
     # Input from neutrinos
     xi_nu = PRyMini.munuOverTnu # neutrino chemical potential over temperature
     my_dir = PRyMini.working_dir
-    Tg_vec,Tnu_vec = Tvec # photon and neutrino temperatures
-    Tg_Kelvin = Tg_vec*PRyMini.MeV_to_Kelvin
-    Tnu_of_Tg = Tnu_vec/Tg_vec
-    T_nuOverT = interp1d(Tg_Kelvin,Tnu_of_Tg, bounds_error=False, fill_value="extrapolate", kind='linear')
+    if(PRyMini.general_nu_flag):
+        import PRyM.PRyM_thermo as PRyMthermo
+        Tg_vec = Tvec[0]
+        Tg_Kelvin = Tg_vec*PRyMini.MeV_to_Kelvin
+        # Compute effective neutrino temperatures for fallback (FMCCR, thermal corrections)
+        Tnu_eff = np.array([PRyMthermo.Tnu_eff_e(T) for T in Tg_vec])
+        Tnu_of_Tg = Tnu_eff/Tg_vec
+        T_nuOverT = interp1d(Tg_Kelvin,Tnu_of_Tg, bounds_error=False, fill_value="extrapolate", kind='linear')
+    else:
+        Tg_vec,Tnu_vec = Tvec # photon and neutrino temperatures
+        Tg_Kelvin = Tg_vec*PRyMini.MeV_to_Kelvin
+        Tnu_of_Tg = Tnu_vec/Tg_vec
+        T_nuOverT = interp1d(Tg_Kelvin,Tnu_of_Tg, bounds_error=False, fill_value="extrapolate", kind='linear')
 
     # Auxiliary thermodynamics functions
     def FD_nu3(E,phi,x):
@@ -169,9 +178,101 @@ def ComputeWeakRates(Tvec):
         else:
             return 0.
             
+    # General neutrino distribution function accessors (dimensionless energy in units of me)
+    if(PRyMini.general_nu_flag):
+        def f_nu_general_dimless(E_nu_dimless, Tg_MeV):
+            """Electron neutrino distribution as function of dimensionless energy E = p/me.
+            Returns f_nue(p, Tg) where p = |E| * me [MeV]."""
+            p_MeV = np.abs(E_nu_dimless) * PRyMini.me
+            return PRyMthermo.f_nue_general(p_MeV, Tg_MeV)
+        def f_nubar_general_dimless(E_nu_dimless, Tg_MeV):
+            """Electron antineutrino distribution as function of dimensionless energy E = p/me."""
+            p_MeV = np.abs(E_nu_dimless) * PRyMini.me
+            return PRyMthermo.f_nuebar_general(p_MeV, Tg_MeV)
+
+        def f_eff_nu(E_nu, Tg_MeV, sgnq):
+            """Effective neutrino distribution for arbitrary neutrino energy E_nu (dimensionless).
+            Handles the nu/nubar dispatch and crossing (emission = 1-f):
+              E_nu > 0, sgnq=+1: f_nue (absorption)
+              E_nu < 0, sgnq=+1: 1 - f_nuebar (emission)
+              E_nu > 0, sgnq=-1: f_nuebar (absorption)
+              E_nu < 0, sgnq=-1: 1 - f_nue (emission)
+            """
+            if E_nu >= 0:
+                if sgnq > 0:
+                    return f_nu_general_dimless(E_nu, Tg_MeV)
+                else:
+                    return f_nubar_general_dimless(E_nu, Tg_MeV)
+            else:
+                if sgnq > 0:
+                    return 1. - f_nubar_general_dimless(E_nu, Tg_MeV)
+                else:
+                    return 1. - f_nu_general_dimless(E_nu, Tg_MeV)
+
+        def f_eff_nu_vec(E_nu_arr, Tg_MeV, sgnq):
+            """Vectorized effective neutrino distribution for numpy arrays."""
+            p_MeV = np.abs(E_nu_arr) * PRyMini.me
+            pos_mask = E_nu_arr >= 0
+            result = np.zeros_like(E_nu_arr, dtype=float)
+            if sgnq > 0:
+                if np.any(pos_mask):
+                    result[pos_mask] = PRyMthermo.f_nue_general(p_MeV[pos_mask], Tg_MeV)
+                if np.any(~pos_mask):
+                    result[~pos_mask] = 1. - PRyMthermo.f_nuebar_general(p_MeV[~pos_mask], Tg_MeV)
+            else:
+                if np.any(pos_mask):
+                    result[pos_mask] = PRyMthermo.f_nuebar_general(p_MeV[pos_mask], Tg_MeV)
+                if np.any(~pos_mask):
+                    result[~pos_mask] = 1. - PRyMthermo.f_nue_general(p_MeV[~pos_mask], Tg_MeV)
+            return result
+
+        # Numerical derivatives of E^A * f_eff(E) for finite-mass corrections
+        _dE_rel = 1.e-4  # relative step for finite differences
+        _dE_min = 1.e-6  # minimum absolute step
+
+        def _EA_feff(E, A, Tg_MeV, sgnq):
+            """E^A * f_eff_nu(E, Tg_MeV, sgnq)"""
+            return E**A * f_eff_nu(E, Tg_MeV, sgnq)
+
+        def FD_nu_eApB_general(E, A, B, Tg_MeV, sgnq):
+            """General version of FD_nu_eApB: d^B/dE^B [E^A * f_eff(E)].
+            Computed via finite differences for B > 0."""
+            if B == 0:
+                return _EA_feff(E, A, Tg_MeV, sgnq)
+            dE = max(_dE_rel * np.abs(E), _dE_min)
+            if B == 1:
+                return (_EA_feff(E + dE, A, Tg_MeV, sgnq)
+                      - _EA_feff(E - dE, A, Tg_MeV, sgnq)) / (2.*dE)
+            elif B == 2:
+                return (_EA_feff(E + dE, A, Tg_MeV, sgnq)
+                      - 2.*_EA_feff(E, A, Tg_MeV, sgnq)
+                      + _EA_feff(E - dE, A, Tg_MeV, sgnq)) / (dE**2)
+            else:
+                raise ValueError("FD_nu_eApB_general: B > 2 not implemented")
+
     # Born rates given by Eq 2.29 in Brown & Sawyer
-    def ChiFunc(E, p, x, znu, sgnq):
-        return FD_nu3(E-sgnq*(Q/me),sgnq*xi_nu,znu)*FD2(-E,x)*(E-sgnq*(Q/me))**2
+    if(PRyMini.general_nu_flag):
+        def ChiFunc(E, p, x, znu_or_Tg, sgnq):
+            """Response function for general neutrino distributions.
+            znu_or_Tg is Tg in MeV when general_nu_flag is True."""
+            Tg_MeV = znu_or_Tg
+            E_nu = E - sgnq*(Q/me)
+            if E_nu >= 0:
+                # Neutrino/antineutrino absorption
+                if sgnq > 0:
+                    f_val = f_nu_general_dimless(E_nu, Tg_MeV)
+                else:
+                    f_val = f_nubar_general_dimless(E_nu, Tg_MeV)
+            else:
+                # Antineutrino/neutrino emission: Pauli blocking factor (1 - f)
+                if sgnq > 0:
+                    f_val = 1. - f_nubar_general_dimless(E_nu, Tg_MeV)
+                else:
+                    f_val = 1. - f_nu_general_dimless(E_nu, Tg_MeV)
+            return f_val * FD2(-E, x) * E_nu**2
+    else:
+        def ChiFunc(E, p, x, znu, sgnq):
+            return FD_nu3(E-sgnq*(Q/me),sgnq*xi_nu,znu)*FD2(-E,x)*(E-sgnq*(Q/me))**2
 
     # Integrands in electron momentum, w/o and w/ radiative corrections
     def IPENdpFrom_Chi_NoCCR(E, p, x, znu, sgnq):
@@ -188,17 +289,26 @@ def ComputeWeakRates(Tvec):
          return IPENdpFrom_Chi_NoCCR(eOFpe, p, x, znu, sgnq)
 
     # Born rates given by Eq 2.30 in Brown & Sawyer
-    def L_nTOpBORN_int(p,T):
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-        return IPENdp(p,x,xnu,1)
-
-    def L_pTOnBORN_int(p,T):
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-        return IPENdp(p,x,xnu,-1)
+    if(PRyMini.general_nu_flag):
+        def L_nTOpBORN_int(p,T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdp(p,x,Tg_MeV,1)
+        def L_pTOnBORN_int(p,T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdp(p,x,Tg_MeV,-1)
+    else:
+        def L_nTOpBORN_int(p,T):
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdp(p,x,xnu,1)
+        def L_pTOnBORN_int(p,T):
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdp(p,x,xnu,-1)
 
     def L_nTOpBORN(T):
         pemin = 0.
@@ -218,23 +328,49 @@ def ComputeWeakRates(Tvec):
     def enu(en, sgnq):
         return en-sgnq*Q/me
 
-    def ChiFunc_FM(en, pe, x, znu, sgnq):
-        Mp = mp/me
-        Mn = mn/me
-        M_sgnq = (mp+mn-sgnq*Q)/(2*me)
-        f_1 = ((1.+sgnq*PRyMini.gA)**2.+2.*PRyMini.deltakappa*sgnq*PRyMini.gA)/(1.+3.*PRyMini.gA**2)
-        f_2 = ((1.-sgnq*PRyMini.gA)**2.-2.*PRyMini.deltakappa*sgnq*PRyMini.gA)/(1.+3.*PRyMini.gA**2)
-        f_3 = (PRyMini.gA**2-1.)/(1.+3.*PRyMini.gA**2)
-        FD2_en = FD2(-en,x)
-        return (f_1*FD_nu_e2p0(enu(en,sgnq),0,znu)*FD2_en*(pe**2/(M_sgnq*en))
-            + f_2*FD_nu_e3p0(enu(en,sgnq),0,znu)*FD2_en*(-(1./M_sgnq))
-            + (f_1+f_2+f_3)/(2.*x*M_sgnq)*(FD_nu_e4p2(enu(en,sgnq),0,znu)*FD2_en + FD_nu_e2p2(enu(en, sgnq),0,znu)*FD2_en*pe**2)
-            + (f_1+f_2+f_3)/(2.*M_sgnq)*(FD_nu_e4p1(enu(en, sgnq),0,znu)*FD2_en + FD_nu_e2p1(enu(en,sgnq),0,znu)*FD2_en*pe**2)
-            - (f_1+f_2)/(x*M_sgnq)*(FD_nu_e3p1(enu(en,sgnq),0,znu)*FD2_en + FD_nu_e2p1(enu(en,sgnq),0,znu)*FD2_en*pe**2/(-en))
-            - f_3*3./(x*M_sgnq)*FD_nu_e2p0(enu(en, sgnq),0,znu)*FD2_en
-            + f_3/(3*M_sgnq)*FD_nu_e3p1(enu(en, sgnq),0,znu)*FD2_en*pe**2/en
-            + f_3* 2./(2.*x*3.*M_sgnq)*FD_nu_e3p2(enu(en, sgnq),0,znu)*FD2_en*pe**2/en
-            - (f_1+f_2+f_3)*3./(2.*x)*(1.-(Mn/Mp)**sgnq)*(FD_nu_e2p1(enu(en, sgnq),0, znu)*FD2_en))
+    if(PRyMini.general_nu_flag):
+        def ChiFunc_FM(en, pe, x, znu_or_Tg, sgnq):
+            """Finite-mass correction response function for general neutrino distributions.
+            znu_or_Tg is Tg in MeV when general_nu_flag is True."""
+            Tg_MeV = znu_or_Tg
+            Mp = mp/me
+            Mn = mn/me
+            M_sgnq = (mp+mn-sgnq*Q)/(2*me)
+            f_1 = ((1.+sgnq*PRyMini.gA)**2.+2.*PRyMini.deltakappa*sgnq*PRyMini.gA)/(1.+3.*PRyMini.gA**2)
+            f_2 = ((1.-sgnq*PRyMini.gA)**2.-2.*PRyMini.deltakappa*sgnq*PRyMini.gA)/(1.+3.*PRyMini.gA**2)
+            f_3 = (PRyMini.gA**2-1.)/(1.+3.*PRyMini.gA**2)
+            FD2_en = FD2(-en,x)
+            Enu = enu(en,sgnq)
+            # Shorthand for d^B/dE^B [E^A * f_eff(E)] evaluated at Enu
+            def G(A,B):
+                return FD_nu_eApB_general(Enu, A, B, Tg_MeV, sgnq)
+            return (f_1*G(2,0)*FD2_en*(pe**2/(M_sgnq*en))
+                + f_2*G(3,0)*FD2_en*(-(1./M_sgnq))
+                + (f_1+f_2+f_3)/(2.*x*M_sgnq)*(G(4,2)*FD2_en + G(2,2)*FD2_en*pe**2)
+                + (f_1+f_2+f_3)/(2.*M_sgnq)*(G(4,1)*FD2_en + G(2,1)*FD2_en*pe**2)
+                - (f_1+f_2)/(x*M_sgnq)*(G(3,1)*FD2_en + G(2,1)*FD2_en*pe**2/(-en))
+                - f_3*3./(x*M_sgnq)*G(2,0)*FD2_en
+                + f_3/(3*M_sgnq)*G(3,1)*FD2_en*pe**2/en
+                + f_3* 2./(2.*x*3.*M_sgnq)*G(3,2)*FD2_en*pe**2/en
+                - (f_1+f_2+f_3)*3./(2.*x)*(1.-(Mn/Mp)**sgnq)*(G(2,1)*FD2_en))
+    else:
+        def ChiFunc_FM(en, pe, x, znu, sgnq):
+            Mp = mp/me
+            Mn = mn/me
+            M_sgnq = (mp+mn-sgnq*Q)/(2*me)
+            f_1 = ((1.+sgnq*PRyMini.gA)**2.+2.*PRyMini.deltakappa*sgnq*PRyMini.gA)/(1.+3.*PRyMini.gA**2)
+            f_2 = ((1.-sgnq*PRyMini.gA)**2.-2.*PRyMini.deltakappa*sgnq*PRyMini.gA)/(1.+3.*PRyMini.gA**2)
+            f_3 = (PRyMini.gA**2-1.)/(1.+3.*PRyMini.gA**2)
+            FD2_en = FD2(-en,x)
+            return (f_1*FD_nu_e2p0(enu(en,sgnq),0,znu)*FD2_en*(pe**2/(M_sgnq*en))
+                + f_2*FD_nu_e3p0(enu(en,sgnq),0,znu)*FD2_en*(-(1./M_sgnq))
+                + (f_1+f_2+f_3)/(2.*x*M_sgnq)*(FD_nu_e4p2(enu(en,sgnq),0,znu)*FD2_en + FD_nu_e2p2(enu(en, sgnq),0,znu)*FD2_en*pe**2)
+                + (f_1+f_2+f_3)/(2.*M_sgnq)*(FD_nu_e4p1(enu(en, sgnq),0,znu)*FD2_en + FD_nu_e2p1(enu(en,sgnq),0,znu)*FD2_en*pe**2)
+                - (f_1+f_2)/(x*M_sgnq)*(FD_nu_e3p1(enu(en,sgnq),0,znu)*FD2_en + FD_nu_e2p1(enu(en,sgnq),0,znu)*FD2_en*pe**2/(-en))
+                - f_3*3./(x*M_sgnq)*FD_nu_e2p0(enu(en, sgnq),0,znu)*FD2_en
+                + f_3/(3*M_sgnq)*FD_nu_e3p1(enu(en, sgnq),0,znu)*FD2_en*pe**2/en
+                + f_3* 2./(2.*x*3.*M_sgnq)*FD_nu_e3p2(enu(en, sgnq),0,znu)*FD2_en*pe**2/en
+                - (f_1+f_2+f_3)*3./(2.*x)*(1.-(Mn/Mp)**sgnq)*(FD_nu_e2p1(enu(en, sgnq),0, znu)*FD2_en))
 
     def IPENdpFMCCR(p, x, znu, sgnq):
         eOFpe = np.sqrt(p**2+1.)
@@ -242,15 +378,24 @@ def ComputeWeakRates(Tvec):
         return p**2*(ChiFunc_FM(eOFpe,p,x,znu,sgnq)*RadCorrResum(en_ratio, np.abs(sgnq*Q/me-eOFpe),eOFpe)*FermiStat(sgnq,1,en_ratio) +
         ChiFunc_FM(-eOFpe,p,x,znu,sgnq)*RadCorrResum(en_ratio, np.abs(sgnq*Q/me+eOFpe),eOFpe)*FermiStat(sgnq,-1,en_ratio))
 
-    def L_nTOpFMCCR_int(p,T):
-        x = me/(PRyMini.kB*T)
-        xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-        return IPENdpFMCCR(p,x,xnu,1)
-
-    def L_pTOnFMCCR_int(p,T):
-        x = me/(PRyMini.kB*T)
-        xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-        return IPENdpFMCCR(p,x,xnu,-1)
+    if(PRyMini.general_nu_flag):
+        def L_nTOpFMCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdpFMCCR(p,x,Tg_MeV,1)
+        def L_pTOnFMCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdpFMCCR(p,x,Tg_MeV,-1)
+    else:
+        def L_nTOpFMCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpFMCCR(p,x,xnu,1)
+        def L_pTOnFMCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpFMCCR(p,x,xnu,-1)
 
     def L_nTOpFMCCR(T):
         pemin = 0.
@@ -271,15 +416,24 @@ def ComputeWeakRates(Tvec):
         eOFpe = np.sqrt(p**2+1.)
         return IPENdpFrom_Chi_CCR(eOFpe, p, x, znu, sgnq)
 
-    def L_nTOpCCR_int(p,T):
-        x = me/(PRyMini.kB*T)
-        xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-        return IPENdpCCR(p,x,xnu,1)
-        
-    def L_pTOnCCR_int(p,T):
-        x = me/(PRyMini.kB*T)
-        xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-        return IPENdpCCR(p,x,xnu,-1)
+    if(PRyMini.general_nu_flag):
+        def L_nTOpCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdpCCR(p,x,Tg_MeV,1)
+        def L_pTOnCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdpCCR(p,x,Tg_MeV,-1)
+    else:
+        def L_nTOpCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpCCR(p,x,xnu,1)
+        def L_pTOnCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpCCR(p,x,xnu,-1)
 
     def L_nTOpCCR(T):
         pemin = 0.
@@ -295,9 +449,15 @@ def ComputeWeakRates(Tvec):
     # Finite-temperature Radiative Corrections
     # Brown & Sawyer for finite temperature radiative corrections + Brehmstrahlung (Eqs. 107)
     if(PRyMini.compute_nTOp_thermal_flag):
-        def Chitilde(en, znu, sgnq):
-            q = Q/me
-            return FD_nu3(en-sgnq*q,sgnq*xi_nu,znu)*(en-sgnq*q)**2
+        if(PRyMini.general_nu_flag):
+            def Chitilde(en, znu_or_Tg, sgnq):
+                q = Q/me
+                E_nu = en - sgnq*q
+                return f_eff_nu(E_nu, znu_or_Tg, sgnq) * E_nu**2
+        else:
+            def Chitilde(en, znu, sgnq):
+                q = Q/me
+                return FD_nu3(en-sgnq*q,sgnq*xi_nu,znu)*(en-sgnq*q)**2
 
         def A(E, k):
             pE = np.sqrt(E**2 - 1.)
@@ -323,13 +483,19 @@ def ComputeWeakRates(Tvec):
                 my_index_overflow = np.where(np.abs(argvec)>exp_cutoff)[0]
                 resvec[my_index_overflow[:]] = 1./(np.exp(np.sign(argvec[my_index_overflow[:]])*exp_cutoff)+1.)
                 return resvec
-            def Chitilde(en, znuval, sgnq):
-                q = Q/me
-                resvec = np.zeros(len(en))
-                argvec = znuval*(en-sgnq*q) - (sgnq*xi_nu)
-                my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
-                resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]]) + 1.)
-                return resvec*(en-sgnq*q)**2
+            if(PRyMini.general_nu_flag):
+                def Chitilde(en, znuval_or_Tg, sgnq):
+                    q = Q/me
+                    E_nu = en - sgnq*q
+                    return f_eff_nu_vec(E_nu, znuval_or_Tg, sgnq) * E_nu**2
+            else:
+                def Chitilde(en, znuval, sgnq):
+                    q = Q/me
+                    resvec = np.zeros(len(en))
+                    argvec = znuval*(en-sgnq*q) - (sgnq*xi_nu)
+                    my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
+                    resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]]) + 1.)
+                    return resvec*(en-sgnq*q)**2
             return  PRyMini.alphaem/(2*np.pi)*(BE(x*k)/k)*(A(E, k)*(FD2(-E,x)*FermiStat(sgnq, 1, pE/E)*(Chitilde(E - k, znu, sgnq) + Chitilde(E + k, znu, sgnq) - 2*Chitilde(E, znu, sgnq))+ FD2(E, x)*FermiStat(sgnq, -1, pE/E)*(Chitilde(-E + k, znu, sgnq) + Chitilde(-E - k, znu, sgnq) - 2*Chitilde(-E, znu, sgnq)))-k*B(E)*(FD2(-E, x)*FermiStat(sgnq, 1, pE/E)*(Chitilde(E - k, znu, sgnq) - Chitilde(E + k, znu, sgnq))+ FD2(E, x)*FermiStat(sgnq, -1, pE/E)*(Chitilde(-E + k, znu, sgnq)- Chitilde(-E - k, znu, sgnq))))
 
         # Bremsstrahlung corrections
@@ -348,24 +514,40 @@ def ComputeWeakRates(Tvec):
                 my_index_overflow = np.where(np.abs(argvec)>exp_cutoff)[0]
                 resvec[my_index_overflow[:]] = 1./(np.exp(np.sign(argvec[my_index_overflow[:]])*exp_cutoff)+1.)
                 return resvec
-            def Chitilde(en, znuval, sgnq):
-                q = Q/me
-                resvec = np.zeros(len(en))
-                argvec = znuval*(en-sgnq*q) - (sgnq*xi_nu)
-                my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
-                resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]]) + 1.)
-                return resvec*(en-sgnq*q)**2
+            if(PRyMini.general_nu_flag):
+                def Chitilde(en, znuval_or_Tg, sgnq):
+                    q = Q/me
+                    E_nu = en - sgnq*q
+                    return f_eff_nu_vec(E_nu, znuval_or_Tg, sgnq) * E_nu**2
+            else:
+                def Chitilde(en, znuval, sgnq):
+                    q = Q/me
+                    resvec = np.zeros(len(en))
+                    argvec = znuval*(en-sgnq*q) - (sgnq*xi_nu)
+                    my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
+                    resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]]) + 1.)
+                    return resvec*(en-sgnq*q)**2
+            if(PRyMini.general_nu_flag):
+                def f_nu_dist(E_nu, znuval_or_Tg, sgnq):
+                    return f_eff_nu_vec(E_nu, znuval_or_Tg, sgnq)
+            else:
+                def f_nu_dist(E_nu, znuval, sgnq):
+                    resvec = np.zeros(len(E_nu))
+                    argvec = E_nu*znuval
+                    my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
+                    resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]])+1.)
+                    return resvec
             res_fac = PRyMini.alphaem/(2.*np.pi*k)
             res1_fac = FD2(-E,x)*FermiStat(sgnq,1,pE/E)
             res1vec = Fp*Chitilde(E+k,znu,sgnq)
             argvec = k
             my_index = np.where(np.abs(argvec)<np.abs(E-sgnq*q))[0]
-            res1vec[my_index[:]] -= Fp[my_index[:]]*FD2(E[my_index[:]]-sgnq*q,znu)* (np.abs(E[my_index[:]]-sgnq*q)-k[my_index[:]])**2
+            res1vec[my_index[:]] -= Fp[my_index[:]]*f_nu_dist(E[my_index[:]]-sgnq*q,znu,sgnq)* (np.abs(E[my_index[:]]-sgnq*q)-k[my_index[:]])**2
             res1vec[:] *= res1_fac[:]
             res2_fac = FD2(E,x)*FermiStat(sgnq,-1,pE/E)
             res2vec = Fm*Chitilde(-E+k,znu,sgnq)
             my_index = np.where(np.abs(argvec)<np.abs(E+sgnq*q))[0]
-            res2vec[my_index[:]] -= Fp[my_index[:]]*FD2(-E[my_index[:]]-sgnq*q,znu)*(np.abs(E[my_index[:]]+sgnq*q) -k[my_index[:]])**2
+            res2vec[my_index[:]] -= Fp[my_index[:]]*f_nu_dist(-E[my_index[:]]-sgnq*q,znu,sgnq)*(np.abs(E[my_index[:]]+sgnq*q) -k[my_index[:]])**2
             res2vec[:] *= res2_fac[:]
             return res_fac*(res1vec+res2vec)
 
@@ -395,14 +577,19 @@ def ComputeWeakRates(Tvec):
                 my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
                 resvec[my_index[:]] = -xval*np.exp(argvec[my_index[:]])/(np.exp(argvec[my_index[:]])+1.)**2
                 return resvec
-            def FD_nu3(en, phi, xval):
-                resvec = np.zeros(len(en))
-                argvec = en*xval-phi
-                my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
-                resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]])+1.)
-                return resvec
-            def ChiFunc(E, p, x, znu, sgnq):
-                return FD_nu3(E-sgnq*(Q/me),sgnq*xi_nu,znu)*FD2(-E,x)*(E-sgnq*(Q/me))**2
+            if(PRyMini.general_nu_flag):
+                def ChiFunc(E, p, x, znu_or_Tg, sgnq):
+                    E_nu = E - sgnq*(Q/me)
+                    return f_eff_nu_vec(E_nu, znu_or_Tg, sgnq)*FD2(-E,x)*E_nu**2
+            else:
+                def FD_nu3(en, phi, xval):
+                    resvec = np.zeros(len(en))
+                    argvec = en*xval-phi
+                    my_index = np.where(np.abs(argvec)<exp_cutoff)[0]
+                    resvec[my_index[:]] = 1./(np.exp(argvec[my_index[:]])+1.)
+                    return resvec
+                def ChiFunc(E, p, x, znu, sgnq):
+                    return FD_nu3(E-sgnq*(Q/me),sgnq*xi_nu,znu)*FD2(-E,x)*(E-sgnq*(Q/me))**2
             #safe_check = np.where((np.abs(p1-p2)>0)*(np.abs(p1)>0)*(np.abs(e2)>0)*(np.abs(p2)>0) *(np.abs(e1)>0))[0]
             e1 = e1v[index_limits[:]]
             e2 = e2v[index_limits[:]]
@@ -419,10 +606,16 @@ def ComputeWeakRates(Tvec):
         ######## Thermal -> mass shift and pe+ee corrections      ########
         ##################################################################
             
-        def L_nTOpThermalTruePhoton_int(E, k, T):
-            x  = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENCCRT(E, k, x, xnu, 1)
+        if(PRyMini.general_nu_flag):
+            def L_nTOpThermalTruePhoton_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                return IPENCCRT(E, k, x, Tg_MeV, 1)
+        else:
+            def L_nTOpThermalTruePhoton_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENCCRT(E, k, x, xnu, 1)
             
         def L_nTOpThermalTruePhoton(T):
             x = me/(PRyMini.kB*T)
@@ -440,10 +633,16 @@ def ComputeWeakRates(Tvec):
             result = integ(f_batch, nitn=n_itn, neval=n_eval, adapt=True)
             return result['myres'].mean
             
-        def L_nTOpThermalDiffBremsstrahlung_int(E, k, T):
-            x  = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENCCRDiffBremsstrahlung(E, k, x, xnu, 1)
+        if(PRyMini.general_nu_flag):
+            def L_nTOpThermalDiffBremsstrahlung_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                return IPENCCRDiffBremsstrahlung(E, k, x, Tg_MeV, 1)
+        else:
+            def L_nTOpThermalDiffBremsstrahlung_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENCCRDiffBremsstrahlung(E, k, x, xnu, 1)
             
         def L_nTOpThermalDiffBremsstrahlung(T):
             min_E = 1.001
@@ -460,16 +659,26 @@ def ComputeWeakRates(Tvec):
             result = integ(f_batch, nitn=n_itn, neval=n_eval, adapt=True)
             return result['myres'].mean
 
-        def L_nTOpThermal_1_int(E, T):
-            return C1dE(E, me/(PRyMini.kB*T), me/(PRyMini.kB*T*T_nuOverT(T)), 1)
+        if(PRyMini.general_nu_flag):
+            def L_nTOpThermal_1_int(E, T):
+                return C1dE(E, me/(PRyMini.kB*T), PRyMini.kB*T/PRyMini.MeV, 1)
+        else:
+            def L_nTOpThermal_1_int(E, T):
+                return C1dE(E, me/(PRyMini.kB*T), me/(PRyMini.kB*T*T_nuOverT(T)), 1)
 
         def L_nTOpThermal_1(T):
             return quad(L_nTOpThermal_1_int, 1., max(25., 150.*(PRyMini.kB*T)/me), args=(T), epsrel = 1.e-2)[0]
             
-        def L_nTOpThermal_2_3_int(e1pe2, e1me2, T):
-            x  = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return 0.5*C2dE1dE2((e1pe2+e1me2)/2.,(e1pe2-e1me2)/2., x, xnu, 1)
+        if(PRyMini.general_nu_flag):
+            def L_nTOpThermal_2_3_int(e1pe2, e1me2, T):
+                x  = me/(PRyMini.kB*T)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                return 0.5*C2dE1dE2((e1pe2+e1me2)/2.,(e1pe2-e1me2)/2., x, Tg_MeV, 1)
+        else:
+            def L_nTOpThermal_2_3_int(e1pe2, e1me2, T):
+                x  = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return 0.5*C2dE1dE2((e1pe2+e1me2)/2.,(e1pe2-e1me2)/2., x, xnu, 1)
             
         def L_nTOpThermal_2_3(T):
             x = me/(PRyMini.kB*T)
@@ -510,10 +719,16 @@ def ComputeWeakRates(Tvec):
         # p -> n processes #
         ####################
         # p -> n real photon corrections
-        def L_pTOnThermalTruePhoton_int(E, k, T):
-            x  = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENCCRT(E, k, x, xnu, -1)
+        if(PRyMini.general_nu_flag):
+            def L_pTOnThermalTruePhoton_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                return IPENCCRT(E, k, x, Tg_MeV, -1)
+        else:
+            def L_pTOnThermalTruePhoton_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENCCRT(E, k, x, xnu, -1)
             
         def L_pTOnThermalTruePhoton(T):
             x = me/(PRyMini.kB*T)
@@ -532,10 +747,16 @@ def ComputeWeakRates(Tvec):
             return result['myres'].mean
             
         # p -> n brems corrections
-        def L_pTOnThermalDiffBremsstrahlung_int(E, k, T):
-            x  = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENCCRDiffBremsstrahlung(E, k, x, xnu, -1)
+        if(PRyMini.general_nu_flag):
+            def L_pTOnThermalDiffBremsstrahlung_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                return IPENCCRDiffBremsstrahlung(E, k, x, Tg_MeV, -1)
+        else:
+            def L_pTOnThermalDiffBremsstrahlung_int(E, k, T):
+                x  = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENCCRDiffBremsstrahlung(E, k, x, xnu, -1)
             
         def L_pTOnThermalDiffBremsstrahlung(T):
             min_E = 1.001
@@ -553,16 +774,26 @@ def ComputeWeakRates(Tvec):
             return result['myres'].mean
             
         # p -> n mass shift + pe+ee corrections
-        def L_pTOnThermal_1_int(E, T):
-            return C1dE(E, me/(PRyMini.kB*T), me/(PRyMini.kB*T*T_nuOverT(T)), -1)
+        if(PRyMini.general_nu_flag):
+            def L_pTOnThermal_1_int(E, T):
+                return C1dE(E, me/(PRyMini.kB*T), PRyMini.kB*T/PRyMini.MeV, -1)
+        else:
+            def L_pTOnThermal_1_int(E, T):
+                return C1dE(E, me/(PRyMini.kB*T), me/(PRyMini.kB*T*T_nuOverT(T)), -1)
 
         def L_pTOnThermal_1(T):
             return quad(L_pTOnThermal_1_int, 1., max(25., 150.*(PRyMini.kB*T)/me), args=(T), epsrel = 1.e-2)[0]
             
-        def L_pTOnThermal_2_3_int(e1pe2, e1me2, T):
-            x  = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return 0.5*C2dE1dE2((e1pe2+e1me2)/2.,(e1pe2-e1me2)/2., x, xnu, -1)
+        if(PRyMini.general_nu_flag):
+            def L_pTOnThermal_2_3_int(e1pe2, e1me2, T):
+                x  = me/(PRyMini.kB*T)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                return 0.5*C2dE1dE2((e1pe2+e1me2)/2.,(e1pe2-e1me2)/2., x, Tg_MeV, -1)
+        else:
+            def L_pTOnThermal_2_3_int(e1pe2, e1me2, T):
+                x  = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return 0.5*C2dE1dE2((e1pe2+e1me2)/2.,(e1pe2-e1me2)/2., x, xnu, -1)
             
         def L_pTOnThermal_2_3(T):
             x = me/(PRyMini.kB*T)

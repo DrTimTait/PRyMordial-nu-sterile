@@ -9,7 +9,8 @@ class PRyMclass(object):
     def __init__(self,my_rho_NP=0.,my_p_NP=0.,my_drho_NP_dT=0.,my_delta_rho_NP=0.,
                  my_f_nue=None,my_f_nuebar=None,my_f_numu=None,my_f_numubar=None,
                  my_f_nutau=None,my_f_nutaubar=None,
-                 my_delta_rho_nu_NP=None):
+                 my_delta_rho_nu_NP=None,
+                 my_C_NP_nue=None,my_C_NP_nuebar=None,my_C_NP_numu=None):
         #############################
         # PRyMordial initialization #
         #############################
@@ -21,6 +22,15 @@ class PRyMclass(object):
         import PRyM.PRyM_thermo as PRyMthermo
         # Loading New Physics species (constructor default: none)
         PRyMthermo.rho_NP,PRyMthermo.p_NP,PRyMthermo.drho_NP_dT,PRyMthermo.delta_rho_NP=my_rho_NP,my_p_NP,my_drho_NP_dT,my_delta_rho_NP
+        # Boltzmann solver implies general_nu_flag
+        if(PRyMini.boltzmann_nu_flag):
+            PRyMini.general_nu_flag = True
+            PRyMini.compute_bckg_flag = True
+            # For SM-like distributions, pre-stored weak rates are valid (~0.1% accuracy)
+            # and ~50x faster. Auto-detect cached rates; compute only on first run.
+            # User can force recomputation by setting compute_nTOp_flag=True explicitly.
+            if not PRyMini.NP_nTOp_flag:
+                PRyMini.compute_nTOp_flag = False
         # Loading general neutrino distribution functions (if general_nu_flag is True)
         if(PRyMini.general_nu_flag):
             if my_f_nue is not None:
@@ -172,7 +182,169 @@ class PRyMclass(object):
                     return y_vec
           # Solution of Boltzmann equations for background thermodynamics
           tfin = PRyMini.t_end # [s]
-          if(PRyMini.general_nu_flag):
+          if(PRyMini.general_nu_flag and PRyMini.boltzmann_nu_flag):
+              # Three-phase evolution with internal Boltzmann solver
+              import PRyM.PRyM_boltzmann as PRyMboltz
+              # Set up NP collision term callbacks
+              C_NP_funcs = {}
+              if my_C_NP_nue is not None:
+                  C_NP_funcs['nue'] = my_C_NP_nue
+              if my_C_NP_nuebar is not None:
+                  C_NP_funcs['nuebar'] = my_C_NP_nuebar
+              if my_C_NP_numu is not None:
+                  C_NP_funcs['numu'] = my_C_NP_numu
+              boltz_solver = PRyMboltz.BoltzmannSolver(
+                  y_coll_max=PRyMini.y_coll_max_boltz, C_NP_funcs=C_NP_funcs)
+              Ny_boltz = boltz_solver.Ny
+              n_species_boltz = boltz_solver.n_species
+
+              # Physical scale factor from plasma entropy conservation: spl(T)*a^3 = const.
+              # Normalized so a(T_boltz_start) = 1, keeping comoving momenta y = p*a
+              # in the MeV range matching the Boltzmann grid.
+              spl_ref = PRyMthermo.spl(PRyMini.T_boltz_start)
+              def a_of_T(Tg):
+                  return (spl_ref / PRyMthermo.spl(Tg))**(1./3.)
+
+              # Phase A: Standard thermal ODE from T_start to T_boltz_start
+              T_boltz_start_K = PRyMini.T_boltz_start * PRyMini.MeV_to_Kelvin
+              T_boltz_end_K = PRyMini.T_boltz_end * PRyMini.MeV_to_Kelvin
+              tini = 1./(2.*Hubble(Tstart_MeV)) # [s]
+              # Temporarily use thermal evolution for Phase A (neutrinos in equilibrium)
+              def dTtotdt_thermal(t,T_vec):
+                  Tg_t,Tnu_t = T_vec
+                  Hubble_T = PRyMini.MeV_to_secm1*(
+                      (PRyMthermo.rho_g(Tg_t)+PRyMthermo.rho_e(Tg_t)
+                       -PRyMthermo.PofT(Tg_t)+Tg_t*PRyMthermo.dPdT(Tg_t)
+                       +PRyMthermo.rho_nu(Tnu_t)+2.*PRyMthermo.rho_nu(Tnu_t))
+                      *8.*np.pi/(3.*PRyMini.Mpl**2))**0.5
+                  num_g = -(Hubble_T*(4.*PRyMthermo.rho_g(Tg_t)+3.*(PRyMthermo.rho_e(Tg_t)+PRyMthermo.p_e(Tg_t))+3.*Tg_t*PRyMthermo.dPdT(Tg_t)))
+                  delta_rho_g = -(PRyMthermo.delta_rho_nue(Tg_t,Tnu_t,Tnu_t)+2.*PRyMthermo.delta_rho_numu(Tg_t,Tnu_t,Tnu_t))
+                  num_g += delta_rho_g
+                  den_g = PRyMthermo.drho_g_dT(Tg_t)+PRyMthermo.drho_e_dT(Tg_t)+Tg_t*PRyMthermo.d2PdT2(Tg_t)
+                  num_nu = -12.*Hubble_T*PRyMthermo.rho_nu(Tnu_t)
+                  num_nu += (PRyMthermo.delta_rho_nue(Tg_t,Tnu_t,Tnu_t)+2.*PRyMthermo.delta_rho_numu(Tg_t,Tnu_t,Tnu_t))
+                  den_nu = 3.*PRyMthermo.drho_nu_dT(Tnu_t)
+                  return [num_g/den_g, num_nu/den_nu]
+
+              # Find time at T_boltz_start by running Phase A
+              t_boltz_start = 1./(2.*Hubble(PRyMini.T_boltz_start))
+              t_boltz_end_approx = 1./(2.*Hubble(PRyMini.T_boltz_end))
+              n_A = max(50, int(PRyMini.n_sampling * 0.1))
+              sol_A_sampling = np.logspace(np.log10(tini),np.log10(t_boltz_start),n_A)
+              sol_A_sampling[0],sol_A_sampling[-1] = tini,t_boltz_start
+              sol_A = solve_ivp(dTtotdt_thermal,[tini,t_boltz_start],[Tstart_MeV,Tstart_MeV],
+                                t_eval=sol_A_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
+              t_A = sol_A.t
+              Tg_A = sol_A.y[0][:]
+              Tnu_A = sol_A.y[1][:]
+
+              # Phase B: Boltzmann evolution from T_boltz_start to T_boltz_end
+              # Uses operator splitting: temperature-based stepping with explicit
+              # Heun for distributions. Needs ~2000 steps to resolve the collision
+              # rate at high T (CFL stability condition: dt * Gamma_coll < 2).
+              Tg_boltz_ini = Tg_A[-1]
+              a_boltz_ini = a_of_T(Tg_boltz_ini)
+              f_curr = boltz_solver.initial_conditions(Tg_boltz_ini, a_boltz_ini)
+              boltz_solver.update_thermo_distributions(f_curr, a_boltz_ini)
+
+              t_B_start = t_A[-1]
+
+              # Temperature-based stepping: log-uniform grid in Tg
+              n_B = max(2000, int(PRyMini.n_sampling * 2))
+              Tg_B_grid = np.logspace(np.log10(Tg_boltz_ini),
+                                       np.log10(PRyMini.T_boltz_end), n_B + 1)
+
+              # Get exact cosmic times at each Phase B temperature step.
+              # Use the 2-variable thermal ODE (Tg, Tnu) which correctly captures
+              # both photon and neutrino cooling. Cannot use the 1-var general_nu ODE
+              # here because the distribution functions are set with fixed a at this point,
+              # making rho_3nu(Tg) incorrect.
+              _Tnu_B_ini = Tnu_A[-1]
+              sol_Tg_full = solve_ivp(dTtotdt_thermal,
+                                       [t_B_start, tfin],
+                                       [Tg_boltz_ini, _Tnu_B_ini],
+                                       method='LSODA', rtol=1.e-8, atol=1.e-11,
+                                       dense_output=True)
+              # Invert Tg(t) → t(Tg) for the Phase B temperature grid
+              from scipy.interpolate import interp1d as _interp1d
+              _t_dense = np.logspace(np.log10(t_B_start),
+                                      np.log10(sol_Tg_full.t[-1]),
+                                      max(5000, n_B * 2))
+              _Tg_dense = sol_Tg_full.sol(_t_dense)[0]
+              # Ensure monotonicity for interpolation
+              _mask = np.concatenate([[True], np.diff(_Tg_dense) < 0])
+              _t_dense = _t_dense[_mask]
+              _Tg_dense = _Tg_dense[_mask]
+              _t_of_Tg = _interp1d(_Tg_dense, _t_dense, kind='linear',
+                                    bounds_error=False,
+                                    fill_value=(_t_dense[0], _t_dense[-1]))
+              t_B_exact = _t_of_Tg(Tg_B_grid)
+              # Force first time point to match Phase A end exactly
+              t_B_exact[0] = t_B_start
+
+              if(PRyMini.verbose_flag):
+                  print(f"Phase B: Boltzmann evolution, Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
+                  print(f"  Operator splitting: {n_B} Heun steps, Ny={Ny_boltz}")
+
+              # Storage for Phase B trajectory
+              t_B_list = [t_B_exact[0]]
+              Tg_B_list = [Tg_boltz_ini]
+              Tg_curr = Tg_boltz_ini
+              f_min_clip = 1.0e-30
+
+              for istep in range(n_B):
+                  Tg_next = Tg_B_grid[istep + 1]
+                  Tg_mid = 0.5 * (Tg_curr + Tg_next)
+                  a_mid = a_of_T(Tg_mid)
+                  dt = t_B_exact[istep + 1] - t_B_exact[istep]
+
+                  # Heun's method for distribution evolution
+                  k1 = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
+                  f_star = np.clip(f_curr + dt * k1, f_min_clip, 1.0 - f_min_clip)
+                  k2 = boltz_solver.collision_integrals(f_star, a_mid, Tg_mid)
+                  f_curr = np.clip(f_curr + 0.5 * dt * (k1 + k2),
+                                   f_min_clip, 1.0 - f_min_clip)
+
+                  # Advance state
+                  Tg_curr = Tg_next
+                  boltz_solver.update_thermo_distributions(f_curr, a_of_T(Tg_curr))
+
+                  t_B_list.append(t_B_exact[istep + 1])
+                  Tg_B_list.append(Tg_curr)
+
+                  if(PRyMini.verbose_flag and (istep+1) % max(1, n_B//5) == 0):
+                      print(f"    step {istep+1}/{n_B}: Tg={Tg_curr:.4f} MeV, a={a_of_T(Tg_curr):.2f}")
+
+              t_B = np.array(t_B_list)
+              Tg_B = np.array(Tg_B_list)
+
+              # Freeze final distributions with dynamic a_of_T for Phase C
+              boltz_solver.update_thermo_distributions(f_curr, a_of_T(Tg_B[-1]),
+                                                       a_of_T_func=a_of_T)
+
+              # Phase C: Frozen distributions, 1-variable Tg ODE to end
+              Tg_C_ini = Tg_B[-1]
+              t_C_start = t_B[-1]
+              n_C = PRyMini.n_sampling - len(t_A) - len(t_B)
+              if n_C < 50:
+                  n_C = 50
+              sol_C_sampling = np.logspace(np.log10(t_C_start),np.log10(tfin),n_C)
+              sol_C_sampling[0] = t_C_start
+              sol_C_sampling[-1] = tfin
+              sol_C = solve_ivp(dTtotdt,[t_C_start,tfin],[Tg_C_ini],
+                                t_eval=sol_C_sampling,method='LSODA',rtol=1.e-6,atol=1.e-9)
+              t_C = sol_C.t
+              Tg_C = sol_C.y[0][:]
+
+              # Concatenate all three phases
+              t_vec = np.concatenate([t_A, t_B[1:], t_C[1:]])
+              Tg_vec = np.concatenate([Tg_A, Tg_B[1:], Tg_C[1:]])
+              # Construct synthetic Tnu_vec from effective temperature
+              Tnu_vec = np.concatenate([Tnu_A,
+                  np.array([PRyMthermo.Tnu_eff_e(T) for T in Tg_B[1:]]),
+                  np.array([PRyMthermo.Tnu_eff_e(T) for T in Tg_C[1:]])])
+
+          elif(PRyMini.general_nu_flag):
               # 1-variable ODE: only Tg (neutrino sector described by f_nu(p, Tg))
               tini = 1./(2.*Hubble(Tstart_MeV)) # [s]
               sol_thermo_sampling = np.logspace(np.log10(tini),np.log10(tfin),PRyMini.n_sampling)

@@ -76,6 +76,20 @@ general_nu_flag = False
 # so the grid automatically scales with temperature.
 x_max_nu = 30. # dimensionless, upper limit p/Tg for quadrature
 p_npoints_nu = 200 # number of Gauss-Legendre quadrature points
+# Set flag to True to evolve neutrino distributions via internal Boltzmann solver
+# When True, the code solves the unintegrated Boltzmann equation on a comoving momentum
+# grid, computing SM collision integrals from first principles. Implies general_nu_flag = True.
+boltzmann_nu_flag = False
+# Comoving momentum grid for Boltzmann evolution (y = p*a)
+y_max_boltz = 100.0 # MeV, maximum comoving momentum
+Ny_boltz = 100 # number of evenly-spaced grid points
+# Temperature range for Boltzmann evolution (neutrinos thermal above, frozen below)
+T_boltz_start = 5.0 # MeV, neutrino decoupling onset
+T_boltz_end = 0.1  # MeV, neutrinos decoupled; collision rates ~ GF^2*T^5 negligible
+# Collision integral momentum cutoff (y_coll_max < y_max avoids spurious D-kernel artifacts)
+y_coll_max_boltz = 50.0  # MeV, collision integral summation limit
+# Include time-averaged neutrino flavor oscillations
+nu_oscillation_flag = False
 # Set flag to True for some new species with temperature T_NP
 NP_thermo_flag = False
 # Set the initial temperature of the NP species via relation TNP_start = xi_NP*T_start

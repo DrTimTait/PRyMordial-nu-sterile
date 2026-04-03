@@ -308,6 +308,30 @@ if(PRyMini.numba_flag):
         chi_m = _ChiFunc_std_nb(-eOFpe, x, xnu, sgnq, xi_nu)
         return p**2*(chi_p + chi_m)
 
+    @njit(cache=True)
+    def _CCR_FMCCR_integrand_nb(p, x, xnu, sgnq, xi_nu):
+        """Combined CCR + FMCCR integrand (standard path).
+        Shares eOFpe, b, RadCorrResum, FermiCoulomb between CCR and FMCCR."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        b = p / eOFpe
+        # CCR response functions
+        chi_p = _ChiFunc_std_nb(eOFpe, x, xnu, sgnq, xi_nu)
+        chi_m = _ChiFunc_std_nb(-eOFpe, x, xnu, sgnq, xi_nu)
+        # FMCCR response functions
+        chi_fm_p = _ChiFunc_FM_std_nb(eOFpe, p, x, xnu, sgnq)
+        chi_fm_m = _ChiFunc_FM_std_nb(-eOFpe, p, x, xnu, sgnq)
+        # Shared radiative corrections and Fermi/Coulomb
+        rc_p = _RadCorrResum_nb(b, np.abs(sgnq * _q - eOFpe), eOFpe)
+        rc_m = _RadCorrResum_nb(b, np.abs(sgnq * _q + eOFpe), eOFpe)
+        fc = _FermiCoulomb_nb(b)
+        if sgnq > 0:
+            fs_p = fc
+            fs_m = 1.0
+        else:
+            fs_p = 1.0
+            fs_m = fc
+        return p**2 * ((chi_p + chi_fm_p) * rc_p * fs_p + (chi_m + chi_fm_m) * rc_m * fs_m)
+
     ###################################################################
     # Numba-accelerated integrands for general_nu (table-based lookup)
     ###################################################################
@@ -470,6 +494,30 @@ if(PRyMini.numba_flag):
             fs_p = 1.0
             fs_m = fc
         return p**2 * (chi_p * rc_p * fs_p + chi_m * rc_m * fs_m)
+
+    @njit(cache=True)
+    def _CCR_FMCCR_integrand_general_tab_nb(p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """Combined CCR + FMCCR integrand for general distributions (table-based).
+        Shares eOFpe, b, RadCorrResum, FermiCoulomb between CCR and FMCCR."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        b = p / eOFpe
+        # CCR response functions
+        chi_p = _ChiFunc_general_tab_nb(eOFpe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        chi_m = _ChiFunc_general_tab_nb(-eOFpe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        # FMCCR response functions
+        chi_fm_p = _ChiFunc_FM_general_tab_nb(eOFpe, p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        chi_fm_m = _ChiFunc_FM_general_tab_nb(-eOFpe, p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        # Shared radiative corrections and Fermi/Coulomb
+        rc_p = _RadCorrResum_nb(b, np.abs(sgnq * _q - eOFpe), eOFpe)
+        rc_m = _RadCorrResum_nb(b, np.abs(sgnq * _q + eOFpe), eOFpe)
+        fc = _FermiCoulomb_nb(b)
+        if sgnq > 0:
+            fs_p = fc
+            fs_m = 1.0
+        else:
+            fs_p = 1.0
+            fs_m = fc
+        return p**2 * ((chi_p + chi_fm_p) * rc_p * fs_p + (chi_m + chi_fm_m) * rc_m * fs_m)
 
 def FermiCoulomb(b):
     me = PRyMini.me*PRyMini.MeV # electron mass
@@ -1066,6 +1114,74 @@ def ComputeWeakRates(Tvec):
             pemax = max(7.,30./x)
             return quad(L_pTOnCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
 
+    # Combined CCR + FMCCR integrand (single quad call instead of two)
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpCCR_FMCCR_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _CCR_FMCCR_integrand_general_tab_nb(p, x, 1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+        def L_pTOnCCR_FMCCR_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _CCR_FMCCR_integrand_general_tab_nb(p, x, -1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+    elif(PRyMini.general_nu_flag):
+        def L_nTOpCCR_FMCCR_int(p, T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdpCCR(p,x,Tg_MeV,1) + IPENdpFMCCR(p,x,Tg_MeV,1)
+        def L_pTOnCCR_FMCCR_int(p, T):
+            x = me/(PRyMini.kB*T)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            return IPENdpCCR(p,x,Tg_MeV,-1) + IPENdpFMCCR(p,x,Tg_MeV,-1)
+    elif(PRyMini.numba_flag):
+        def L_nTOpCCR_FMCCR_int(p, x, xnu, xi):
+            return _CCR_FMCCR_integrand_nb(p, x, xnu, 1, xi)
+        def L_pTOnCCR_FMCCR_int(p, x, xnu, xi):
+            return _CCR_FMCCR_integrand_nb(p, x, xnu, -1, xi)
+    else:
+        def L_nTOpCCR_FMCCR_int(p, T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpCCR(p,x,xnu,1) + IPENdpFMCCR(p,x,xnu,1)
+        def L_pTOnCCR_FMCCR_int(p, T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpCCR(p,x,xnu,-1) + IPENdpFMCCR(p,x,xnu,-1)
+
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpCCR_FMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
+            return quad(L_nTOpCCR_FMCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+        def L_pTOnCCR_FMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
+            return quad(L_pTOnCCR_FMCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+    elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpCCR_FMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_nTOpCCR_FMCCR_int, pemin, pemax, args=(x, xnu, xi_nu), epsrel = epsrel_low)[0]
+        def L_pTOnCCR_FMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_pTOnCCR_FMCCR_int, pemin, pemax, args=(x, xnu, xi_nu), epsrel = epsrel_low)[0]
+    else:
+        def L_nTOpCCR_FMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_nTOpCCR_FMCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+        def L_pTOnCCR_FMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_pTOnCCR_FMCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+
     # Finite-temperature Radiative Corrections
     # Brown & Sawyer for finite temperature radiative corrections + Brehmstrahlung (Eqs. 107)
     if(PRyMini.compute_nTOp_thermal_flag):
@@ -1495,10 +1611,8 @@ def ComputeWeakRates(Tvec):
         if(PRyMini.nTOpBorn_flag):
             rate_nTOp = L_nTOpBORN(T)
         else:
-            # T=0 Born w/ radiative corrections
-            L_nTOp_T = L_nTOpCCR(T)
-            # finite nucleon mass effects
-            L_nTOp_T += L_nTOpFMCCR(T)
+            # Combined CCR + FMCCR in single quad call
+            L_nTOp_T = L_nTOpCCR_FMCCR(T)
             # interpolated thermal corrections
             L_nTOp_T += L_nTOpCCRTh_interp(T)
             # total n -> p rate
@@ -1506,24 +1620,22 @@ def ComputeWeakRates(Tvec):
         if(PRyMini.NP_nTOp_flag):
             rate_nTOp += PRyMini.NP_delta_nTOp*L_nTOpBORN(T)
         return rate_nTOp # to be multiplied by [s-1]
-       
+
     def nTOp_bkwrd_(T):
         rate_pTOn = 0.
                 # pure Born approximation
         if(PRyMini.nTOpBorn_flag):
             rate_pTOn = L_pTOnBORN(T)
         else:
-            # T=0 Born + radiative corrections
-            L_pTOn_T = L_pTOnCCR(T)
-            # finite nucleon mass effects
-            L_pTOn_T += L_pTOnFMCCR(T)
+            # Combined CCR + FMCCR in single quad call
+            L_pTOn_T = L_pTOnCCR_FMCCR(T)
             # interpolated thermal corrections
             L_pTOn_T += L_pTOnCCRTh_interp(T)
             # total p -> n rate
             rate_pTOn = (L_pTOn_T)
         if(PRyMini.NP_nTOp_flag):
             rate_pTOn += PRyMini.NP_delta_nTOp*L_pTOnBORN(T)
-            
+
         return rate_pTOn # to be multiplied by [s-1]
 
     ##############################

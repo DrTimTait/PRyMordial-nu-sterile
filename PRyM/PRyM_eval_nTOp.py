@@ -405,6 +405,30 @@ def ComputeWeakRates(Tvec):
         Tnu_of_Tg = Tnu_vec/Tg_vec
         T_nuOverT = interp1d(Tg_Kelvin,Tnu_of_Tg, bounds_error=False, fill_value="extrapolate", kind='linear')
 
+    # Smart dispatch: detect thermal Fermi-Dirac distributions
+    # When general_nu_flag=True but distributions are still thermal FD (e.g. SM
+    # Boltzmann runs with thermal ICs), we can use the fast numba standard-path
+    # integrands instead of the slow general_nu Python call chain.  This reduces
+    # weak rate computation from ~12 min to ~0.06s for thermal distributions.
+    # Detection: compare f(p, Tg) against FD(p/Tnu_eff) at several momenta.
+    # Using Tnu_eff (not Tg) correctly handles evolved distributions where
+    # neutrinos have cooled to Tnu < Tg after decoupling.
+    _saved_general_nu_flag = PRyMini.general_nu_flag
+    if PRyMini.general_nu_flag and PRyMini.numba_flag:
+        _Tg_test = Tg_vec[len(Tg_vec)//2]  # mid-range temperature
+        _Tnu_eff_test = PRyMthermo.Tnu_eff_e(_Tg_test)  # effective nu temperature
+        _p_test = np.array([0.1, 0.5, 1.0, 2.0, 5.0]) * _Tnu_eff_test
+        _fd_ref = 1./(np.exp(_p_test/_Tnu_eff_test) + 1.)
+        _f_nue = PRyMthermo.f_nue_general(_p_test, _Tg_test)
+        _f_nuebar = PRyMthermo.f_nuebar_general(_p_test, _Tg_test)
+        _max_dev = max(np.max(np.abs(_f_nue - _fd_ref)),
+                       np.max(np.abs(_f_nuebar - _fd_ref)))
+        if _max_dev < 1.e-6:
+            PRyMini.general_nu_flag = False
+            if PRyMini.verbose_flag:
+                print(" Smart dispatch: distributions are thermal FD (max dev = {:.1e})".format(_max_dev))
+                print(" Using fast numba standard-path integrands for weak rates")
+
     # Auxiliary thermodynamics functions
     def FD_nu3(E,phi,x):
         if((x*E-phi)<exp_cutoff):
@@ -1309,4 +1333,6 @@ def ComputeWeakRates(Tvec):
         np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_MT.txt",np.c_[T_interval_MT,nTOp_bkwrdvec_MT])
         np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_LT.txt",np.c_[T_interval_LT,nTOp_frwrdvec_LT])
         np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_LT.txt",np.c_[T_interval_LT,nTOp_bkwrdvec_LT])
+    # Restore general_nu_flag (may have been temporarily cleared by smart dispatch)
+    PRyMini.general_nu_flag = _saved_general_nu_flag
     return [T_interval_HT,nTOp_frwrdvec_HT,nTOp_bkwrdvec_HT,T_interval_MT,nTOp_frwrdvec_MT,nTOp_bkwrdvec_MT,T_interval_LT,nTOp_frwrdvec_LT,nTOp_bkwrdvec_LT]

@@ -115,6 +115,8 @@ sampling_nTOp_thermal = 50 # recommended for accuracy (number of points from T_s
 tau_n_flag = True
 # Set flag to True to save bulk of weak-rate effects, if re-computed
 save_nTOp_flag = False
+# Number of parallel cores for weak rate computation (0 = auto-detect, 1 = serial)
+n_cores_nTOp = 0
 # Set flag to True to save tiny thermal effects on weak rates, if re-computed
 save_nTOp_thermal_flag = False
 # Set flag to True for NP modification of weak rates in units of standard n <--> p Born rates

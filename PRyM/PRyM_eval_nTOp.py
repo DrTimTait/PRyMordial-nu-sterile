@@ -8,6 +8,11 @@ if(PRyMini.compute_nTOp_thermal_flag):
     import vegas
 
 exp_cutoff = 3*1.e+2 # cutoff to avoid overflow warnings
+
+# Module-level state for multiprocessing (fork-inherited by child processes)
+_mp_state = {}
+def _mp_compute_rates(T):
+    return (_mp_state['frwrd'](T), _mp_state['bkwrd'](T))
 epsrel_low = 1.e-1 # minimum precision sufficient to speed up some quad integrals
 if(PRyMini.compute_nTOp_thermal_flag):
     # Settings for precision in vegas integration
@@ -909,25 +914,52 @@ def ComputeWeakRates(Tvec):
     ##############################
     # Finalizing  n <--> p rates #
     ##############################
-    # vectorization of the rates
-    nTOp_frwrd_vec = np.vectorize(nTOp_frwrd_)
-    nTOp_bkwrd_vec = np.vectorize(nTOp_bkwrd_)
-    # saving the rates if computed from scratch
+    T_interval_HT = np.logspace(np.log10(PRyMini.T_start),np.log10(PRyMini.T_weak),PRyMini.sampling_nTOp)
+    T_interval_MT = np.logspace(np.log10(PRyMini.T_weak),np.log10(PRyMini.T_nucl),PRyMini.sampling_nTOp)
+    T_interval_LT = np.logspace(np.log10(PRyMini.T_nucl),np.log10(PRyMini.T_end),PRyMini.sampling_nTOp)
+    T_all = np.concatenate([T_interval_HT, T_interval_MT, T_interval_LT])
+
+    # Determine parallelism
+    import os
+    n_cores = PRyMini.n_cores_nTOp
+    if n_cores == 0:
+        n_cores = os.cpu_count() or 1
+    n_cores = min(n_cores, len(T_all))
+
     if(PRyMini.verbose_flag):
         print(" ")
-        print("Re-computing n <--> p weak rates @ high T regime")
-    T_interval_HT = np.logspace(np.log10(PRyMini.T_start),np.log10(PRyMini.T_weak),PRyMini.sampling_nTOp)
-    if(PRyMini.verbose_flag):
-        print("Re-computing n <--> p weak rates @ mid T regime")
-    T_interval_MT = np.logspace(np.log10(PRyMini.T_weak),np.log10(PRyMini.T_nucl),PRyMini.sampling_nTOp)
-    if(PRyMini.verbose_flag):
-        print("Re-computing n <--> p weak rates @ low T regime")
-    T_interval_LT = np.logspace(np.log10(PRyMini.T_nucl),np.log10(PRyMini.T_end),PRyMini.sampling_nTOp)
+        print("Re-computing n <--> p weak rates ({0} temperature points, {1} core{2})".format(
+            len(T_all), n_cores, "s" if n_cores > 1 else ""))
+
+    if n_cores > 1:
+        import multiprocessing as _multiproc
+        _mp_state['frwrd'] = nTOp_frwrd_
+        _mp_state['bkwrd'] = nTOp_bkwrd_
+        ctx = _multiproc.get_context('fork')
+        with ctx.Pool(n_cores) as pool:
+            results = pool.map(_mp_compute_rates, T_all)
+        _mp_state.clear()
+        frwrd_all = np.array([r[0] for r in results])
+        bkwrd_all = np.array([r[1] for r in results])
+    else:
+        results = [(nTOp_frwrd_(T), nTOp_bkwrd_(T)) for T in T_all]
+        frwrd_all = np.array([r[0] for r in results])
+        bkwrd_all = np.array([r[1] for r in results])
+
+    # Split into HT/MT/LT segments
+    n = PRyMini.sampling_nTOp
+    nTOp_frwrdvec_HT = frwrd_all[:n]
+    nTOp_bkwrdvec_HT = bkwrd_all[:n]
+    nTOp_frwrdvec_MT = frwrd_all[n:2*n]
+    nTOp_bkwrdvec_MT = bkwrd_all[n:2*n]
+    nTOp_frwrdvec_LT = frwrd_all[2*n:]
+    nTOp_bkwrdvec_LT = bkwrd_all[2*n:]
+
     if(PRyMini.save_nTOp_flag):
-        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_HT.txt",np.c_[T_interval_HT,nTOp_frwrd_vec(T_interval_HT)])
-        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_HT.txt",np.c_[T_interval_HT,nTOp_bkwrd_vec(T_interval_HT)])
-        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_MT.txt",np.c_[T_interval_MT,nTOp_frwrd_vec(T_interval_MT)])
-        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_MT.txt",np.c_[T_interval_MT,nTOp_bkwrd_vec(T_interval_MT)])
-        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_LT.txt",np.c_[T_interval_LT,nTOp_frwrd_vec(T_interval_LT)])
-        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_LT.txt",np.c_[T_interval_LT,nTOp_bkwrd_vec(T_interval_LT)])
-    return [T_interval_HT,nTOp_frwrd_vec(T_interval_HT),nTOp_bkwrd_vec(T_interval_HT),T_interval_MT,nTOp_frwrd_vec(T_interval_MT),nTOp_bkwrd_vec(T_interval_MT),T_interval_LT,nTOp_frwrd_vec(T_interval_LT),nTOp_bkwrd_vec(T_interval_LT)]
+        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_HT.txt",np.c_[T_interval_HT,nTOp_frwrdvec_HT])
+        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_HT.txt",np.c_[T_interval_HT,nTOp_bkwrdvec_HT])
+        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_MT.txt",np.c_[T_interval_MT,nTOp_frwrdvec_MT])
+        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_MT.txt",np.c_[T_interval_MT,nTOp_bkwrdvec_MT])
+        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_frwrd_LT.txt",np.c_[T_interval_LT,nTOp_frwrdvec_LT])
+        np.savetxt(my_dir+"/PRyMrates/nTOp/"+"nTOp_bkwrd_LT.txt",np.c_[T_interval_LT,nTOp_bkwrdvec_LT])
+    return [T_interval_HT,nTOp_frwrdvec_HT,nTOp_bkwrdvec_HT,T_interval_MT,nTOp_frwrdvec_MT,nTOp_bkwrdvec_MT,T_interval_LT,nTOp_frwrdvec_LT,nTOp_bkwrdvec_LT]

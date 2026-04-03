@@ -308,6 +308,169 @@ if(PRyMini.numba_flag):
         chi_m = _ChiFunc_std_nb(-eOFpe, x, xnu, sgnq, xi_nu)
         return p**2*(chi_p + chi_m)
 
+    ###################################################################
+    # Numba-accelerated integrands for general_nu (table-based lookup)
+    ###################################################################
+    # These replace the slow Python call chain through f_nue_general
+    # by pre-tabulating f(E) on a uniform grid and doing fast linear
+    # interpolation inside @njit compiled functions.
+
+    _me_MeV = PRyMini.me  # electron mass in MeV (0.511)
+
+    @njit(cache=True)
+    def _interp_f_nb(E_abs, tab_E_max, tab_dE, tab_f, N):
+        """Fast linear interpolation on a uniform grid.
+        E_abs: absolute dimensionless neutrino energy |E_nu| (units of me).
+        tab_E_max: maximum energy in table.
+        tab_dE: grid spacing.
+        tab_f: distribution values on uniform grid [0, tab_E_max].
+        N: number of grid points."""
+        if E_abs <= 0.0:
+            return tab_f[0]
+        if E_abs >= tab_E_max:
+            return 0.0
+        idx_f = E_abs / tab_dE
+        i = int(idx_f)
+        if i >= N - 1:
+            return 0.0
+        frac = idx_f - i
+        return tab_f[i] * (1.0 - frac) + tab_f[i + 1] * frac
+
+    @njit(cache=True)
+    def _f_eff_nu_tab_nb(E_nu, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """Effective neutrino distribution from table with crossing symmetry.
+        E_nu: signed dimensionless neutrino energy (units of me).
+        Handles nu/nubar dispatch and emission (1-f) for E_nu < 0."""
+        E_abs = E_nu if E_nu >= 0.0 else -E_nu
+        if E_nu >= 0.0:
+            if sgnq > 0:
+                return _interp_f_nb(E_abs, tab_E_max, tab_dE, tab_f_nue, N)
+            else:
+                return _interp_f_nb(E_abs, tab_E_max, tab_dE, tab_f_nuebar, N)
+        else:
+            if sgnq > 0:
+                return 1.0 - _interp_f_nb(E_abs, tab_E_max, tab_dE, tab_f_nuebar, N)
+            else:
+                return 1.0 - _interp_f_nb(E_abs, tab_E_max, tab_dE, tab_f_nue, N)
+
+    @njit(cache=True)
+    def _EA_feff_tab_nb(E_nu, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """E^A * f_eff(E) from table."""
+        f_val = _f_eff_nu_tab_nb(E_nu, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        if A == 0:
+            return f_val
+        elif A == 1:
+            return E_nu * f_val
+        elif A == 2:
+            return E_nu * E_nu * f_val
+        elif A == 3:
+            return E_nu * E_nu * E_nu * f_val
+        else:
+            return E_nu**A * f_val
+
+    @njit(cache=True)
+    def _FD_nu_eApB_tab_nb(E_nu, A, B, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """d^B/dE^B [E^A * f_eff(E)] via central finite differences, from table.
+        Step size must span multiple table grid cells for meaningful derivatives."""
+        if B == 0:
+            return _EA_feff_tab_nb(E_nu, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        # Use step size of 3 table spacings to ensure derivatives sample across grid cells
+        dE = 3.0 * tab_dE
+        if B == 1:
+            fp = _EA_feff_tab_nb(E_nu + dE, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+            fm = _EA_feff_tab_nb(E_nu - dE, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+            return (fp - fm) / (2.0 * dE)
+        else:  # B == 2
+            fp = _EA_feff_tab_nb(E_nu + dE, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+            f0 = _EA_feff_tab_nb(E_nu, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+            fm = _EA_feff_tab_nb(E_nu - dE, A, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+            return (fp - 2.0 * f0 + fm) / (dE * dE)
+
+    @njit(cache=True)
+    def _ChiFunc_general_tab_nb(E, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """Born response function for general distributions (table-based)."""
+        E_nu = E - sgnq * _q
+        f_val = _f_eff_nu_tab_nb(E_nu, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        FD2_val = _FD2_nb(-E, x)
+        return f_val * FD2_val * E_nu * E_nu
+
+    @njit(cache=True)
+    def _ChiFunc_FM_general_tab_nb(en, pe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """Finite-mass response function for general distributions (table-based)."""
+        if sgnq > 0:
+            f_1 = ((1.0 + _gA)**2 + 2.0 * _dk * _gA) / (1.0 + 3.0 * _gA**2)
+            f_2 = ((1.0 - _gA)**2 - 2.0 * _dk * _gA) / (1.0 + 3.0 * _gA**2)
+            M_sq = (_mp_ + _mn - _Q) / (2.0 * _me)
+        else:
+            f_1 = ((1.0 - _gA)**2 - 2.0 * _dk * _gA) / (1.0 + 3.0 * _gA**2)
+            f_2 = ((1.0 + _gA)**2 + 2.0 * _dk * _gA) / (1.0 + 3.0 * _gA**2)
+            M_sq = (_mp_ + _mn + _Q) / (2.0 * _me)
+        f_3 = (_gA**2 - 1.0) / (1.0 + 3.0 * _gA**2)
+        FD2_en = _FD2_nb(-en, x)
+        Enu = en - sgnq * _q
+        # Shorthand: G(A,B) = d^B/dE^B [E^A * f_eff(E)] at Enu
+        e2p0 = _FD_nu_eApB_tab_nb(Enu, 2, 0, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e3p0 = _FD_nu_eApB_tab_nb(Enu, 3, 0, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e4p2 = _FD_nu_eApB_tab_nb(Enu, 4, 2, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e2p2 = _FD_nu_eApB_tab_nb(Enu, 2, 2, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e4p1 = _FD_nu_eApB_tab_nb(Enu, 4, 1, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e2p1 = _FD_nu_eApB_tab_nb(Enu, 2, 1, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e3p1 = _FD_nu_eApB_tab_nb(Enu, 3, 1, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        e3p2 = _FD_nu_eApB_tab_nb(Enu, 3, 2, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        return (f_1 * e2p0 * FD2_en * (pe**2 / (M_sq * en))
+            + f_2 * e3p0 * FD2_en * (-(1.0 / M_sq))
+            + (f_1 + f_2 + f_3) / (2.0 * x * M_sq) * (e4p2 * FD2_en + e2p2 * FD2_en * pe**2)
+            + (f_1 + f_2 + f_3) / (2.0 * M_sq) * (e4p1 * FD2_en + e2p1 * FD2_en * pe**2)
+            - (f_1 + f_2) / (x * M_sq) * (e3p1 * FD2_en + e2p1 * FD2_en * pe**2 / (-en))
+            - f_3 * 3.0 / (x * M_sq) * e2p0 * FD2_en
+            + f_3 / (3.0 * M_sq) * e3p1 * FD2_en * pe**2 / en
+            + f_3 * 2.0 / (2.0 * x * 3.0 * M_sq) * e3p2 * FD2_en * pe**2 / en
+            - (f_1 + f_2 + f_3) * 3.0 / (2.0 * x) * (1.0 - (_Mn / _Mp)**sgnq) * (e2p1 * FD2_en))
+
+    @njit(cache=True)
+    def _Born_integrand_general_tab_nb(p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """Born integrand for general distributions (table-based)."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        chi_p = _ChiFunc_general_tab_nb(eOFpe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        chi_m = _ChiFunc_general_tab_nb(-eOFpe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        return p**2 * (chi_p + chi_m)
+
+    @njit(cache=True)
+    def _CCR_integrand_general_tab_nb(p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """CCR integrand for general distributions (table-based)."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        b = p / eOFpe
+        chi_p = _ChiFunc_general_tab_nb(eOFpe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        chi_m = _ChiFunc_general_tab_nb(-eOFpe, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        rc_p = _RadCorrResum_nb(b, np.abs(sgnq * _q - eOFpe), eOFpe)
+        rc_m = _RadCorrResum_nb(b, np.abs(sgnq * _q + eOFpe), eOFpe)
+        fc = _FermiCoulomb_nb(b)
+        if sgnq > 0:
+            fs_p = fc
+            fs_m = 1.0
+        else:
+            fs_p = 1.0
+            fs_m = fc
+        return p**2 * (chi_p * rc_p * fs_p + chi_m * rc_m * fs_m)
+
+    @njit(cache=True)
+    def _FMCCR_integrand_general_tab_nb(p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N):
+        """FMCCR integrand for general distributions (table-based)."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        b = p / eOFpe
+        chi_p = _ChiFunc_FM_general_tab_nb(eOFpe, p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        chi_m = _ChiFunc_FM_general_tab_nb(-eOFpe, p, x, sgnq, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, N)
+        rc_p = _RadCorrResum_nb(b, np.abs(sgnq * _q - eOFpe), eOFpe)
+        rc_m = _RadCorrResum_nb(b, np.abs(sgnq * _q + eOFpe), eOFpe)
+        fc = _FermiCoulomb_nb(b)
+        if sgnq > 0:
+            fs_p = fc
+            fs_m = 1.0
+        else:
+            fs_p = 1.0
+            fs_m = fc
+        return p**2 * (chi_p * rc_p * fs_p + chi_m * rc_m * fs_m)
+
 def FermiCoulomb(b):
     me = PRyMini.me*PRyMini.MeV # electron mass
     Gamma = np.sqrt(1.-PRyMini.alphaem**2.)-1.
@@ -606,8 +769,26 @@ def ComputeWeakRates(Tvec):
          eOFpe = np.sqrt(p**2+1.)
          return IPENdpFrom_Chi_NoCCR(eOFpe, p, x, znu, sgnq)
 
+    # Table builder for numba general_nu integrands
+    _N_tab = 10000  # number of grid points for distribution table
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def _build_nu_tables(Tg_MeV, pemax):
+            """Pre-tabulate f_nue and f_nuebar on a uniform dimensionless energy grid."""
+            E_nu_max = np.sqrt(pemax**2 + 1.0) + Q/me + 2.0
+            tab_E = np.linspace(0., E_nu_max, _N_tab)
+            tab_dE = tab_E[1] - tab_E[0]
+            p_MeV = tab_E * PRyMini.me  # convert dimensionless E to physical p [MeV]
+            tab_f_nue = np.ascontiguousarray(PRyMthermo.f_nue_general(p_MeV, Tg_MeV))
+            tab_f_nuebar = np.ascontiguousarray(PRyMthermo.f_nuebar_general(p_MeV, Tg_MeV))
+            return E_nu_max, tab_dE, tab_f_nue, tab_f_nuebar
+
     # Born rates given by Eq 2.30 in Brown & Sawyer
-    if(PRyMini.general_nu_flag):
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpBORN_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _Born_integrand_general_tab_nb(p, x, 1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+        def L_pTOnBORN_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _Born_integrand_general_tab_nb(p, x, -1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+    elif(PRyMini.general_nu_flag):
         def L_nTOpBORN_int(p,T):
             x = me/(PRyMini.kB*T)
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
@@ -616,23 +797,37 @@ def ComputeWeakRates(Tvec):
             x = me/(PRyMini.kB*T)
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
             return IPENdp(p,x,Tg_MeV,-1)
+    elif(PRyMini.numba_flag):
+        def L_nTOpBORN_int(p, x, xnu, xi):
+            return _Born_integrand_nb(p, x, xnu, 1, xi)
+        def L_pTOnBORN_int(p, x, xnu, xi):
+            return _Born_integrand_nb(p, x, xnu, -1, xi)
     else:
-        if(PRyMini.numba_flag):
-            def L_nTOpBORN_int(p, x, xnu, xi):
-                return _Born_integrand_nb(p, x, xnu, 1, xi)
-            def L_pTOnBORN_int(p, x, xnu, xi):
-                return _Born_integrand_nb(p, x, xnu, -1, xi)
-        else:
-            def L_nTOpBORN_int(p,T):
-                x = me/(PRyMini.kB*T)
-                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-                return IPENdp(p,x,xnu,1)
-            def L_pTOnBORN_int(p,T):
-                x = me/(PRyMini.kB*T)
-                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-                return IPENdp(p,x,xnu,-1)
+        def L_nTOpBORN_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdp(p,x,xnu,1)
+        def L_pTOnBORN_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdp(p,x,xnu,-1)
 
-    if(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpBORN(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            return quad(L_nTOpBORN_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+        def L_pTOnBORN(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            return quad(L_pTOnBORN_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+    elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
         def L_nTOpBORN(T):
             pemin = 0.
             x = me/(PRyMini.kB*T)
@@ -714,7 +909,12 @@ def ComputeWeakRates(Tvec):
         return p**2*(ChiFunc_FM(eOFpe,p,x,znu,sgnq)*RadCorrResum(en_ratio, np.abs(sgnq*Q/me-eOFpe),eOFpe)*FermiStat(sgnq,1,en_ratio) +
         ChiFunc_FM(-eOFpe,p,x,znu,sgnq)*RadCorrResum(en_ratio, np.abs(sgnq*Q/me+eOFpe),eOFpe)*FermiStat(sgnq,-1,en_ratio))
 
-    if(PRyMini.general_nu_flag):
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpFMCCR_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _FMCCR_integrand_general_tab_nb(p, x, 1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+        def L_pTOnFMCCR_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _FMCCR_integrand_general_tab_nb(p, x, -1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+    elif(PRyMini.general_nu_flag):
         def L_nTOpFMCCR_int(p,T):
             x = me/(PRyMini.kB*T)
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
@@ -723,23 +923,37 @@ def ComputeWeakRates(Tvec):
             x = me/(PRyMini.kB*T)
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
             return IPENdpFMCCR(p,x,Tg_MeV,-1)
+    elif(PRyMini.numba_flag):
+        def L_nTOpFMCCR_int(p, x, xnu):
+            return _FMCCR_integrand_nb(p, x, xnu, 1)
+        def L_pTOnFMCCR_int(p, x, xnu):
+            return _FMCCR_integrand_nb(p, x, xnu, -1)
     else:
-        if(PRyMini.numba_flag):
-            def L_nTOpFMCCR_int(p, x, xnu):
-                return _FMCCR_integrand_nb(p, x, xnu, 1)
-            def L_pTOnFMCCR_int(p, x, xnu):
-                return _FMCCR_integrand_nb(p, x, xnu, -1)
-        else:
-            def L_nTOpFMCCR_int(p,T):
-                x = me/(PRyMini.kB*T)
-                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-                return IPENdpFMCCR(p,x,xnu,1)
-            def L_pTOnFMCCR_int(p,T):
-                x = me/(PRyMini.kB*T)
-                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-                return IPENdpFMCCR(p,x,xnu,-1)
+        def L_nTOpFMCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpFMCCR(p,x,xnu,1)
+        def L_pTOnFMCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpFMCCR(p,x,xnu,-1)
 
-    if(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpFMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            return quad(L_nTOpFMCCR_int,pemin,pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+        def L_pTOnFMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            return quad(L_pTOnFMCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+    elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
         def L_nTOpFMCCR(T):
             pemin = 0.
             x = me/(PRyMini.kB*T)
@@ -772,7 +986,12 @@ def ComputeWeakRates(Tvec):
         eOFpe = np.sqrt(p**2+1.)
         return IPENdpFrom_Chi_CCR(eOFpe, p, x, znu, sgnq)
 
-    if(PRyMini.general_nu_flag):
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpCCR_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _CCR_integrand_general_tab_nb(p, x, 1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+        def L_pTOnCCR_int(p, x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar):
+            return _CCR_integrand_general_tab_nb(p, x, -1, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar, _N_tab)
+    elif(PRyMini.general_nu_flag):
         def L_nTOpCCR_int(p,T):
             x = me/(PRyMini.kB*T)
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
@@ -781,23 +1000,37 @@ def ComputeWeakRates(Tvec):
             x = me/(PRyMini.kB*T)
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
             return IPENdpCCR(p,x,Tg_MeV,-1)
+    elif(PRyMini.numba_flag):
+        def L_nTOpCCR_int(p, x, xnu, xi):
+            return _CCR_integrand_nb(p, x, xnu, 1, xi)
+        def L_pTOnCCR_int(p, x, xnu, xi):
+            return _CCR_integrand_nb(p, x, xnu, -1, xi)
     else:
-        if(PRyMini.numba_flag):
-            def L_nTOpCCR_int(p, x, xnu, xi):
-                return _CCR_integrand_nb(p, x, xnu, 1, xi)
-            def L_pTOnCCR_int(p, x, xnu, xi):
-                return _CCR_integrand_nb(p, x, xnu, -1, xi)
-        else:
-            def L_nTOpCCR_int(p,T):
-                x = me/(PRyMini.kB*T)
-                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-                return IPENdpCCR(p,x,xnu,1)
-            def L_pTOnCCR_int(p,T):
-                x = me/(PRyMini.kB*T)
-                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-                return IPENdpCCR(p,x,xnu,-1)
+        def L_nTOpCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpCCR(p,x,xnu,1)
+        def L_pTOnCCR_int(p,T):
+            x = me/(PRyMini.kB*T)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return IPENdpCCR(p,x,xnu,-1)
 
-    if(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+    if(PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            return quad(L_nTOpCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+        def L_pTOnCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            return quad(L_pTOnCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
+    elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
         def L_nTOpCCR(T):
             pemin = 0.
             x = me/(PRyMini.kB*T)

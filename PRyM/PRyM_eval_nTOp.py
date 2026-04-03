@@ -19,6 +19,295 @@ if(PRyMini.compute_nTOp_thermal_flag):
     n_eval = 20000 # recommended max number of evaluations per iteration
     n_itn = 20 # recommended number of iterations
 
+###############################################################
+# Numba-accelerated integrand functions for weak rate computation
+###############################################################
+if(PRyMini.numba_flag):
+    from numba import njit
+
+    # Pre-bake physical constants at import time
+    _me = PRyMini.me*PRyMini.MeV
+    _mn = PRyMini.mn*PRyMini.MeV
+    _mp_ = PRyMini.mp*PRyMini.MeV
+    _Q = _mn - _mp_
+    _q = _Q/_me
+    _gA = PRyMini.gA
+    _dk = PRyMini.deltakappa
+    _alpha = PRyMini.alphaem
+    _Mp = _mp_/_me
+    _Mn = _mn/_me
+
+    # FermiCoulomb constants
+    _FC_Gamma = np.sqrt(1.0 - _alpha**2) - 1.0
+    _FC_gamma1 = 1.0 + _FC_Gamma
+    _FC_prefix = (1.0 + _FC_Gamma/2.0)*4.0
+    _FC_Fn_Compton = PRyMini.hbar*PRyMini.clight/_me
+    _FC_radproton = PRyMini.radproton
+    _FC_gamma_gamma2_sq = float(gamma(3.0 + 2.0*_FC_Gamma))**2
+
+    @njit(cache=True)
+    def _li2(x):
+        """Dilogarithm Li_2(x) for real x in [0, 1]."""
+        if x <= 0.0:
+            return 0.0
+        if x <= 0.5:
+            s = 0.0
+            xk = x
+            for k in range(1, 50):
+                s += xk/(k*k)
+                xk *= x
+            return s
+        else:
+            y = 1.0 - x
+            if y <= 0.0:
+                return np.pi**2/6.0
+            s = 0.0
+            yk = y
+            for k in range(1, 50):
+                s += yk/(k*k)
+                yk *= y
+            return np.pi**2/6.0 - np.log(x)*np.log(y) - s
+
+    @njit(cache=True)
+    def _spence_nb(z):
+        """scipy.special.spence compatible: spence(z) = Li_2(1-z)."""
+        return _li2(1.0 - z)
+
+    @njit(cache=True)
+    def _abs_cgamma_sq(s, t):
+        """|Gamma(s+it)|^2 via Lanczos approximation (g=7, n=9)."""
+        p0 = 0.99999999999980993
+        p1 = 676.5203681218851
+        p2 = -1259.1392167224028
+        p3 = 771.32342877765313
+        p4 = -176.61502916214059
+        p5 = 12.507343278686905
+        p6 = -0.13857109526572012
+        p7 = 9.9843695780195716e-6
+        p8 = 1.5056327351493116e-7
+        g = 7.0
+        zr = s - 1.0
+        zi = t
+        Ar = p0
+        Ai = 0.0
+        pk = (p1, p2, p3, p4, p5, p6, p7, p8)
+        for k in range(8):
+            dr = zr + k + 1.0
+            denom = dr*dr + zi*zi
+            Ar += pk[k]*dr/denom
+            Ai -= pk[k]*zi/denom
+        wr = zr + g + 0.5
+        wi = zi
+        ln_w_abs = 0.5*np.log(wr*wr + wi*wi)
+        arg_w = np.arctan2(wi, wr)
+        real_exp = (s - 0.5)*ln_w_abs - t*arg_w
+        log_result = np.log(2.0*np.pi) + 2.0*real_exp - 2.0*wr + np.log(Ar*Ar + Ai*Ai)
+        return np.exp(log_result)
+
+    @njit(cache=True)
+    def _FermiCoulomb_nb(b):
+        Gamma = _FC_Gamma
+        gamma1 = _FC_gamma1
+        alpha = _alpha
+        base = (2.0*_FC_radproton*b)/_FC_Fn_Compton
+        power_part = base**(2.0*Gamma)/_FC_gamma_gamma2_sq
+        exp_part = np.exp(np.pi*alpha/b)
+        denom = (1.0 - b**2)**Gamma
+        gamma_part = _abs_cgamma_sq(gamma1, alpha/b)
+        return _FC_prefix*power_part*exp_part/denom*gamma_part
+
+    @njit(cache=True)
+    def _RadCorrResum_nb(b, y, en):
+        me = _me
+        mn = _mn
+        mp = _mp_
+        mA = 1.2e3*PRyMini.MeV
+        Q = _Q
+        alpha = _alpha
+        Cndecay = 0.891
+        deltandecay = -0.00043
+        Lndecay = 1.02094
+        Sndecay = 1.02248
+        NLLndecay = -0.0001
+        Agndecay = -0.34
+        if b == 0.0:
+            Rd = 1.0
+        else:
+            Rd = np.arctanh(b)/b
+        Sirlin_fun = (3.0*np.log(mp/me) - 0.75
+            + 4.0*(Rd-1.0)*(y/(3.0*en) - 1.5 + np.log(2.0*y))
+            + Rd*(2.0*(1.0+b**2) + y**2/(6.0*en**2) - 4.0*b*Rd)
+            - (4.0/b)*_spence_nb(1.0 - 2.0*b/(1.0+b)))
+        return ((1.0 + alpha/(2.0*np.pi)*(Sirlin_fun - 3.0*np.log(mp/(2.0*Q))))
+            *(Lndecay + (alpha/np.pi)*Cndecay + deltandecay)
+            *(Sndecay + 1.0/(134.0*2.0*np.pi)*(np.log(mp/mA) + Agndecay) + NLLndecay))
+
+    @njit(cache=True)
+    def _FD2_nb(E, x):
+        if x*E < exp_cutoff:
+            return 1.0/(np.exp(x*E) + 1.0)
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu3_nb(E, phi, x):
+        if x*E - phi < exp_cutoff:
+            return 1.0/(np.exp(x*E - phi) + 1.0)
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e2p0_nb(E, phi, x):
+        if x*E - phi < exp_cutoff:
+            return E**2/(np.exp(x*E - phi) + 1.0)
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e3p0_nb(E, phi, x):
+        if x*E - phi < exp_cutoff:
+            return E**3/(np.exp(x*E - phi) + 1.0)
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e4p2_nb(E, phi, x):
+        Ex = E*x
+        if 2.0*phi < exp_cutoff and Ex + phi < exp_cutoff and 2.0*Ex < exp_cutoff:
+            ep = np.exp(phi)
+            eEx = np.exp(Ex)
+            d = (eEx + ep)**3
+            return (E**2*ep*((24.0 - Ex*(Ex + 8.0))*eEx*ep + eEx*eEx*(Ex - 6.0)*(Ex - 2.0) + 12.0*ep*ep))/d
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e2p2_nb(E, phi, x):
+        Ex = E*x
+        if 3.0*phi < exp_cutoff and 2.0*Ex + phi < exp_cutoff and Ex < exp_cutoff:
+            ep = np.exp(phi)
+            eEx = np.exp(Ex)
+            d = (eEx + ep)**3
+            return ((Ex*(Ex - 4.0) + 2.0)*eEx*eEx*ep + (4.0 - Ex*(Ex + 4.0))*eEx*ep*ep + 2.0*ep*ep*ep)/d
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e4p1_nb(E, phi, x):
+        Ex = E*x
+        if phi < exp_cutoff and Ex < exp_cutoff:
+            ep = np.exp(phi)
+            eEx = np.exp(Ex)
+            d = (eEx + ep)**2
+            return (ep*E**3*(4.0*ep + eEx*(4.0 - Ex)))/d
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e2p1_nb(E, phi, x):
+        Ex = E*x
+        if phi < exp_cutoff and Ex < exp_cutoff:
+            ep = np.exp(phi)
+            eEx = np.exp(Ex)
+            d = (eEx + ep)**2
+            return (ep*E*(2.0*ep + eEx*(2.0 - Ex)))/d
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e3p1_nb(E, phi, x):
+        Ex = E*x
+        if phi < exp_cutoff and Ex < exp_cutoff:
+            ep = np.exp(phi)
+            eEx = np.exp(Ex)
+            d = (eEx + ep)**2
+            return (ep*E**2*(3.0*ep + eEx*(3.0 - Ex)))/d
+        return 0.0
+
+    @njit(cache=True)
+    def _FD_nu_e3p2_nb(E, phi, x):
+        Ex = E*x
+        if 2.0*phi < exp_cutoff and Ex + phi < exp_cutoff and 2.0*Ex < exp_cutoff:
+            ep = np.exp(phi)
+            eEx = np.exp(Ex)
+            d = (eEx + ep)**3
+            return (E*ep*((12.0 - Ex*(Ex + 6.0))*eEx*ep + eEx*eEx*(Ex*(Ex - 6.0) + 6.0) + 6.0*ep*ep))/d
+        return 0.0
+
+    @njit(cache=True)
+    def _ChiFunc_std_nb(E, x, znu, sgnq, xi_nu):
+        """Standard response function (non-general_nu)."""
+        Enu = E - sgnq*_q
+        return _FD_nu3_nb(Enu, sgnq*xi_nu, znu)*_FD2_nb(-E, x)*Enu**2
+
+    @njit(cache=True)
+    def _ChiFunc_FM_std_nb(en, pe, x, znu, sgnq):
+        """Standard finite-mass response function (non-general_nu, phi=0)."""
+        if sgnq > 0:
+            f_1 = ((1.0+_gA)**2 + 2.0*_dk*_gA)/(1.0+3.0*_gA**2)
+            f_2 = ((1.0-_gA)**2 - 2.0*_dk*_gA)/(1.0+3.0*_gA**2)
+            M_sq = (_mp_+_mn-_Q)/(2.0*_me)
+        else:
+            f_1 = ((1.0-_gA)**2 - 2.0*_dk*_gA)/(1.0+3.0*_gA**2)
+            f_2 = ((1.0+_gA)**2 + 2.0*_dk*_gA)/(1.0+3.0*_gA**2)
+            M_sq = (_mp_+_mn+_Q)/(2.0*_me)
+        f_3 = (_gA**2-1.0)/(1.0+3.0*_gA**2)
+        FD2_en = _FD2_nb(-en, x)
+        Enu = en - sgnq*_q
+        e2p0 = _FD_nu_e2p0_nb(Enu, 0.0, znu)
+        e3p0 = _FD_nu_e3p0_nb(Enu, 0.0, znu)
+        e4p2 = _FD_nu_e4p2_nb(Enu, 0.0, znu)
+        e2p2 = _FD_nu_e2p2_nb(Enu, 0.0, znu)
+        e4p1 = _FD_nu_e4p1_nb(Enu, 0.0, znu)
+        e2p1 = _FD_nu_e2p1_nb(Enu, 0.0, znu)
+        e3p1 = _FD_nu_e3p1_nb(Enu, 0.0, znu)
+        e3p2 = _FD_nu_e3p2_nb(Enu, 0.0, znu)
+        return (f_1*e2p0*FD2_en*(pe**2/(M_sq*en))
+            + f_2*e3p0*FD2_en*(-(1.0/M_sq))
+            + (f_1+f_2+f_3)/(2.0*x*M_sq)*(e4p2*FD2_en + e2p2*FD2_en*pe**2)
+            + (f_1+f_2+f_3)/(2.0*M_sq)*(e4p1*FD2_en + e2p1*FD2_en*pe**2)
+            - (f_1+f_2)/(x*M_sq)*(e3p1*FD2_en + e2p1*FD2_en*pe**2/(-en))
+            - f_3*3.0/(x*M_sq)*e2p0*FD2_en
+            + f_3/(3.0*M_sq)*e3p1*FD2_en*pe**2/en
+            + f_3*2.0/(2.0*x*3.0*M_sq)*e3p2*FD2_en*pe**2/en
+            - (f_1+f_2+f_3)*3.0/(2.0*x)*(1.0-(_Mn/_Mp)**sgnq)*(e2p1*FD2_en))
+
+    @njit(cache=True)
+    def _FMCCR_integrand_nb(p, x, xnu, sgnq):
+        """Full FMCCR integrand (standard path)."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        b = p/eOFpe
+        chi_p = _ChiFunc_FM_std_nb(eOFpe, p, x, xnu, sgnq)
+        chi_m = _ChiFunc_FM_std_nb(-eOFpe, p, x, xnu, sgnq)
+        rc_p = _RadCorrResum_nb(b, np.abs(sgnq*_q - eOFpe), eOFpe)
+        rc_m = _RadCorrResum_nb(b, np.abs(sgnq*_q + eOFpe), eOFpe)
+        fc = _FermiCoulomb_nb(b)
+        if sgnq > 0:
+            fs_p = fc
+            fs_m = 1.0
+        else:
+            fs_p = 1.0
+            fs_m = fc
+        return p**2*(chi_p*rc_p*fs_p + chi_m*rc_m*fs_m)
+
+    @njit(cache=True)
+    def _CCR_integrand_nb(p, x, xnu, sgnq, xi_nu):
+        """Full CCR integrand (standard path)."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        b = p/eOFpe
+        chi_p = _ChiFunc_std_nb(eOFpe, x, xnu, sgnq, xi_nu)
+        chi_m = _ChiFunc_std_nb(-eOFpe, x, xnu, sgnq, xi_nu)
+        rc_p = _RadCorrResum_nb(b, np.abs(sgnq*_q - eOFpe), eOFpe)
+        rc_m = _RadCorrResum_nb(b, np.abs(sgnq*_q + eOFpe), eOFpe)
+        fc = _FermiCoulomb_nb(b)
+        if sgnq > 0:
+            fs_p = fc
+            fs_m = 1.0
+        else:
+            fs_p = 1.0
+            fs_m = fc
+        return p**2*(chi_p*rc_p*fs_p + chi_m*rc_m*fs_m)
+
+    @njit(cache=True)
+    def _Born_integrand_nb(p, x, xnu, sgnq, xi_nu):
+        """Born integrand (standard path)."""
+        eOFpe = np.sqrt(p**2 + 1.0)
+        chi_p = _ChiFunc_std_nb(eOFpe, x, xnu, sgnq, xi_nu)
+        chi_m = _ChiFunc_std_nb(-eOFpe, x, xnu, sgnq, xi_nu)
+        return p**2*(chi_p + chi_m)
+
 def FermiCoulomb(b):
     me = PRyMini.me*PRyMini.MeV # electron mass
     Gamma = np.sqrt(1.-PRyMini.alphaem**2.)-1.
@@ -304,27 +593,45 @@ def ComputeWeakRates(Tvec):
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
             return IPENdp(p,x,Tg_MeV,-1)
     else:
-        def L_nTOpBORN_int(p,T):
-            x = me/(PRyMini.kB*T)
-            pemax = max(7.,30./x)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENdp(p,x,xnu,1)
-        def L_pTOnBORN_int(p,T):
-            x = me/(PRyMini.kB*T)
-            pemax = max(7.,30./x)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENdp(p,x,xnu,-1)
+        if(PRyMini.numba_flag):
+            def L_nTOpBORN_int(p, x, xnu, xi):
+                return _Born_integrand_nb(p, x, xnu, 1, xi)
+            def L_pTOnBORN_int(p, x, xnu, xi):
+                return _Born_integrand_nb(p, x, xnu, -1, xi)
+        else:
+            def L_nTOpBORN_int(p,T):
+                x = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENdp(p,x,xnu,1)
+            def L_pTOnBORN_int(p,T):
+                x = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENdp(p,x,xnu,-1)
 
-    def L_nTOpBORN(T):
-        pemin = 0.
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        return quad(L_nTOpBORN_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
-    def L_pTOnBORN(T):
-        pemin = 0.
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        return quad(L_pTOnBORN_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+    if(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpBORN(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_nTOpBORN_int, pemin, pemax, args=(x, xnu, xi_nu), epsrel = epsrel_low)[0]
+        def L_pTOnBORN(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_pTOnBORN_int, pemin, pemax, args=(x, xnu, xi_nu), epsrel = epsrel_low)[0]
+    else:
+        def L_nTOpBORN(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_nTOpBORN_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+        def L_pTOnBORN(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_pTOnBORN_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
 
     # Finite mass effects
     def M(sgnq):
@@ -393,25 +700,45 @@ def ComputeWeakRates(Tvec):
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
             return IPENdpFMCCR(p,x,Tg_MeV,-1)
     else:
-        def L_nTOpFMCCR_int(p,T):
-            x = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENdpFMCCR(p,x,xnu,1)
-        def L_pTOnFMCCR_int(p,T):
-            x = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENdpFMCCR(p,x,xnu,-1)
+        if(PRyMini.numba_flag):
+            def L_nTOpFMCCR_int(p, x, xnu):
+                return _FMCCR_integrand_nb(p, x, xnu, 1)
+            def L_pTOnFMCCR_int(p, x, xnu):
+                return _FMCCR_integrand_nb(p, x, xnu, -1)
+        else:
+            def L_nTOpFMCCR_int(p,T):
+                x = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENdpFMCCR(p,x,xnu,1)
+            def L_pTOnFMCCR_int(p,T):
+                x = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENdpFMCCR(p,x,xnu,-1)
 
-    def L_nTOpFMCCR(T):
-        pemin = 0.
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        return quad(L_nTOpFMCCR_int,pemin,pemax, args=(T), epsrel = epsrel_low)[0]
-    def L_pTOnFMCCR(T):
-        pemin = 0.
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        return quad(L_pTOnFMCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+    if(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpFMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_nTOpFMCCR_int,pemin,pemax, args=(x, xnu), epsrel = epsrel_low)[0]
+        def L_pTOnFMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_pTOnFMCCR_int, pemin, pemax, args=(x, xnu), epsrel = epsrel_low)[0]
+    else:
+        def L_nTOpFMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_nTOpFMCCR_int,pemin,pemax, args=(T), epsrel = epsrel_low)[0]
+        def L_pTOnFMCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_pTOnFMCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
 
     # Radiative Corrections (T=0)
     def IPENdpFrom_Chi_CCR(E, p, x, znu, sgnq):
@@ -431,25 +758,45 @@ def ComputeWeakRates(Tvec):
             Tg_MeV = PRyMini.kB*T/PRyMini.MeV
             return IPENdpCCR(p,x,Tg_MeV,-1)
     else:
-        def L_nTOpCCR_int(p,T):
-            x = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENdpCCR(p,x,xnu,1)
-        def L_pTOnCCR_int(p,T):
-            x = me/(PRyMini.kB*T)
-            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
-            return IPENdpCCR(p,x,xnu,-1)
+        if(PRyMini.numba_flag):
+            def L_nTOpCCR_int(p, x, xnu, xi):
+                return _CCR_integrand_nb(p, x, xnu, 1, xi)
+            def L_pTOnCCR_int(p, x, xnu, xi):
+                return _CCR_integrand_nb(p, x, xnu, -1, xi)
+        else:
+            def L_nTOpCCR_int(p,T):
+                x = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENdpCCR(p,x,xnu,1)
+            def L_pTOnCCR_int(p,T):
+                x = me/(PRyMini.kB*T)
+                xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+                return IPENdpCCR(p,x,xnu,-1)
 
-    def L_nTOpCCR(T):
-        pemin = 0.
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        return quad(L_nTOpCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
-    def L_pTOnCCR(T):
-        pemin = 0.
-        x = me/(PRyMini.kB*T)
-        pemax = max(7.,30./x)
-        return quad(L_pTOnCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+    if(not PRyMini.general_nu_flag and PRyMini.numba_flag):
+        def L_nTOpCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_nTOpCCR_int, pemin, pemax, args=(x, xnu, xi_nu), epsrel = epsrel_low)[0]
+        def L_pTOnCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            xnu = me/(PRyMini.kB*T*T_nuOverT(T))
+            return quad(L_pTOnCCR_int, pemin, pemax, args=(x, xnu, xi_nu), epsrel = epsrel_low)[0]
+    else:
+        def L_nTOpCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_nTOpCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
+        def L_pTOnCCR(T):
+            pemin = 0.
+            x = me/(PRyMini.kB*T)
+            pemax = max(7.,30./x)
+            return quad(L_pTOnCCR_int, pemin, pemax, args=(T), epsrel = epsrel_low)[0]
 
     # Finite-temperature Radiative Corrections
     # Brown & Sawyer for finite temperature radiative corrections + Brehmstrahlung (Eqs. 107)

@@ -781,6 +781,23 @@ def ComputeWeakRates(Tvec):
             tab_f_nue = np.ascontiguousarray(PRyMthermo.f_nue_general(p_MeV, Tg_MeV))
             tab_f_nuebar = np.ascontiguousarray(PRyMthermo.f_nuebar_general(p_MeV, Tg_MeV))
             return E_nu_max, tab_dE, tab_f_nue, tab_f_nuebar
+        # Cache: build table once per temperature, reuse across Born/CCR/FMCCR
+        _tab_cache = {'T': None, 'tab_E_max': 0., 'tab_dE': 0.,
+                      'tab_f_nue': None, 'tab_f_nuebar': None}
+        def _get_nu_tables(T):
+            """Return cached table for temperature T, building if needed."""
+            if _tab_cache['T'] != T:
+                x = me/(PRyMini.kB*T)
+                pemax = max(7.,30./x)
+                Tg_MeV = PRyMini.kB*T/PRyMini.MeV
+                E_max, dE, f_nue, f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+                _tab_cache['T'] = T
+                _tab_cache['tab_E_max'] = E_max
+                _tab_cache['tab_dE'] = dE
+                _tab_cache['tab_f_nue'] = f_nue
+                _tab_cache['tab_f_nuebar'] = f_nuebar
+            return (_tab_cache['tab_E_max'], _tab_cache['tab_dE'],
+                    _tab_cache['tab_f_nue'], _tab_cache['tab_f_nuebar'])
 
     # Born rates given by Eq 2.30 in Brown & Sawyer
     if(PRyMini.general_nu_flag and PRyMini.numba_flag):
@@ -817,15 +834,13 @@ def ComputeWeakRates(Tvec):
             pemin = 0.
             x = me/(PRyMini.kB*T)
             pemax = max(7.,30./x)
-            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
-            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
             return quad(L_nTOpBORN_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
         def L_pTOnBORN(T):
             pemin = 0.
             x = me/(PRyMini.kB*T)
             pemax = max(7.,30./x)
-            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
-            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
             return quad(L_pTOnBORN_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
     elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
         def L_nTOpBORN(T):
@@ -943,15 +958,13 @@ def ComputeWeakRates(Tvec):
             pemin = 0.
             x = me/(PRyMini.kB*T)
             pemax = max(7.,30./x)
-            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
-            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
             return quad(L_nTOpFMCCR_int,pemin,pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
         def L_pTOnFMCCR(T):
             pemin = 0.
             x = me/(PRyMini.kB*T)
             pemax = max(7.,30./x)
-            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
-            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
             return quad(L_pTOnFMCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
     elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
         def L_nTOpFMCCR(T):
@@ -1020,15 +1033,13 @@ def ComputeWeakRates(Tvec):
             pemin = 0.
             x = me/(PRyMini.kB*T)
             pemax = max(7.,30./x)
-            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
-            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
             return quad(L_nTOpCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
         def L_pTOnCCR(T):
             pemin = 0.
             x = me/(PRyMini.kB*T)
             pemax = max(7.,30./x)
-            Tg_MeV = PRyMini.kB*T/PRyMini.MeV
-            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _build_nu_tables(Tg_MeV, pemax)
+            tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar = _get_nu_tables(T)
             return quad(L_pTOnCCR_int, pemin, pemax, args=(x, tab_E_max, tab_dE, tab_f_nue, tab_f_nuebar), epsrel = epsrel_low)[0]
     elif(not PRyMini.general_nu_flag and PRyMini.numba_flag):
         def L_nTOpCCR(T):

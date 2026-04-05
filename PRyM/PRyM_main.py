@@ -243,8 +243,9 @@ class PRyMclass(object):
               # Heun for distributions. Needs ~2000 steps to resolve the collision
               # rate at high T (CFL stability condition: dt * Gamma_coll < 2).
               Tg_boltz_ini = Tg_A[-1]
+              Tnu_boltz_ini = Tnu_A[-1]  # use Phase A's evolved Tnu, not Tg
               a_boltz_ini = a_of_T(Tg_boltz_ini)
-              f_curr = boltz_solver.initial_conditions(Tg_boltz_ini, a_boltz_ini)
+              f_curr = boltz_solver.initial_conditions(Tnu_boltz_ini, a_boltz_ini)
               boltz_solver.update_thermo_distributions(f_curr, a_boltz_ini)
 
               t_B_start = t_A[-1]

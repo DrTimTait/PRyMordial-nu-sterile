@@ -743,18 +743,19 @@ class BoltzmannSolver(object):
             [P_emu, P_emu, 1.0 - P_emu], # numu
         ])
 
-    def initial_conditions(self, Tg, a):
+    def initial_conditions(self, Tnu, a):
         """
         Return thermal Fermi-Dirac distributions on the comoving grid.
 
         f_alpha(y_i) = 1 / (exp(y_i / (Tnu * a)) + 1)
 
-        where Tnu is the neutrino temperature (= Tg at early times before
-        significant e+e- annihilation heating).
+        Tnu is the (physical) neutrino temperature at the handoff moment,
+        which may already differ from Tg if Phase A's thermal ODE has
+        separated them. Callers must pass Tnu_A[-1], NOT Tg, or the
+        initial rho_nu will be biased.
         """
         f_all = np.zeros((self.n_species, self.Ny))
-        # At T_boltz_start ~ 5 MeV, neutrinos are still nearly thermal at Tg
-        Tnu_com = Tg * a  # comoving neutrino temperature
+        Tnu_com = Tnu * a  # comoving neutrino temperature
         for i in range(self.Ny):
             x = self.y_grid[i] / Tnu_com
             if x < 500.0:
@@ -878,15 +879,30 @@ class BoltzmannSolver(object):
                 _tail_a, _tail_b = 0.0, 1.0
             y_max_grid = y_grid[-1]
 
-            f_interp = interp1d(y_grid, f_grid, bounds_error=False,
-                                fill_value=(f_grid[0], 0.0), kind='linear')
+            # Log-FD interpolation: interpolate L(y) = log(1/f - 1) linearly in y.
+            # This is EXACT for any Fermi-Dirac distribution (thermal or chemical-
+            # potential-shifted) since L(y) = (y - mu)/T is linear. For mildly
+            # perturbed distributions, it is near-exact and dramatically reduces
+            # the O(dy^2) bias of direct linear interpolation of f on a concave
+            # curve. Kills a +0.26% rho_nu readout bias at Ny=100 (see
+            # diagnose_readout.py).
+            f_safe = np.clip(f_grid, f_min, 1.0 - f_min)
+            L_grid = np.log(1.0/f_safe - 1.0)
+            L_interp = interp1d(y_grid, L_grid, bounds_error=False,
+                                fill_value=(L_grid[0], L_grid[-1]), kind='linear')
 
             def _eval_f(y_arr):
-                """Evaluate f with FD-tail extrapolation beyond grid."""
-                y_arr = np.asarray(y_arr)
-                result = f_interp(y_arr)
-                # Apply FD-tail extrapolation where y > grid max
-                mask = y_arr > y_max_grid
+                """Evaluate f via log-FD interpolation with FD-tail extrapolation."""
+                y_arr = np.asarray(y_arr, dtype=float)
+                result = np.empty_like(y_arr)
+                # In-grid: use log-FD interpolation
+                in_grid = y_arr <= y_max_grid
+                if np.any(in_grid):
+                    L = L_interp(y_arr[in_grid])
+                    L = np.clip(L, -500.0, 500.0)
+                    result[in_grid] = 1.0 / (np.exp(L) + 1.0)
+                # Out-of-grid: use tail fit (also a log-FD extrapolation)
+                mask = ~in_grid
                 if np.any(mask):
                     arg = _tail_a + _tail_b * y_arr[mask]
                     arg = np.clip(arg, -500.0, 500.0)

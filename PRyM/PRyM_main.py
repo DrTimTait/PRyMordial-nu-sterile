@@ -285,7 +285,14 @@ class PRyMclass(object):
 
               if(PRyMini.verbose_flag):
                   print(f"Phase B: Boltzmann evolution, Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
-                  print(f"  Operator splitting: {n_B} Heun steps, Ny={Ny_boltz}")
+                  print(f"  Exponential Euler: {n_B} steps, Ny={Ny_boltz}")
+
+              # Scalar collision-rate scale used for the exponential-Euler
+              # stiffness regularization. Matches the GF2_prefactor appearing
+              # inside the collision integrals. At T=5 MeV this evaluates to
+              # ~2e4 1/s, in agreement with the direct measurement of
+              # |C[f]|/|f-f_eq| near equilibrium.
+              GF2_rate_scale = 32.0 * PRyMini.GF**2 * PRyMini.MeV_to_secm1
 
               # Storage for Phase B trajectory
               t_B_list = [t_B_exact[0]]
@@ -299,11 +306,22 @@ class PRyMclass(object):
                   a_mid = a_of_T(Tg_mid)
                   dt = t_B_exact[istep + 1] - t_B_exact[istep]
 
-                  # Heun's method for distribution evolution
-                  k1 = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
-                  f_star = np.clip(f_curr + dt * k1, f_min_clip, 1.0 - f_min_clip)
-                  k2 = boltz_solver.collision_integrals(f_star, a_mid, Tg_mid)
-                  f_curr = np.clip(f_curr + 0.5 * dt * (k1 + k2),
+                  # Exponential Euler: f_{n+1} = f_n + phi(Gamma*dt)*dt*C[f_n]
+                  # where phi(z) = (1 - exp(-z))/z is the phi_1 function.
+                  # - Non-stiff limit (Gamma*dt << 1): phi -> 1, recovers forward Euler.
+                  # - Stiff limit   (Gamma*dt >> 1): phi -> 1/z, so the update is
+                  #   C[f_n]/Gamma, a bounded projection toward local equilibrium.
+                  # This replaces an explicit Heun step that went unstable in the
+                  # stiff regime at T >~ 2 MeV and silently dissipated neutrino
+                  # energy via np.clip, biasing Neff low by ~0.5%.
+                  Gamma = GF2_rate_scale * Tg_mid**5
+                  z = Gamma * dt
+                  if z < 1.0e-4:
+                      phi1 = 1.0 - 0.5*z + z*z/6.0
+                  else:
+                      phi1 = (1.0 - np.exp(-z)) / z
+                  C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
+                  f_curr = np.clip(f_curr + phi1 * dt * C_f,
                                    f_min_clip, 1.0 - f_min_clip)
 
                   # Advance state

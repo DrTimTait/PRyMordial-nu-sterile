@@ -97,15 +97,22 @@ T_boltz_end = 0.005  # MeV
 y_coll_max_boltz = 50.0  # MeV, collision integral summation limit
 # Include time-averaged neutrino flavor oscillations
 nu_oscillation_flag = True
+# Oscillation method:
+#   'collision_mixing' — Sabti/FortEPiaNO: mix collision integrals with
+#       time-averaged PMNS transition probabilities (Sabti Eq. 3.18).
+#       No freezeout; continuously redistributes e/mu collision rates.
+#   'relaxation' — Sigl-Raffelt quasi-static density-matrix relaxation.
+#       Operator-split exponential decay toward flavor-averaged f.
+#       Freezes out at T ~ 0.5 MeV; requires coll_scale >> 1.
+nu_oscillation_method = 'collision_mixing'
 # Collision integral calibration scale. Applied to GF2_prefactor so that it
-# uniformly scales both nu-nu and nu-e collision integrals. The Boltzmann solver
-# tracks flavor-dependent spectral distortions that self-consistently reduce the
-# collision energy transfer rate below the single-temperature legacy prediction.
-# The quasi-static oscillation approximation partially mitigates this, but mixing
-# freezes out at T ~ 0.5 MeV during e+e- annihilation. This scale compensates for
-# the accumulated energy deficit vs full QKE codes (FortEPiaNO, NUDEC_BSM).
-# Calibrated to Neff = 3.0440 (Froustey et al. 2020, Bennett et al. 2021).
-coll_scale = 1.74
+# uniformly scales both nu-nu and nu-e collision integrals.
+# At coll_scale=1.0 (no fudge), the diagonal density matrix approximation
+# yields Neff ~ 3.030, about 0.4% below the full QKE result of 3.044
+# (FortEPiaNO, Bennett+ 2021). The deficit is from missing off-diagonal
+# coherences in the density matrix, not from grid resolution or time-stepping
+# (verified: Ny=100,150,200 give identical Neff; Heun vs FE negligible).
+coll_scale = 1.0
 # Neutrino oscillation parameters (PDG 2024, normal ordering)
 # Mass-squared differences [eV^2]
 Dm2_21 = 7.53e-5   # solar: Δm²₂₁

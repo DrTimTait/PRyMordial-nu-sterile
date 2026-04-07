@@ -322,8 +322,10 @@ class PRyMclass(object):
                   C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
                   f_curr = np.clip(f_curr + phi1 * dt * C_f,
                                    f_min_clip, 1.0 - f_min_clip)
-                  # Oscillation mixing: operator-split, exact exponential decay
-                  if PRyMini.nu_oscillation_flag:
+                  # Oscillation mixing: operator-split relaxation (Sigl-Raffelt).
+                  # Skipped when using collision_mixing (handled inside collision_integrals).
+                  if PRyMini.nu_oscillation_flag and \
+                          getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'relaxation':
                       boltz_solver.apply_oscillation_mixing(f_curr, a_mid, Tg_mid, dt)
 
                   # Advance state

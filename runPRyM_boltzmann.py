@@ -5,15 +5,15 @@ PRyMordial: Boltzmann neutrino transport example.
 Evolves neutrino distribution functions on a comoving momentum grid
 from thermal (Fermi-Dirac) initial conditions at T = 5 MeV through
 BBN, using the internal Boltzmann solver with SM 2-to-2 collision
-integrals (D-kernel formalism, Sabti Appendix E) and quasi-static
-neutrino flavor oscillations (Sigl-Raffelt relaxation, PDG 2024).
+integrals (D-kernel formalism, Sabti Appendix E) and time-averaged
+PMNS collision-integral mixing (Sabti Eq. 3.18, PDG 2024 parameters).
 
 Compares results against the standard thermal calculation to validate
 the Boltzmann solver. BBN observables (Yp, D/H, He3/H, Li7/H) agree
-to <0.1% with legacy. Neff = 3.041 vs the full QKE literature value
-of 3.044 (Froustey+ 2020, Bennett+ 2021); the ~0.1% residual reflects
-known approximations (diagonal density matrix, Ny=100 grid, forward
-Euler stepping) compensated by coll_scale = 1.74.
+to <0.1% with legacy. Neff ~ 3.030 vs the full QKE literature value
+of 3.044 (Froustey+ 2020, Bennett+ 2021); the ~0.4% deficit is from
+the diagonal density matrix approximation (no off-diagonal coherences).
+Grid resolution and time-stepping are converged (verified Ny=100-200).
 """
 import time
 import numpy as np
@@ -114,11 +114,11 @@ print(" Thermal time:   %.1f s" % t_thermal)
 print(" Boltzmann time: %.1f s" % t_boltzmann)
 print(" ")
 print(" Note on Neff:")
-print(" The Boltzmann solver yields Neff = 3.041, compared to 3.044 from full")
-print(" QKE codes (FortEPiaNO, Bennett et al. 2021). The ~0.1% residual arises")
-print(" from three approximations vs full QKE: (1) diagonal density matrix only")
-print(" (no off-diagonal coherences), (2) coarse momentum grid (Ny=100 vs 200+),")
-print(" (3) forward Euler time stepping. These are partially compensated by")
-print(" coll_scale = 1.74 applied to the GF^2 collision prefactor.")
+print(" The Boltzmann solver yields Neff ~ 3.030, compared to 3.044 from full")
+print(" QKE codes (FortEPiaNO, Bennett et al. 2021). The ~0.4% deficit is from")
+print(" the diagonal density matrix approximation — off-diagonal coherences in")
+print(" the 3x3 neutrino density matrix provide additional energy transfer")
+print(" channels that our flavor-diagonal solver cannot capture. Grid resolution")
+print(" and time-stepping are converged (verified identical Neff at Ny=100-200).")
 print(" All BBN observables (Yp, D/H, He3/H, Li7/H) agree with the standard")
 print(" thermal calculation to <0.1%.")

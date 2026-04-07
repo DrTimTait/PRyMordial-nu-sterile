@@ -1016,9 +1016,72 @@ class BoltzmannSolver(object):
         if PRyMini.verbose_flag:
             print(f"  D-kernel tables ready.")
 
-        # Oscillation-induced flavor relaxation
+        # Oscillation-induced flavor mixing
         if PRyMini.nu_oscillation_flag:
-            self._setup_oscillation_relaxation()
+            method = getattr(PRyMini, 'nu_oscillation_method', 'relaxation')
+            if method == 'collision_mixing':
+                self._setup_collision_mixing()
+            else:
+                self._setup_oscillation_relaxation()
+
+    def _setup_collision_mixing(self):
+        """
+        Compute time-averaged PMNS transition probabilities for the
+        effective 2-flavor system (Sabti Eq. 3.18).
+
+        In the rapid-oscillation limit, the collision integral for each
+        flavor is mixed with the PMNS transition matrix:
+
+            df_a/dt = sum_b P_ab * C_b[f]
+
+        where P_ab = sum_i |V_ai|^2 |V_bi|^2 and C_b is the collision
+        integral for flavor b evaluated with the current distributions.
+
+        For our [nue, nuebar, numu_eff] system with mu-tau symmetry:
+
+            I_mixed[0] = P_ee * I[0] + (1-P_ee) * I[2]
+            I_mixed[1] = P_ee * I[1] + (1-P_ee) * I[2]
+            I_mixed[2] = (1-P_ee)/2 * (I[0]+I[1])/2 + (1+P_ee)/2 * I[2]
+
+        The numu_eff row automatically averages over mu and tau contributions.
+        """
+        # Build PMNS |V_ai|^2 from mixing angles
+        s12 = np.sin(PRyMini.theta_12)
+        c12 = np.cos(PRyMini.theta_12)
+        s13 = np.sin(PRyMini.theta_13)
+        c13 = np.cos(PRyMini.theta_13)
+
+        # Electron row: |V_ei|^2 (independent of theta_23 and delta_CP)
+        Ve1_sq = c12**2 * c13**2
+        Ve2_sq = s12**2 * c13**2
+        Ve3_sq = s13**2
+
+        # P_ee = sum_i |V_ei|^4 (electron survival probability)
+        self.P_ee = Ve1_sq**2 + Ve2_sq**2 + Ve3_sq**2
+
+        if PRyMini.verbose_flag:
+            print(f"  Collision mixing (Sabti): P_ee = {self.P_ee:.4f}, "
+                  f"1-P_ee = {1-self.P_ee:.4f}")
+
+    def _apply_collision_mixing(self, I_total):
+        """
+        Apply PMNS time-averaged oscillation mixing to collision integrals.
+
+        Returns the mixed collision integral array (same shape as I_total).
+        """
+        I_mixed = np.empty_like(I_total)
+        P_ee = self.P_ee
+        P_off = 1.0 - P_ee  # P_e,mu_eff = P_emu + P_etau
+
+        # nue: gets (1-P_ee) share of mu-type collision rate
+        I_mixed[0] = P_ee * I_total[0] + P_off * I_total[2]
+        # nuebar: same mixing (CPT)
+        I_mixed[1] = P_ee * I_total[1] + P_off * I_total[2]
+        # numu_eff: averages over mu and tau contributions
+        # P_mu_eff,e = (P_mue + P_taue)/2 = (1-P_ee)/2 by 3-flavor column sum
+        I_mixed[2] = (P_off / 2.0) * (I_total[0] + I_total[1]) / 2.0 \
+                    + (1.0 + P_ee) / 2.0 * I_total[2]
+        return I_mixed
 
     def _setup_oscillation_relaxation(self):
         """
@@ -1276,9 +1339,13 @@ class BoltzmannSolver(object):
 
         I_total = I_nu_nu + I_nu_e
 
-        # NOTE: oscillation relaxation is NOT added here. It is applied
-        # separately via apply_oscillation_mixing() after the collision step,
-        # using exact exponential decay for unconditional stability.
+        # Apply oscillation mixing to SM collision integrals (Sabti Eq. 3.18).
+        # For 'collision_mixing' method, this replaces the operator-split
+        # relaxation step. For 'relaxation' method, mixing is applied
+        # separately via apply_oscillation_mixing() after the collision step.
+        if PRyMini.nu_oscillation_flag and \
+                getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'collision_mixing':
+            I_total = self._apply_collision_mixing(I_total)
 
         # Add NP collision terms
         if 'nue' in self.C_NP_funcs:

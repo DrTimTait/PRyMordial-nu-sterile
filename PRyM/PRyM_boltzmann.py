@@ -92,7 +92,7 @@ def _D2_raw(yi, yj, yk, yl):
                 + 2.0 * (yk**3 + yl**3)) / 12.0
 
     if yi + yj <= yk + yl and yi + yl > yj + yk:
-        return yj * (3.0 * (yk**2 + yl**2) - yi**2 - yj**2) / 6.0
+        return yj * (3.0 * (yk**2 + yl**2 - yi**2) - yj**2) / 6.0
 
     if yi + yj <= yk + yl and yi + yl <= yj + yk:
         return -((yi + yj) * ((yi + yj)**2 - 3.0 * (yk**2 + yl**2))
@@ -231,6 +231,52 @@ def D_kernel_massless(y1, y2, y3, y4, c_D1, c_D2, c_D3):
     return result
 
 
+@njit
+def D_kernel_massive(y1, y2, y3, y4, E1, E2, E3, E4, c_D1, c_D2, c_D3):
+    """
+    Compute the full angular kernel with massive particles (Sabti E.21).
+
+    Same structure as D_kernel_massless but uses separate energy prefactors
+    Ei instead of assuming Ei = yi (massless). The D1, D2, D3 piecewise
+    polynomials still operate on 3-momenta yi only.
+
+    For massive particle i: Ei = sqrt(yi^2 + mi^2*a^2)
+    For massless particle i: Ei = yi
+    Setting all Ei = yi recovers D_kernel_massless exactly.
+    """
+    s1, s2, s3, s4 = -1.0, -1.0, 1.0, 1.0
+    result = 0.0
+
+    if c_D1 != 0.0:
+        # (Y1.Y2)(Y3.Y4) structure
+        d1_val = D1(y1, y2, y3, y4)
+        d2_12 = D2(y1, y2, y3, y4, s3, s4)
+        d2_34 = D2(y3, y4, y1, y2, s1, s2)
+        d3_val = D3(y1, y2, y3, y4, s1, s2, s3, s4)
+        result += c_D1 * (E1*E2*E3*E4 * d1_val + E1*E2 * d2_12
+                          + E3*E4 * d2_34 + d3_val)
+
+    if c_D2 != 0.0:
+        # (Y1.Y3)(Y2.Y4) structure: swap 2<->3
+        d1_val = D1(y1, y3, y2, y4)
+        d2_13 = D2(y1, y3, y2, y4, s2, s4)
+        d2_24 = D2(y2, y4, y1, y3, s1, s3)
+        d3_val = D3(y1, y3, y2, y4, s1, s3, s2, s4)
+        result += c_D2 * (E1*E3*E2*E4 * d1_val + E1*E3 * d2_13
+                          + E2*E4 * d2_24 + d3_val)
+
+    if c_D3 != 0.0:
+        # (Y1.Y4)(Y2.Y3) structure: swap 2<->4
+        d1_val = D1(y1, y4, y2, y3)
+        d2_14 = D2(y1, y4, y2, y3, s2, s3)
+        d2_23 = D2(y2, y3, y1, y4, s1, s4)
+        d3_val = D3(y1, y4, y2, y3, s1, s4, s2, s3)
+        result += c_D3 * (E1*E4*E2*E3 * d1_val + E1*E4 * d2_14
+                          + E2*E3 * d2_23 + d3_val)
+
+    return result
+
+
 ###############################################################################
 # Pre-computed D-kernel tables and collision integral computation              #
 ###############################################################################
@@ -327,6 +373,59 @@ def _interp_grid(y, y_grid, f_grid, tail_a, tail_b):
 
 
 @njit
+def _quad_weights(N, dy):
+    """
+    Composite Simpson's quadrature weights for N equally-spaced points.
+
+    For even N-1 intervals: pure Simpson's 1/3 (O(dy^4) error).
+    For odd N-1 intervals: Simpson's 1/3 for first N-4 intervals,
+    Simpson's 3/8 for last 3 intervals.
+    Falls back to midpoint rule (O(dy^2)) for N < 3.
+    """
+    w = np.empty(N)
+    if N < 3:
+        w[:] = dy
+        return w
+    n_int = N - 1  # number of intervals
+    if n_int % 2 == 0:
+        # Pure Simpson's 1/3
+        w[0] = dy / 3.0
+        for i in range(1, N - 1):
+            if i % 2 == 1:
+                w[i] = 4.0 * dy / 3.0
+            else:
+                w[i] = 2.0 * dy / 3.0
+        w[N - 1] = dy / 3.0
+    else:
+        # Mixed: Simpson 1/3 for first N-4 intervals, 3/8 for last 3
+        if N >= 5:
+            m = N - 3  # points in 1/3 section (indices 0..m-1)
+            w[0] = dy / 3.0
+            for i in range(1, m - 1):
+                if i % 2 == 1:
+                    w[i] = 4.0 * dy / 3.0
+                else:
+                    w[i] = 2.0 * dy / 3.0
+            # Shared point: end of 1/3 + start of 3/8
+            w[m - 1] = dy / 3.0 + 3.0 * dy / 8.0
+            # 3/8 rule for last 4 points
+            w[m] = 9.0 * dy / 8.0
+            w[m + 1] = 9.0 * dy / 8.0
+            w[N - 1] = 3.0 * dy / 8.0
+        elif N == 4:
+            w[0] = 3.0 * dy / 8.0
+            w[1] = 9.0 * dy / 8.0
+            w[2] = 9.0 * dy / 8.0
+            w[3] = 3.0 * dy / 8.0
+        else:
+            # N == 3
+            w[0] = dy / 3.0
+            w[1] = 4.0 * dy / 3.0
+            w[2] = dy / 3.0
+    return w
+
+
+@njit
 def _precompute_D_tables(y_grid):
     """
     Pre-compute D-kernel basis values for all (i1,i2,i3) grid triples.
@@ -369,8 +468,9 @@ def _precompute_D_tables(y_grid):
 # numu represents numu+nutau, numubar represents numubar+nutaubar
 
 @njit
-def _collision_integral_nu_nu(f_all, y_grid, dy, a, GF2_prefactor, tail_params,
-                               D_k0, D_k2, Ny_coll):
+def _collision_integral_nu_nu(f_all, y_grid, quad_w, a, GF2_prefactor, tail_params,
+                               D_k0, D_k2, Ny_coll,
+                               scale_nunu_A=1.0, scale_nunu_B=1.0, scale_nunu_C=1.0):
     """
     Compute collision integrals for all neutrino species from nu-nu processes.
     Uses pre-computed D-kernel tables (D_k0 and D_k2) for speed.
@@ -427,12 +527,12 @@ def _collision_integral_nu_nu(f_all, y_grid, dy, a, GF2_prefactor, tail_params,
                 f4_numu = _interp_grid(y4, y_grid, f_all[2],
                                        tail_params[2, 0], tail_params[2, 1])
 
-                wt = dy * dy
+                wt = quad_w[i2] * quad_w[i3]
 
                 # Pre-computed D-kernels (no branching!)
-                D_A = D_k0[i1, i2, i3]        # Process A: c_D1=1
-                D_B = 4.0 * D_k2[i1, i2, i3]  # Process B: c_D3=4
-                D_C = D_k2[i1, i2, i3]        # Process C: c_D3=1
+                D_A = scale_nunu_A * D_k0[i1, i2, i3]        # Process A: c_D1=1
+                D_B = scale_nunu_B * 4.0 * D_k2[i1, i2, i3]  # Process B: c_D3=4
+                D_C = scale_nunu_C * D_k2[i1, i2, i3]        # Process C: c_D3=1
 
                 # Process A: different-flavor scattering
                 # nue(1) + numu(2): 4x (numu, numubar, nutau, nutaubar)
@@ -505,11 +605,47 @@ def _collision_integral_nu_nu(f_all, y_grid, dy, a, GF2_prefactor, tail_params,
 
 
 @njit
-def _collision_integral_nu_e(f_all, y_grid, dy, a, Tg, GF2_prefactor,
+def _F_stat_stable(f1, f2, f3, f4):
+    """Numerically stable statistical factor for collision integral.
+
+    Computes f3*f4*(1-f1)*(1-f2) - f1*f2*(1-f3)*(1-f4) using the
+    reformulation: f1*f2*(1-f3)*(1-f4) * expm1(mu1+mu2-mu3-mu4)
+    where mu_i = log((1-fi)/fi).
+
+    This avoids catastrophic cancellation when distributions are near
+    equilibrium (all fi close to FD at the same temperature).
+    """
+    # Clamp to avoid log(0)
+    _lo = 1.0e-20
+    _hi = 1.0 - 1.0e-20
+    c1 = min(max(f1, _lo), _hi)
+    c2 = min(max(f2, _lo), _hi)
+    c3 = min(max(f3, _lo), _hi)
+    c4 = min(max(f4, _lo), _hi)
+
+    mu1 = np.log((1.0 - c1) / c1)
+    mu2 = np.log((1.0 - c2) / c2)
+    mu3 = np.log((1.0 - c3) / c3)
+    mu4 = np.log((1.0 - c4) / c4)
+    d_mu = mu1 + mu2 - mu3 - mu4
+
+    # For large |d_mu|, expm1 overflows; use the dominant term directly
+    if d_mu > 500.0:
+        return f3 * f4 * (1.0 - f1) * (1.0 - f2)
+    elif d_mu < -500.0:
+        return -f1 * f2 * (1.0 - f3) * (1.0 - f4)
+    else:
+        return f1 * f2 * (1.0 - f3) * (1.0 - f4) * np.expm1(d_mu)
+
+
+@njit
+def _collision_integral_nu_e(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
                               geL2, geR2, geLgeR, gmuL2, gmuR2, gmuLgmuR,
                               me, fnu_e_scat_val, fnu_e_ann_val,
                               fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-                              D_k0, D_k1, D_k2, Ny_coll):
+                              D_k0, D_k1, D_k2, Ny_coll,
+                              scale_scat=1.0, scale_ann=1.0,
+                              scale_nue=1.0, scale_numu=1.0):
     """
     Compute collision integrals from neutrino-electron processes.
     Uses pre-computed D-kernel tables D_k0, D_k1, and D_k2.
@@ -577,7 +713,7 @@ def _collision_integral_nu_e(f_all, y_grid, dy, a, Tg, GF2_prefactor,
                 else:
                     f4_e = 1.0 / (np.exp(x_e4) + 1.0)
 
-                wt = dy * dy
+                wt = quad_w[i2] * quad_w[i3]
 
                 # Pre-computed D-kernel basis values
                 dk0 = D_k0[i1, i2, i3]
@@ -590,24 +726,18 @@ def _collision_integral_nu_e(f_all, y_grid, dy, a, Tg, GF2_prefactor,
                 # e-: 4*gL^2*D_k0 + 4*gR^2*D_k2
                 # e+: 4*gR^2*D_k0 + 4*gL^2*D_k2 (gL<->gR swapped)
                 # Combined e- + e+: 4*(gL^2+gR^2)*(D_k0+D_k2)
-                D_scat_nue = 4.0 * (geL2 + geR2) * (dk0 + dk2) * fnu_e_scat_val
+                D_scat_nue = scale_scat * scale_nue * 4.0 * (geL2 + geR2) * (dk0 + dk2) * fnu_e_scat_val
                 D_scat_nuebar = D_scat_nue  # same after e-/e+ combination
-                D_scat_numu = 4.0 * (gmuL2 + gmuR2) * (dk0 + dk2) * fnu_mu_scat_val
+                D_scat_numu = scale_scat * scale_numu * 4.0 * (gmuL2 + gmuR2) * (dk0 + dk2) * fnu_mu_scat_val
 
                 # nu_e(1) + e(2) -> nu_e(3) + e(4): e- and e+ combined
-                F_stat = (f3_nue * f4_e * (1.0 - f1_nue) * (1.0 - f2_e)
-                          - f1_nue * f2_e * (1.0 - f3_nue) * (1.0 - f4_e))
-                I_nue += wt * D_scat_nue * F_stat
+                I_nue += wt * D_scat_nue * _F_stat_stable(f1_nue, f2_e, f3_nue, f4_e)
 
                 # nuebar(1) + e(2): e- and e+ combined
-                F_stat = (f3_nuebar * f4_e * (1.0 - f1_nuebar) * (1.0 - f2_e)
-                          - f1_nuebar * f2_e * (1.0 - f3_nuebar) * (1.0 - f4_e))
-                I_nuebar += wt * D_scat_nuebar * F_stat
+                I_nuebar += wt * D_scat_nuebar * _F_stat_stable(f1_nuebar, f2_e, f3_nuebar, f4_e)
 
                 # numu(1) + e(2): e- and e+ combined
-                F_stat = (f3_numu * f4_e * (1.0 - f1_numu) * (1.0 - f2_e)
-                          - f1_numu * f2_e * (1.0 - f3_numu) * (1.0 - f4_e))
-                I_numu += wt * D_scat_numu * F_stat
+                I_numu += wt * D_scat_numu * _F_stat_stable(f1_numu, f2_e, f3_numu, f4_e)
 
                 # --- Annihilation: nu(1) + nubar(2) -> e+(3) + e-(4) ---
                 # From Sabti Table 3: 128[gL^2*(Y1.Y3)(Y2.Y4) + gR^2*(Y1.Y4)(Y2.Y3)]
@@ -616,23 +746,192 @@ def _collision_integral_nu_e(f_all, y_grid, dy, a, Tg, GF2_prefactor,
                 f2_nue_ann = f_all[0, i2]
                 f2_numu_ann = f_all[2, i2]
 
-                D_ann_nue = 4.0 * (geL2 * dk1 + geR2 * dk2) * fnu_e_ann_val
-                D_ann_numu = 4.0 * (gmuL2 * dk1 + gmuR2 * dk2) * fnu_mu_ann_val
+                D_ann_nue = scale_ann * scale_nue * 4.0 * (geL2 * dk1 + geR2 * dk2) * fnu_e_ann_val
+                D_ann_numu = scale_ann * scale_numu * 4.0 * (gmuL2 * dk1 + gmuR2 * dk2) * fnu_mu_ann_val
 
                 # nue(1) + nuebar(2) -> e+ + e-
-                F_stat = (f3_e * f4_e * (1.0 - f1_nue) * (1.0 - f2_nuebar_ann)
-                          - f1_nue * f2_nuebar_ann * (1.0 - f3_e) * (1.0 - f4_e))
-                I_nue += wt * D_ann_nue * F_stat
+                I_nue += wt * D_ann_nue * _F_stat_stable(f1_nue, f2_nuebar_ann, f3_e, f4_e)
 
                 # nuebar(1) + nue(2) -> e+ + e-
-                F_stat = (f3_e * f4_e * (1.0 - f1_nuebar) * (1.0 - f2_nue_ann)
-                          - f1_nuebar * f2_nue_ann * (1.0 - f3_e) * (1.0 - f4_e))
-                I_nuebar += wt * D_ann_nue * F_stat
+                I_nuebar += wt * D_ann_nue * _F_stat_stable(f1_nuebar, f2_nue_ann, f3_e, f4_e)
 
                 # numu(1) + numubar(2) -> e+ + e-
-                F_stat = (f3_e * f4_e * (1.0 - f1_numu) * (1.0 - f2_numu_ann)
-                          - f1_numu * f2_numu_ann * (1.0 - f3_e) * (1.0 - f4_e))
-                I_numu += wt * D_ann_numu * F_stat
+                I_numu += wt * D_ann_numu * _F_stat_stable(f1_numu, f2_numu_ann, f3_e, f4_e)
+
+        I_coll[0, i1] += prefactor / (y1 * y1) * I_nue
+        I_coll[1, i1] += prefactor / (y1 * y1) * I_nuebar
+        I_coll[2, i1] += prefactor / (y1 * y1) * I_numu
+
+    return I_coll
+
+
+@njit
+def _collision_integral_nu_e_massive(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
+                                      geL2, geR2, gmuL2, gmuR2,
+                                      me, Ny_coll):
+    """
+    Collision integrals from nu-e processes with massive electron kinematics.
+
+    Unlike _collision_integral_nu_e, this computes D-kernels on-the-fly
+    (no pre-computed tables) because y4 depends on the electron mass through
+    energy conservation. The electron Fermi-Dirac distributions use the
+    relativistic energy E = sqrt(y^2 + me^2*a^2) instead of y.
+
+    This eliminates the need for:
+    - Pre-computed D-kernel tables (D_k0, D_k1, D_k2) for nu-e processes
+    - fnu_e_scat/ann finite-mass correction factors
+    - The coll_scale fudge factor
+
+    Processes:
+    Scattering: nu(1) + e(2) -> nu(3) + e(4)  [positions 2,4 massive]
+    Annihilation: nu(1) + nubar(2) -> e+(3) + e-(4)  [positions 3,4 massive]
+    """
+    Ny = len(y_grid)
+    I_coll = np.zeros((3, Ny))
+    prefactor = GF2_prefactor / (64.0 * np.pi**3 * a**5)
+    Te_comoving = Tg * a
+    me_a = me * a
+    me_a2 = me_a * me_a
+
+    # Combined coupling coefficients (e- + e+ summed)
+    # Scattering: 4*(gL^2+gR^2) for both s-channel (D1) and u-channel (D3)
+    c_scat_nue_D13 = 4.0 * (geL2 + geR2)
+    c_scat_numu_D13 = 4.0 * (gmuL2 + gmuR2)
+    # Annihilation: 4*gL^2 for t-channel (D2), 4*gR^2 for u-channel (D3)
+    c_ann_nue_D2 = 4.0 * geL2
+    c_ann_nue_D3 = 4.0 * geR2
+    c_ann_numu_D2 = 4.0 * gmuL2
+    c_ann_numu_D3 = 4.0 * gmuR2
+
+    for i1 in prange(Ny):
+        y1 = y_grid[i1]
+        if y1 < 1.0e-10 or i1 >= Ny_coll:
+            continue
+
+        f1_nue = f_all[0, i1]
+        f1_nuebar = f_all[1, i1]
+        f1_numu = f_all[2, i1]
+
+        I_nue = 0.0
+        I_nuebar = 0.0
+        I_numu = 0.0
+
+        for i2 in range(Ny_coll):
+            y2 = y_grid[i2]
+            if y2 < 1.0e-10:
+                continue
+
+            # --- Scattering: particle 2 is electron (massive) ---
+            E2_e = np.sqrt(y2 * y2 + me_a2)
+            x_e2 = E2_e / Te_comoving
+            if x_e2 > 500.0:
+                f2_e = 0.0
+            else:
+                f2_e = 1.0 / (np.exp(x_e2) + 1.0)
+
+            # --- Annihilation: particle 2 is antineutrino (massless) ---
+            f2_nuebar_ann = f_all[1, i2]
+            f2_nue_ann = f_all[0, i2]
+            f2_numu_ann = f_all[2, i2]
+
+            for i3 in range(Ny_coll):
+                y3 = y_grid[i3]
+                if y3 < 1.0e-10:
+                    continue
+
+                wt = quad_w[i2] * quad_w[i3]
+
+                # ========== SCATTERING: nu(1)+e(2)->nu(3)+e(4) ==========
+                # Positions 1,3: neutrino (massless, E=y)
+                # Positions 2,4: electron (massive, E=sqrt(y^2+me_a^2))
+                E4_scat = y1 + E2_e - y3
+                if E4_scat > me_a:
+                    y4s_sq = E4_scat * E4_scat - me_a2
+                    if y4s_sq > 0.0:
+                        y4_scat = np.sqrt(y4s_sq)
+
+                        # Electron FD at position 4
+                        x_e4s = E4_scat / Te_comoving
+                        if x_e4s > 500.0:
+                            f4_e_s = 0.0
+                        else:
+                            f4_e_s = 1.0 / (np.exp(x_e4s) + 1.0)
+
+                        # Neutrino distributions at position 3 (on grid)
+                        f3_nue = f_all[0, i3]
+                        f3_nuebar = f_all[1, i3]
+                        f3_numu = f_all[2, i3]
+
+                        # D-kernel with massive electron energies.
+                        # Phase space factor (y2*y3)/(E2*E3) from Sabti E.14:
+                        # particle 2 massive (y2/E2), particle 3 massless (1)
+                        ps_scat = y2 / E2_e
+
+                        D_scat_nue = ps_scat * D_kernel_massive(
+                            y1, y2, y3, y4_scat,
+                            y1, E2_e, y3, E4_scat,
+                            c_scat_nue_D13, 0.0, c_scat_nue_D13)
+
+                        D_scat_numu = ps_scat * D_kernel_massive(
+                            y1, y2, y3, y4_scat,
+                            y1, E2_e, y3, E4_scat,
+                            c_scat_numu_D13, 0.0, c_scat_numu_D13)
+
+                        # nue(1) + e(2) -> nue(3) + e(4)
+                        I_nue += wt * D_scat_nue * _F_stat_stable(f1_nue, f2_e, f3_nue, f4_e_s)
+
+                        # nuebar(1) + e(2) -> nuebar(3) + e(4)
+                        I_nuebar += wt * D_scat_nue * _F_stat_stable(f1_nuebar, f2_e, f3_nuebar, f4_e_s)
+
+                        # numu(1) + e(2) -> numu(3) + e(4)
+                        I_numu += wt * D_scat_numu * _F_stat_stable(f1_numu, f2_e, f3_numu, f4_e_s)
+
+                # ========== ANNIHILATION: nu(1)+nubar(2)->e+(3)+e-(4) ==========
+                # Positions 1,2: neutrino (massless, E=y)
+                # Positions 3,4: electron (massive, E=sqrt(y^2+me_a^2))
+                E3_e = np.sqrt(y3 * y3 + me_a2)
+                E4_ann = y1 + y2 - E3_e
+                if E4_ann > me_a:
+                    y4a_sq = E4_ann * E4_ann - me_a2
+                    if y4a_sq > 0.0:
+                        y4_ann = np.sqrt(y4a_sq)
+
+                        # Electron FD at positions 3 and 4
+                        x_e3a = E3_e / Te_comoving
+                        if x_e3a > 500.0:
+                            f3_e_a = 0.0
+                        else:
+                            f3_e_a = 1.0 / (np.exp(x_e3a) + 1.0)
+
+                        x_e4a = E4_ann / Te_comoving
+                        if x_e4a > 500.0:
+                            f4_e_a = 0.0
+                        else:
+                            f4_e_a = 1.0 / (np.exp(x_e4a) + 1.0)
+
+                        # D-kernel with massive electron energies.
+                        # Phase space factor (y2*y3)/(E2*E3) from Sabti E.14:
+                        # particle 2 massless (1), particle 3 massive (y3/E3)
+                        ps_ann = y3 / E3_e
+
+                        D_ann_nue = ps_ann * D_kernel_massive(
+                            y1, y2, y3, y4_ann,
+                            y1, y2, E3_e, E4_ann,
+                            0.0, c_ann_nue_D2, c_ann_nue_D3)
+
+                        D_ann_numu = ps_ann * D_kernel_massive(
+                            y1, y2, y3, y4_ann,
+                            y1, y2, E3_e, E4_ann,
+                            0.0, c_ann_numu_D2, c_ann_numu_D3)
+
+                        # nue(1) + nuebar(2) -> e+ + e-
+                        I_nue += wt * D_ann_nue * _F_stat_stable(f1_nue, f2_nuebar_ann, f3_e_a, f4_e_a)
+
+                        # nuebar(1) + nue(2) -> e+ + e-
+                        I_nuebar += wt * D_ann_nue * _F_stat_stable(f1_nuebar, f2_nue_ann, f3_e_a, f4_e_a)
+
+                        # numu(1) + numubar(2) -> e+ + e-
+                        I_numu += wt * D_ann_numu * _F_stat_stable(f1_numu, f2_numu_ann, f3_e_a, f4_e_a)
 
         I_coll[0, i1] += prefactor / (y1 * y1) * I_nue
         I_coll[1, i1] += prefactor / (y1 * y1) * I_nuebar
@@ -704,6 +1003,9 @@ class BoltzmannSolver(object):
         self._fnu_mu_scat = PRyMthermo.fnu_mu_scat
         self._fnu_mu_ann = PRyMthermo.fnu_mu_ann
 
+        # Quadrature weights for collision integral inner sums (Simpson's rule)
+        self.quad_w = _quad_weights(self.Ny_coll, self.dy)
+
         # Pre-compute D-kernel lookup tables (one-time cost, grid-dependent only)
         if PRyMini.verbose_flag:
             print(f"BoltzmannSolver: Ny={self.Ny}, y_max={self.y_max:.1f} MeV, "
@@ -714,34 +1016,122 @@ class BoltzmannSolver(object):
         if PRyMini.verbose_flag:
             print(f"  D-kernel tables ready.")
 
-        # Oscillation mixing matrix (identity if disabled)
+        # Oscillation-induced flavor relaxation
         if PRyMini.nu_oscillation_flag:
-            self._setup_oscillation_matrix()
-        else:
-            self.P_osc = np.eye(self.n_species)
+            self._setup_oscillation_relaxation()
 
-    def _setup_oscillation_matrix(self):
-        """Set up time-averaged PMNS oscillation probability matrix."""
-        # PMNS mixing angles (PDG 2023)
-        s12_2 = 0.307  # sin^2(theta_12)
-        s23_2 = 0.546  # sin^2(theta_23)
-        s13_2 = 0.0220 # sin^2(theta_13)
-        c12_2 = 1.0 - s12_2
-        c13_2 = 1.0 - s13_2
-        c13_4 = c13_2**2
-        # Time-averaged probabilities (vacuum, 3-flavor)
-        P_ee = 1.0 - 0.5 * (4.0 * s12_2 * c12_2 * c13_4 + 4.0 * s13_2 * c13_2)
-        P_emu = 0.5 * (4.0 * s12_2 * c12_2 * c13_4 * s23_2
-                       + 4.0 * s13_2 * c13_2 * s23_2)  # simplified
-        P_etau = 1.0 - P_ee - P_emu
-        # With mu-tau symmetry: P_mumu ~ P_tautau, P_mutau ~ etc.
-        # Simplified 3x3 for (nue, nuebar, numu_equiv)
-        # nuebar has same mixing as nue (CPT), numu_equiv averages mu+tau
-        self.P_osc = np.array([
-            [P_ee, P_ee, P_emu],       # nue mixes with itself, nuebar, numu
-            [P_ee, P_ee, P_emu],       # nuebar ~ nue
-            [P_emu, P_emu, 1.0 - P_emu], # numu
-        ])
+    def _setup_oscillation_relaxation(self):
+        """
+        Set up oscillation-induced flavor relaxation parameters.
+
+        In the early universe, neutrino flavor oscillations are damped by
+        collisions. The interplay produces an effective flavor relaxation
+        (Sigl & Raffelt 1993, Dolgov 2002):
+
+            (df_alpha/dt)_osc = Gamma_flavor(y, Tg) * (f_target - f_alpha)
+
+        The effective rate per momentum mode (quasi-static density matrix):
+
+            Gamma_flavor = sin^2(2theta) * omega^2 * D / (2*(omega_eff^2 + D^2))
+
+        where:
+            omega = Dm2 / (2E)               vacuum oscillation frequency
+            omega_eff = omega*cos(2theta) - V  in-matter frequency
+            D = C_D * GF^2 * T^4 * E          collision damping rate
+            V = 8*sqrt(2)*GF*E*rho_e/(3*mW^2)  CC thermal potential (Notzold-Raffelt)
+
+        Three regimes:
+            - T > 3 MeV: V >> omega, MSW-suppressed
+            - T ~ 1-3 MeV: V ~ omega, fast equilibration (Gamma/H ~ 1-4)
+            - T < 0.5 MeV: D << omega, collisions freeze out
+
+        The dominant channel is nue <-> numu/nutau via Dm2_21 and theta_12.
+        numu <-> nutau is enforced by mu-tau symmetry in the collision integrals.
+        """
+        # Mixing parameters
+        self.sin2_2theta12 = np.sin(2.0 * PRyMini.theta_12)**2
+        self.cos_2theta12 = np.cos(2.0 * PRyMini.theta_12)
+        self.sin2_2theta13 = np.sin(2.0 * PRyMini.theta_13)**2
+        self.cos_2theta13 = np.cos(2.0 * PRyMini.theta_13)
+
+        # Mass splittings [eV^2]
+        self.Dm2_21 = PRyMini.Dm2_21
+        self.Dm2_31 = PRyMini.Dm2_31
+
+        # Collision damping coefficients (de Salas & Pastor 2016)
+        # D_alpha = C_D_alpha * GF^2 * T^4 * E  (all in natural units)
+        self.C_D_nue = 3.06   # nue: CC + NC scattering
+        self.C_D_numu = 2.22  # numu: NC only
+
+        # W boson mass for matter potential
+        self.mW2 = (PRyMini.mZ * np.sqrt(1.0 - PRyMini.sW2))**2  # MeV^2
+
+    def _oscillation_relaxation(self, f_all, a, Tg):
+        """
+        Compute the oscillation-induced flavor relaxation term.
+
+        Returns array of shape (n_species, Ny) to be added to I_total.
+
+        Uses the quasi-static density matrix result (Sigl & Raffelt 1993):
+
+            Gamma_flavor = sin^2(2theta) * omega^2 * D / (2*(omega_eff^2 + D^2))
+
+        Drives nue toward numu (and vice versa), conserving total number.
+        """
+        I_osc = np.zeros_like(f_all)
+
+        # Physical momentum: p = y / a  [MeV]
+        p_MeV = self.y_grid / a
+        # Avoid division by zero for very small momenta
+        p_MeV = np.maximum(p_MeV, 1.0e-10)
+        E_eV = p_MeV * 1.0e6  # eV (massless neutrinos: E = p)
+
+        # --- Vacuum oscillation frequency ---
+        # omega = Dm2 / (2E)  [eV]
+        omega_21 = self.Dm2_21 / (2.0 * E_eV)
+        omega_31 = self.Dm2_31 / (2.0 * E_eV)
+
+        # --- CC matter potential (Notzold-Raffelt 1988) ---
+        # V = 8*sqrt(2) * GF * E * rho_e / (3 * m_W^2)
+        # rho_e = 7*pi^2/60 * T^4 for relativistic e+e-  [MeV^4]
+        rho_e = 7.0 * np.pi**2 / 60.0 * Tg**4  # MeV^4
+        # V in MeV, then convert to eV
+        V_MeV = 8.0 * np.sqrt(2.0) * PRyMini.GF * p_MeV * rho_e / (3.0 * self.mW2)
+        V_eV = V_MeV * 1.0e6  # eV
+
+        # --- Collision damping rate ---
+        # D = C_D * GF^2 * T^4 * E  [eV, all in eV natural units]
+        GF_eV = PRyMini.GF * 1.0e-12  # MeV^-2 -> eV^-2
+        T_eV = Tg * 1.0e6
+        D_eV = self.C_D_nue * GF_eV**2 * T_eV**4 * E_eV  # eV
+
+        # --- Solar channel: Dm2_21, theta_12 ---
+        omega_eff_21 = omega_21 * self.cos_2theta12 - V_eV
+        Gamma_21 = (self.sin2_2theta12 * omega_21**2 * D_eV
+                    / (2.0 * (omega_eff_21**2 + D_eV**2)))  # eV
+
+        # --- Atmospheric channel (subdominant via theta_13): Dm2_31 ---
+        omega_eff_31 = omega_31 * self.cos_2theta13 - V_eV
+        Gamma_31 = (self.sin2_2theta13 * omega_31**2 * D_eV
+                    / (2.0 * (omega_eff_31**2 + D_eV**2)))  # eV
+
+        # Total relaxation rate [1/s]
+        eV_to_sec = PRyMini.MeV_to_secm1 * 1.0e-6
+        Gamma_tot = (Gamma_21 + Gamma_31) * eV_to_sec  # 1/s
+
+        # --- Flavor relaxation toward weighted average ---
+        # f_all[0]=nue, f_all[1]=nuebar, f_all[2]=numu_equiv (2 DOFs: mu+tau)
+        # Equilibrium target: f_eq = (f_e + 2*f_mu) / 3
+        f_eq_nu = (f_all[0] + 2.0 * f_all[2]) / 3.0
+        f_eq_nubar = (f_all[1] + 2.0 * f_all[2]) / 3.0
+
+        # Relaxation: df_alpha/dt = Gamma * (f_eq - f_alpha)
+        I_osc[0] = Gamma_tot * (f_eq_nu - f_all[0])
+        I_osc[1] = Gamma_tot * (f_eq_nubar - f_all[1])
+        # Conservation: 1*I_nue + 1*I_nuebar + 2*I_numu = 0
+        I_osc[2] = -(I_osc[0] + I_osc[1]) / 2.0
+
+        return I_osc
 
     def initial_conditions(self, Tnu, a):
         """
@@ -762,6 +1152,93 @@ class BoltzmannSolver(object):
                 f_all[:, i] = 1.0 / (np.exp(x) + 1.0)
         return f_all
 
+    def apply_oscillation_mixing(self, f_all, a, Tg, dt):
+        """
+        Apply oscillation-induced flavor relaxation using exact exponential decay.
+
+        This is operator-split from the collision step for stability: the
+        oscillation relaxation rate can spike at MSW near-resonance momenta
+        (Gamma_osc >> Gamma_coll), which would destabilize the explicit
+        exponential-Euler stepper if included in C_f.
+
+        The exact solution of df/dt = Gamma*(f_eq - f) over interval dt is:
+            f_new = f_eq + (f_old - f_eq) * exp(-Gamma*dt)
+
+        This is unconditionally stable for any Gamma*dt.
+
+        Parameters
+        ----------
+        f_all : ndarray, shape (n_species, Ny)
+            Current distributions (modified in-place).
+        a : float
+            Scale factor at current time.
+        Tg : float
+            Photon temperature in MeV.
+        dt : float
+            Time step in seconds.
+
+        Returns
+        -------
+        f_all : ndarray
+            Modified distributions (same array, modified in-place).
+        """
+        if not PRyMini.nu_oscillation_flag:
+            return f_all
+
+        # Compute per-momentum relaxation rate Gamma_tot [1/s]
+        p_MeV = np.maximum(self.y_grid / a, 1.0e-10)
+        E_eV = p_MeV * 1.0e6
+
+        # Vacuum oscillation frequency
+        omega_21 = self.Dm2_21 / (2.0 * E_eV)
+        omega_31 = self.Dm2_31 / (2.0 * E_eV)
+
+        # CC matter potential (Notzold-Raffelt)
+        rho_e = 7.0 * np.pi**2 / 60.0 * Tg**4
+        V_MeV = 8.0 * np.sqrt(2.0) * PRyMini.GF * p_MeV * rho_e / (3.0 * self.mW2)
+        V_eV = V_MeV * 1.0e6
+
+        # Collision damping rate
+        GF_eV = PRyMini.GF * 1.0e-12
+        T_eV = Tg * 1.0e6
+        D_eV = self.C_D_nue * GF_eV**2 * T_eV**4 * E_eV
+
+        # Solar channel
+        omega_eff_21 = omega_21 * self.cos_2theta12 - V_eV
+        Gamma_21 = (self.sin2_2theta12 * omega_21**2 * D_eV
+                    / (2.0 * (omega_eff_21**2 + D_eV**2)))
+
+        # Atmospheric channel (subdominant)
+        omega_eff_31 = omega_31 * self.cos_2theta13 - V_eV
+        Gamma_31 = (self.sin2_2theta13 * omega_31**2 * D_eV
+                    / (2.0 * (omega_eff_31**2 + D_eV**2)))
+
+        # Total rate in 1/s
+        eV_to_sec = PRyMini.MeV_to_secm1 * 1.0e-6
+        Gamma_tot = (Gamma_21 + Gamma_31) * eV_to_sec
+
+        # Exact exponential decay: f_new = f_eq + (f_old - f_eq)*exp(-Gamma*dt)
+        decay = np.exp(-Gamma_tot * dt)  # shape (Ny,)
+
+        # Equilibrium targets for the particle and antiparticle sectors:
+        #   particle: nue ↔ numu+nutau, target = (f_nue + 2*f_numu)/3
+        #   antiparticle: nuebar ↔ numubar+nutaubar, target = (f_nuebar + 2*f_numu)/3
+        # numu_equiv carries both sectors; its update is fixed by conservation.
+        f_eq_p = (f_all[0] + 2.0 * f_all[2]) / 3.0
+        f_eq_a = (f_all[1] + 2.0 * f_all[2]) / 3.0
+
+        # Compute changes (keeping originals for numu conservation)
+        df_nue = (f_eq_p - f_all[0]) * (1.0 - decay)
+        df_nuebar = (f_eq_a - f_all[1]) * (1.0 - decay)
+
+        # Apply to e-sector
+        f_all[0] += df_nue
+        f_all[1] += df_nuebar
+        # numu: conservation at each y requires Δf_nue + Δf_nuebar + 2*Δf_numu = 0
+        f_all[2] -= (df_nue + df_nuebar) / 2.0
+
+        return f_all
+
     def collision_integrals(self, f_all, a, Tg):
         """
         Compute total collision integrals for all species.
@@ -769,14 +1246,16 @@ class BoltzmannSolver(object):
         Returns array of shape (n_species, Ny).
         """
         # Convert units: GF in MeV^{-2}, collision integral in MeV * s^{-1}
-        GF2_pref = self.GF2_prefactor * PRyMini.MeV_to_secm1
+        # coll_scale applied to the overall prefactor, scaling both nu-nu
+        # and nu-e collision integrals uniformly.
+        GF2_pref = self.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
 
         # Compute FD-tail extrapolation parameters for off-grid interpolation
         tail_params = _compute_all_tail_params(self.y_grid, f_all)
 
         # Nu-nu processes (uses D_k0, D_k2)
         I_nu_nu = _collision_integral_nu_nu(
-            f_all, self.y_grid, self.dy, a, GF2_pref, tail_params,
+            f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
             self.D_k0, self.D_k2, self.Ny_coll)
 
         # Nu-e processes (uses D_k0 for scattering, D_k1 for annihilation, D_k2 for both)
@@ -785,23 +1264,21 @@ class BoltzmannSolver(object):
         fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
         fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
 
+        # Nu-e processes (uses D_k0 for scattering, D_k1 for annihilation, D_k2 for both)
         I_nu_e = _collision_integral_nu_e(
-            f_all, self.y_grid, self.dy, a, Tg, GF2_pref,
+            f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
             self.geL2, self.geR2, self.geLgeR,
             self.gmuL2, self.gmuR2, self.gmuLgmuR,
             PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
             fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-            self.D_k0, self.D_k1, self.D_k2, self.Ny_coll)
+            self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+            1.0, 1.0, 1.0, 1.0)
 
         I_total = I_nu_nu + I_nu_e
 
-        # Apply oscillation mixing if enabled
-        if PRyMini.nu_oscillation_flag:
-            I_mixed = np.zeros_like(I_total)
-            for alpha in range(self.n_species):
-                for beta in range(self.n_species):
-                    I_mixed[alpha] += self.P_osc[alpha, beta] * I_total[beta]
-            I_total = I_mixed
+        # NOTE: oscillation relaxation is NOT added here. It is applied
+        # separately via apply_oscillation_mixing() after the collision step,
+        # using exact exponential decay for unconditional stability.
 
         # Add NP collision terms
         if 'nue' in self.C_NP_funcs:

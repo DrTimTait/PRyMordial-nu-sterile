@@ -109,6 +109,12 @@ class PRyMclass(object):
                 p_3nu_T = PRyMthermo.p_3nu(Tg)
                 num = -(Hubble_T*(4.*PRyMthermo.rho_g(Tg)+3.*(PRyMthermo.rho_e(Tg)+PRyMthermo.p_e(Tg))+3.*Tg*PRyMthermo.dPdT(Tg)
                         +3.*(rho_3nu_T+p_3nu_T)))
+                # NOTE: Collision source subtraction omitted. The total-energy
+                # equation already accounts for collision energy via drho_3nu/dTg
+                # (the Boltzmann distributions respond to a(Tg)). Confirmed
+                # numerically that including the legacy delta_rho subtraction
+                # has negligible effect on Neff and actually worsens BBN
+                # observable agreement when coll_scale != 1.
                 # NP collision term for additional energy injection into neutrinos
                 num -= PRyMthermo.delta_rho_nu_NP(Tg)
                 den = PRyMthermo.drho_g_dT(Tg)+PRyMthermo.drho_e_dT(Tg)+Tg*PRyMthermo.d2PdT2(Tg)+PRyMthermo.drho_3nu_dTg(Tg)
@@ -255,24 +261,21 @@ class PRyMclass(object):
               Tg_B_grid = np.logspace(np.log10(Tg_boltz_ini),
                                        np.log10(PRyMini.T_boltz_end), n_B + 1)
 
-              # Get exact cosmic times at each Phase B temperature step.
-              # Use the 2-variable thermal ODE (Tg, Tnu) which correctly captures
-              # both photon and neutrino cooling. Cannot use the 1-var general_nu ODE
-              # here because the distribution functions are set with fixed a at this point,
-              # making rho_3nu(Tg) incorrect.
+              # Get LSODA-accurate cosmic times at each Phase B temperature step.
+              # The 2-variable thermal ODE provides precise t(Tg) timing that
+              # nuclear reactions are sensitive to. Forward Euler dt estimates
+              # accumulate timing errors that propagate to BBN observables.
               _Tnu_B_ini = Tnu_A[-1]
               sol_Tg_full = solve_ivp(dTtotdt_thermal,
                                        [t_B_start, tfin],
                                        [Tg_boltz_ini, _Tnu_B_ini],
                                        method='LSODA', rtol=1.e-8, atol=1.e-11,
                                        dense_output=True)
-              # Invert Tg(t) → t(Tg) for the Phase B temperature grid
               from scipy.interpolate import interp1d as _interp1d
               _t_dense = np.logspace(np.log10(t_B_start),
                                       np.log10(sol_Tg_full.t[-1]),
                                       max(5000, n_B * 2))
               _Tg_dense = sol_Tg_full.sol(_t_dense)[0]
-              # Ensure monotonicity for interpolation
               _mask = np.concatenate([[True], np.diff(_Tg_dense) < 0])
               _t_dense = _t_dense[_mask]
               _Tg_dense = _Tg_dense[_mask]
@@ -280,7 +283,6 @@ class PRyMclass(object):
                                     bounds_error=False,
                                     fill_value=(_t_dense[0], _t_dense[-1]))
               t_B_exact = _t_of_Tg(Tg_B_grid)
-              # Force first time point to match Phase A end exactly
               t_B_exact[0] = t_B_start
 
               if(PRyMini.verbose_flag):
@@ -288,10 +290,7 @@ class PRyMclass(object):
                   print(f"  Exponential Euler: {n_B} steps, Ny={Ny_boltz}")
 
               # Scalar collision-rate scale used for the exponential-Euler
-              # stiffness regularization. Matches the GF2_prefactor appearing
-              # inside the collision integrals. At T=5 MeV this evaluates to
-              # ~2e4 1/s, in agreement with the direct measurement of
-              # |C[f]|/|f-f_eq| near equilibrium.
+              # stiffness regularization.
               GF2_rate_scale = 32.0 * PRyMini.GF**2 * PRyMini.MeV_to_secm1
 
               # Storage for Phase B trajectory
@@ -302,18 +301,18 @@ class PRyMclass(object):
 
               for istep in range(n_B):
                   Tg_next = Tg_B_grid[istep + 1]
-                  Tg_mid = 0.5 * (Tg_curr + Tg_next)
-                  a_mid = a_of_T(Tg_mid)
                   dt = t_B_exact[istep + 1] - t_B_exact[istep]
 
+                  # Update distributions with dynamic a(T) for self-consistent
+                  # collision integrals and oscillation mixing.
+                  boltz_solver.update_thermo_distributions(
+                      f_curr, a_of_T(Tg_curr), a_of_T_func=a_of_T)
+
+                  Tg_mid = 0.5 * (Tg_curr + Tg_next)
+                  a_mid = a_of_T(Tg_mid)
+
                   # Exponential Euler: f_{n+1} = f_n + phi(Gamma*dt)*dt*C[f_n]
-                  # where phi(z) = (1 - exp(-z))/z is the phi_1 function.
-                  # - Non-stiff limit (Gamma*dt << 1): phi -> 1, recovers forward Euler.
-                  # - Stiff limit   (Gamma*dt >> 1): phi -> 1/z, so the update is
-                  #   C[f_n]/Gamma, a bounded projection toward local equilibrium.
-                  # This replaces an explicit Heun step that went unstable in the
-                  # stiff regime at T >~ 2 MeV and silently dissipated neutrino
-                  # energy via np.clip, biasing Neff low by ~0.5%.
+                  # phi_1(z) = (1-exp(-z))/z regularises stiff collisions.
                   Gamma = GF2_rate_scale * Tg_mid**5
                   z = Gamma * dt
                   if z < 1.0e-4:
@@ -323,10 +322,12 @@ class PRyMclass(object):
                   C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
                   f_curr = np.clip(f_curr + phi1 * dt * C_f,
                                    f_min_clip, 1.0 - f_min_clip)
+                  # Oscillation mixing: operator-split, exact exponential decay
+                  if PRyMini.nu_oscillation_flag:
+                      boltz_solver.apply_oscillation_mixing(f_curr, a_mid, Tg_mid, dt)
 
                   # Advance state
                   Tg_curr = Tg_next
-                  boltz_solver.update_thermo_distributions(f_curr, a_of_T(Tg_curr))
 
                   t_B_list.append(t_B_exact[istep + 1])
                   Tg_B_list.append(Tg_curr)

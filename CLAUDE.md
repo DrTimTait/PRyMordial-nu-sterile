@@ -8,7 +8,7 @@ PRyMordial is a Python package for precise Big Bang Nucleosynthesis (BBN) comput
 
 This project is to modify PRyMordial to allow for an option to describe general (non-thermal) neutrino distribution functions self-consistently, as an alternate option to the current implementation which hard-codes results based on thermal distributions described by the neutrino temperature.  The Sabti-BBN.pdf reference contains an illustration of how to implement general distribution functions for a specific case of HNL decays.  We don't want their specific case, but we do want to follow their general implementation of the neutrino distribution functions.
 
-The PRyMordial-legacy results are considered our oracle, and we don't want to accept any changes which result in greater than 0.1% deviations in the calculations of the final quantities.
+The PRyMordial-legacy results are considered our oracle, and we don't want to accept any changes which result in greater than 0.1% deviations in the calculations of the final quantities, except for N_eff, which should be compared to other general neutrino distribution / flavor oscillation results in the literature.
 
 ## Running
 

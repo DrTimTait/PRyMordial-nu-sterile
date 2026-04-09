@@ -1132,6 +1132,164 @@ def _offdiag_collision_gain(rho_offdiag, f_all, y_grid, quad_w, a, Tg,
     return gain
 
 
+@njit
+def _offdiag_collision_gain_massive(rho_offdiag, f_all, y_grid, quad_w, a, Tg,
+                                     GF2_prefactor,
+                                     c_emu_scat, c_mutau_scat,
+                                     B_spectator_e_idx,
+                                     tail_params, D_k0, D_k2, Ny_coll, me):
+    """
+    Off-diagonal collision gain with massive electron kinematics for nu-e.
+
+    Same as _offdiag_collision_gain but computes nu-e scattering D-kernels
+    on-the-fly using D_kernel_massive with E_e = sqrt(y^2 + me^2*a^2) for
+    electron legs. The nu-nu part is unchanged (all particles massless).
+    """
+    Ny = len(y_grid)
+    gain = np.zeros((6, Ny))
+    pref_base = GF2_prefactor / (64.0 * np.pi**3 * a**5)
+    Te_com = Tg * a
+    me_a = me * a
+    me_a2 = me_a * me_a
+
+    for i1 in prange(Ny):
+        y1 = y_grid[i1]
+        if y1 < 1.0e-10 or i1 >= Ny_coll:
+            continue
+
+        pref = pref_base / (y1 * y1)
+
+        f1_e = f_all[0, i1]
+        f1_mu = f_all[2, i1]
+
+        pauli_emu = 0.5 * ((1.0 - f1_e) + (1.0 - f1_mu))
+        pauli_mutau = 1.0 - f1_mu
+
+        G0 = 0.0; G1 = 0.0; G2 = 0.0; G3 = 0.0; G4 = 0.0; G5 = 0.0
+
+        for i2 in range(Ny_coll):
+            y2 = y_grid[i2]
+            if y2 < 1.0e-10:
+                continue
+
+            # Massive electron at p2: E2 = sqrt(y2^2 + me_a^2)
+            E2_e = np.sqrt(y2 * y2 + me_a2)
+            x_e2 = E2_e / Te_com
+            f2_e = 0.0
+            if x_e2 < 500.0:
+                f2_e = 1.0 / (np.exp(x_e2) + 1.0)
+
+            # Neutrino distributions at p2 (for nu-nu scattering, unchanged)
+            f2_nue = f_all[0, i2]
+            f2_nuebar = f_all[1, i2]
+            f2_numu = f_all[2, i2]
+            f2_B_e = f_all[B_spectator_e_idx, i2]
+
+            for i3 in range(Ny_coll):
+                y3 = y_grid[i3]
+                if y3 < 1.0e-10:
+                    continue
+
+                wt = quad_w[i2] * quad_w[i3]
+
+                # Off-diagonal at p3
+                r0 = rho_offdiag[0, i3]
+                r1 = rho_offdiag[1, i3]
+                r2 = rho_offdiag[2, i3]
+                r3 = rho_offdiag[3, i3]
+                r4 = rho_offdiag[4, i3]
+                r5 = rho_offdiag[5, i3]
+
+                # ============ nu-e scattering gain (massive electron) ============
+                # nu(1) + e(2) -> nu(3) + e(4)
+                # Particles 1,3: massless neutrino; 2,4: massive electron
+                E4_scat = y1 + E2_e - y3
+                if E4_scat > me_a:
+                    y4s_sq = E4_scat * E4_scat - me_a2
+                    if y4s_sq > 0.0:
+                        y4_scat = np.sqrt(y4s_sq)
+
+                        x_e4s = E4_scat / Te_com
+                        f4_e_s = 0.0
+                        if x_e4s < 500.0:
+                            f4_e_s = 1.0 / (np.exp(x_e4s) + 1.0)
+
+                        # Phase space factor y2/E2 for massive particle 2
+                        ps_scat = y2 / E2_e
+
+                        # D-kernel with massive energies (D1+D3 channels for scattering)
+                        dk_scat = ps_scat * D_kernel_massive(
+                            y1, y2, y3, y4_scat,
+                            y1, E2_e, y3, E4_scat,
+                            1.0, 0.0, 1.0)
+
+                        K_scat = wt * dk_scat * f2_e * (1.0 - f4_e_s)
+
+                        K_emu = K_scat * c_emu_scat
+                        G0 += K_emu * r0
+                        G1 += K_emu * r1
+                        G2 += K_emu * r2
+                        G3 += K_emu * r3
+
+                        K_mt = K_scat * c_mutau_scat
+                        G4 += K_mt * r4
+                        G5 += K_mt * r5
+
+                # ============ nu-nu scattering gain (unchanged) ============
+                # Uses massless kinematics and pre-computed tables
+                y4 = y1 + y2 - y3
+                if y4 <= 0.0:
+                    continue
+
+                dk0 = D_k0[i1, i2, i3]
+                dk2 = D_k2[i1, i2, i3]
+
+                # Process A: different-flavour scattering
+                f4_numu = _interp_grid(y4, y_grid, f_all[2],
+                                       tail_params[2, 0], tail_params[2, 1])
+                f4_nue = _interp_grid(y4, y_grid, f_all[0],
+                                      tail_params[0, 0], tail_params[0, 1])
+                f4_nuebar = _interp_grid(y4, y_grid, f_all[1],
+                                         tail_params[1, 0], tail_params[1, 1])
+                f4_B_e = _interp_grid(y4, y_grid, f_all[B_spectator_e_idx],
+                                      tail_params[B_spectator_e_idx, 0],
+                                      tail_params[B_spectator_e_idx, 1])
+
+                K_A_mu = wt * dk0 * f2_numu * (1.0 - f4_numu)
+                G0 += 4.0 * K_A_mu * r0
+                G1 += 4.0 * K_A_mu * r1
+                G2 += 4.0 * K_A_mu * r2
+                G3 += 4.0 * K_A_mu * r3
+
+                K_A_mt = wt * dk0 * (f2_nue * (1.0 - f4_nue)
+                                     + f2_nuebar * (1.0 - f4_nuebar)
+                                     + 2.0 * f2_numu * (1.0 - f4_numu))
+                G4 += K_A_mt * r4
+                G5 += K_A_mt * r5
+
+                # Process B: same-flavour forward
+                K_B_em = wt * 4.0 * dk2 * 0.5 * (
+                    f2_B_e * (1.0 - f4_B_e)
+                    + f2_numu * (1.0 - f4_numu))
+                G0 += K_B_em * r0
+                G1 += K_B_em * r1
+                G2 += K_B_em * r2
+                G3 += K_B_em * r3
+
+                K_B_mt = wt * 4.0 * dk2 * f2_numu * (1.0 - f4_numu)
+                G4 += K_B_mt * r4
+                G5 += K_B_mt * r5
+
+        gain[0, i1] = pref * pauli_emu * G0
+        gain[1, i1] = pref * pauli_emu * G1
+        gain[2, i1] = pref * pauli_emu * G2
+        gain[3, i1] = pref * pauli_emu * G3
+        gain[4, i1] = pref * pauli_mutau * G4
+        gain[5, i1] = pref * pauli_mutau * G5
+
+    return gain
+
+
 ###############################################################################
 # BoltzmannSolver class                                                        #
 ###############################################################################
@@ -2264,17 +2422,15 @@ class DensityMatrixSolver(object):
         V_CC_MeV = np.sqrt(2.0) * PRyMini.GF * n_e_asym  # MeV
         V_CC_eV = V_CC_MeV * 1.0e6  # eV (scalar, same for all modes)
 
-        # V_nunu self-interaction potential (diagonal part only).
-        # Off-diagonal ρ elements oscillate rapidly and time-average to zero,
-        # so only the diagonal (number density) asymmetry ρ_αα - ρ̄_αα enters.
-        # In a CP-symmetric universe this is ~0; nonzero only from CP violation.
+        # V_nunu self-interaction potential (full 3x3 matrix).
+        # Includes off-diagonal elements from flavor coherences in ρ - ρ̄.
         Ny_coll = min(self._boltz.Ny_coll, Ny)
         y2w = self._boltz.quad_w[:Ny_coll] * self.y_grid[:Ny_coll]**2
-        V_nunu_eV = np.zeros((3, 3), dtype=complex)
         V_nunu_pref = np.sqrt(2.0) * PRyMini.GF / (2.0 * np.pi**2 * a**3) * 1.0e6  # eV/MeV³
-        for fl in range(3):
-            diff_diag = rho_all[0, fl, :Ny_coll] - rho_all[1, fl, :Ny_coll]
-            V_nunu_eV[fl, fl] = V_nunu_pref * np.dot(y2w, diff_diag)
+        rho_nu_mat = _rho_vec_batch_to_matrix(rho_all[0])    # (Ny, 3, 3)
+        rho_nubar_mat = _rho_vec_batch_to_matrix(rho_all[1]) # (Ny, 3, 3)
+        diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]  # (Ny_coll, 3, 3)
+        V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)  # (3, 3) eV
 
         # Build H for each sector: H = Omega/E + V_thermal*diag_e + V_CC*diag_e + V_nunu
         H_list = [None, None]
@@ -2288,8 +2444,12 @@ class DensityMatrixSolver(object):
             H_list[s] = H
 
         # ================================================================
-        # 3. Damping rates and off-diagonal gain
+        # 3. Damping rates (C_D parameterization, de Salas & Pastor 2016)
         # ================================================================
+        # Total interaction rate Γ_α = C_D_α × GF² × T⁴ × E.
+        # The C_D coefficients encode the total scattering rate (not net),
+        # which doesn't vanish at equilibrium. Using the net collision
+        # integral would underestimate damping near equilibrium.
         GF_eV = PRyMini.GF * 1.0e-12
         T_eV = Tg * 1.0e6
         Gamma = np.zeros((3, Ny))
@@ -2330,7 +2490,7 @@ class DensityMatrixSolver(object):
         # Matter potential in eV (already computed as V_thermal_eV)
         V_eV_osc = V_thermal_eV + V_CC_eV
 
-        # Damping rate in eV (use nue coefficient, matching diagonal solver)
+        # Damping rate in eV (nue coefficient for oscillation relaxation)
         D_eV_osc = self.C_D[0] * GF_eV**2 * T_eV**4 * E_eV_osc
 
         # Solar channel: Δm²₂₁, θ₁₂
@@ -2397,13 +2557,22 @@ class DensityMatrixSolver(object):
             # Off-diagonal collision gain
             rho_offdiag = rho_all[sector, 3:, :]
             B_idx = 1 if sector == 0 else 0
-            gain = _offdiag_collision_gain(
-                rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
-                GF2_pref,
-                self.c_emu_scat, self.c_mutau_scat,
-                fnu_emu_scat_val, fnu_mutau_scat_val,
-                B_idx, tail_params,
-                self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+            if PRyMini.massive_electron_flag:
+                gain = _offdiag_collision_gain_massive(
+                    rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                    GF2_pref,
+                    self.c_emu_scat, self.c_mutau_scat,
+                    B_idx, tail_params,
+                    self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll,
+                    PRyMini.me)
+            else:
+                gain = _offdiag_collision_gain(
+                    rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                    GF2_pref,
+                    self.c_emu_scat, self.c_mutau_scat,
+                    fnu_emu_scat_val, fnu_mutau_scat_val,
+                    B_idx, tail_params,
+                    self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
 
             for p_idx, (alpha, beta) in enumerate(pair_flavors):
                 re_idx = 2 * p_idx + 3

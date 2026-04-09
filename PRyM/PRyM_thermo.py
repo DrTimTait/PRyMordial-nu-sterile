@@ -216,7 +216,7 @@ def f_g(T1,T2):
 def delta_rho_nue(Tg,Tnue,Tnumu):
     return PRyMini.MeV_to_secm1*PRyMini.GF**2/np.pi**5*(4.*(PRyMini.geL**2+PRyMini.geR**2)*f_nu_e(Tg,Tnue)+2.*f_g(Tnumu,Tnue))
 def delta_rho_numu(Tg,Tnue,Tnumu):
-    return PRyMini.MeV_to_secm1*PRyMini.GF**2/np.pi**5*(4.*(PRyMini.gmuL**2+PRyMini.gmuR**2)*f_nu_mu(Tg,Tnue)-f_g(Tnumu,Tnue))
+    return PRyMini.MeV_to_secm1*PRyMini.GF**2/np.pi**5*(4.*(PRyMini.gmuL**2+PRyMini.gmuR**2)*f_nu_mu(Tg,Tnumu)-f_g(Tnumu,Tnue))
 
 #######################
 # Standard Model (SM) #

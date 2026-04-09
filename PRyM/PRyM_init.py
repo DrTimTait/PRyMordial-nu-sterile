@@ -80,6 +80,10 @@ p_npoints_nu = 200 # number of Gauss-Legendre quadrature points
 # When True, the code solves the unintegrated Boltzmann equation on a comoving momentum
 # grid, computing SM collision integrals from first principles. Implies general_nu_flag = True.
 boltzmann_nu_flag = False
+# Full 3×3 density matrix QKE solver for neutrino oscillations.
+# Tracks off-diagonal flavor coherences to recover Neff = 3.044.
+# Implies boltzmann_nu_flag = True and general_nu_flag = True.
+qke_density_matrix_flag = False
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points
@@ -95,6 +99,11 @@ T_boltz_start = 5.0 # MeV, neutrino decoupling onset
 T_boltz_end = 0.005  # MeV
 # Collision integral momentum cutoff (y_coll_max < y_max avoids spurious D-kernel artifacts)
 y_coll_max_boltz = 50.0  # MeV, collision integral summation limit
+# Use massive electron kinematics in nu-e collision integrals.
+# When True, D-kernels are computed on-the-fly with E=sqrt(p^2+me^2)
+# instead of pre-computed massless tables + fnu correction factors.
+# Slower (~3x for nu-e part) but eliminates momentum-averaging bias.
+massive_electron_flag = True
 # Include time-averaged neutrino flavor oscillations
 nu_oscillation_flag = True
 # Oscillation method:

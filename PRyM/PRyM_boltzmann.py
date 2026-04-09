@@ -481,10 +481,10 @@ def _collision_integral_nu_nu(f_all, y_grid, quad_w, a, GF2_prefactor, tail_para
     producing spurious Riemann sum artifacts.  The outer i1 loop still runs
     over the full grid.
 
-    Processes:
-    A) nu_a + nu_b -> nu_a + nu_b: D_A = D_k0 (c_D1=1)
-    B) nu_a + nubar_a -> nu_a + nubar_a: D_B = 4*D_k2 (c_D3=4)
-    C) nu_a + nubar_a -> nu_b + nubar_b: D_C = D_k2 (c_D3=1)
+    Processes (Sabti et al. Table 3):
+    A) Different-flavor scattering: nu+nubar uses D_k0, nu+nu uses D_k2
+    B) Same-flavor nu+nubar forward: 2*D_k0
+    C) Pair annihilation nu+nubar -> nu'+nubar': D_k2
     """
     Ny = len(y_grid)
     I_coll = np.zeros((3, Ny))
@@ -529,36 +529,44 @@ def _collision_integral_nu_nu(f_all, y_grid, quad_w, a, GF2_prefactor, tail_para
 
                 wt = quad_w[i2] * quad_w[i3]
 
-                # Pre-computed D-kernels (no branching!)
-                D_A = scale_nunu_A * D_k0[i1, i2, i3]        # Process A: c_D1=1
-                D_B = scale_nunu_B * 4.0 * D_k2[i1, i2, i3]  # Process B: c_D3=4
-                D_C = scale_nunu_C * D_k2[i1, i2, i3]        # Process C: c_D3=1
+                # Pre-computed D-kernels
+                # Process A has two sub-processes (Sabti Table 3):
+                #   nu+nubar (diff-flavor): |M|^2 ~ (Y1.Y2)(Y3.Y4) -> D_k0
+                #   nu+nu    (diff-flavor): |M|^2 ~ (Y1.Y4)(Y2.Y3) -> D_k2
+                # Each species has equal numbers of nu and nubar partners,
+                # so the average D-kernel per partner is (D_k0 + D_k2)/2.
+                D_k0_val = D_k0[i1, i2, i3]
+                D_k2_val = D_k2[i1, i2, i3]
+                D_A_sum = scale_nunu_A * (D_k0_val + D_k2_val)
+                D_B = scale_nunu_B * 2.0 * D_k0_val              # Process B: nu+nubar same-flavor (Table 3 row 3)
+                D_C = scale_nunu_C * D_k2_val                     # Process C: pair annihilation
 
                 # Process A: different-flavor scattering
-                # nue(1) + numu(2): 4x (numu, numubar, nutau, nutaubar)
+                # nue(1) + numu(2): 4 partners (numu, numubar, nutau, nutaubar)
+                # 2 are nu+nubar (D_k0) + 2 are nu+nu (D_k2) = 2*(D_k0+D_k2)
                 F_stat = (f3_nue * f4_numu * (1.0 - f1_nue) * (1.0 - f2_numu)
                           - f1_nue * f2_numu * (1.0 - f3_nue) * (1.0 - f4_numu))
-                I_nue += 4.0 * wt * D_A * F_stat
+                I_nue += 2.0 * wt * D_A_sum * F_stat
 
-                # nuebar(1) + numu(2): 4x
+                # nuebar(1) + numu(2): 4 partners, same split
                 F_stat = (f3_nuebar * f4_numu * (1.0 - f1_nuebar) * (1.0 - f2_numu)
                           - f1_nuebar * f2_numu * (1.0 - f3_nuebar) * (1.0 - f4_numu))
-                I_nuebar += 4.0 * wt * D_A * F_stat
+                I_nuebar += 2.0 * wt * D_A_sum * F_stat
 
-                # numu(1) + nue(2)
+                # numu(1) + nue(2): averaged over nu_mu + nubar_mu
                 F_stat = (f3_numu * f4_nue * (1.0 - f1_numu) * (1.0 - f2_nue)
                           - f1_numu * f2_nue * (1.0 - f3_numu) * (1.0 - f4_nue))
-                I_numu += wt * D_A * F_stat
+                I_numu += 0.5 * wt * D_A_sum * F_stat
 
-                # numu(1) + nuebar(2)
+                # numu(1) + nuebar(2): averaged over nu_mu + nubar_mu
                 F_stat = (f3_numu * f4_nuebar * (1.0 - f1_numu) * (1.0 - f2_nuebar)
                           - f1_numu * f2_nuebar * (1.0 - f3_numu) * (1.0 - f4_nuebar))
-                I_numu += wt * D_A * F_stat
+                I_numu += 0.5 * wt * D_A_sum * F_stat
 
-                # numu(1) + nutau(2) + nutaubar(2): 2x, nutau=numu
+                # numu(1) + nutau(2) + nutaubar(2): 2 partners, each avg'd
                 F_stat = (f3_numu * f4_numu * (1.0 - f1_numu) * (1.0 - f2_numu)
                           - f1_numu * f2_numu * (1.0 - f3_numu) * (1.0 - f4_numu))
-                I_numu += 2.0 * wt * D_A * F_stat
+                I_numu += wt * D_A_sum * F_stat
 
                 # Process B: same-flavor forward scattering
                 # nue(1) + nuebar(2)
@@ -938,6 +946,190 @@ def _collision_integral_nu_e_massive(f_all, y_grid, quad_w, a, Tg, GF2_prefactor
         I_coll[2, i1] += prefactor / (y1 * y1) * I_numu
 
     return I_coll
+
+
+###############################################################################
+# Off-diagonal collision gain (transport) terms                                #
+#                                                                              #
+# Computes the gain part of the off-diagonal QKE collision integral:           #
+#   C_αβ(p₁) = gain_αβ(p₁)  −  ½(Γ_α + Γ_β) ρ_αβ(p₁)                       #
+# The gain scatters coherences from p₃ → p₁ via the same D-kernel formalism   #
+# as the diagonal collision integrals, with modified coupling constants.       #
+#                                                                              #
+# From the anticommutator form (Sigl & Raffelt 1993):                          #
+#   gain_αβ = ½[(1-f₁_α)+(1-f₁_β)] × Σ g_α g_β D × ρ₃_αβ × stat_factors    #
+# For ν-ν: g_α g_β = ¼ (universal Z-exchange)                                 #
+# For ν-e: g_α g_β = g_{L,α} g_{L,β} + g_R² (flavor-asymmetric)              #
+###############################################################################
+
+@njit
+def _offdiag_collision_gain(rho_offdiag, f_all, y_grid, quad_w, a, Tg,
+                             GF2_prefactor,
+                             c_emu_scat, c_mutau_scat,
+                             fnu_emu_scat_val, fnu_mutau_scat_val,
+                             B_spectator_e_idx,
+                             tail_params, D_k0, D_k2, Ny_coll):
+    """
+    Off-diagonal collision gain (transport) for one sector (ν or ν̄).
+
+    Computes the gain rate for each off-diagonal component, arising from
+    coherences at momentum p₃ scattered to p₁ by ν-ν and ν-e processes.
+
+    Parameters
+    ----------
+    rho_offdiag : ndarray, shape (6, Ny)
+        Off-diagonal components for this sector:
+        [Re(ρ_eμ), Im(ρ_eμ), Re(ρ_eτ), Im(ρ_eτ), Re(ρ_μτ), Im(ρ_μτ)]
+    f_all : ndarray, shape (3, Ny)
+        Diagonal distributions [f_νe, f_ν̄e, f_νμ_eff].
+    B_spectator_e_idx : int
+        Index into f_all for the Process B spectator of the "e" flavour.
+        For ν sector: 1 (ν̄_e). For ν̄ sector: 0 (ν_e).
+    c_emu_scat : float
+        Off-diagonal ν-e scattering coupling for e-μ pair:
+        4 × (g_{L,e} g_{L,μ} + g_R²).
+    c_mutau_scat : float
+        Off-diagonal ν-e scattering coupling for μ-τ pair:
+        4 × (g_{L,μ}² + g_R²) = diagonal μ coupling.
+    fnu_emu_scat_val, fnu_mutau_scat_val : float
+        Finite-mass correction factors for the off-diagonal couplings.
+
+    Returns
+    -------
+    gain : ndarray, shape (6, Ny)
+        Gain rates in 1/s for each off-diagonal component.
+    """
+    Ny = len(y_grid)
+    gain = np.zeros((6, Ny))
+    pref_base = GF2_prefactor / (64.0 * np.pi**3 * a**5)
+    Te_com = Tg * a
+
+    for i1 in prange(Ny):
+        y1 = y_grid[i1]
+        if y1 < 1.0e-10 or i1 >= Ny_coll:
+            continue
+
+        pref = pref_base / (y1 * y1)
+
+        f1_e = f_all[0, i1]
+        f1_mu = f_all[2, i1]
+
+        # Pauli blocking at p₁: ½[(1-f₁_α) + (1-f₁_β)]
+        pauli_emu = 0.5 * ((1.0 - f1_e) + (1.0 - f1_mu))   # e-μ and e-τ
+        pauli_mutau = 1.0 - f1_mu                            # μ-τ (f_τ ≈ f_μ)
+
+        # Accumulators for 6 off-diagonal components
+        G0 = 0.0; G1 = 0.0; G2 = 0.0; G3 = 0.0; G4 = 0.0; G5 = 0.0
+
+        for i2 in range(Ny_coll):
+            y2 = y_grid[i2]
+            if y2 < 1.0e-10:
+                continue
+
+            # Electron at p₂ (for ν-e scattering)
+            x_e2 = y2 / Te_com
+            f2_e = 0.0
+            if x_e2 < 500.0:
+                f2_e = 1.0 / (np.exp(x_e2) + 1.0)
+
+            # Neutrino distributions at p₂ (for ν-ν scattering)
+            f2_nue = f_all[0, i2]
+            f2_nuebar = f_all[1, i2]
+            f2_numu = f_all[2, i2]
+            f2_B_e = f_all[B_spectator_e_idx, i2]
+
+            for i3 in range(Ny_coll):
+                y3 = y_grid[i3]
+                y4 = y1 + y2 - y3
+                if y4 <= 0.0 or y3 < 1.0e-10:
+                    continue
+
+                wt = quad_w[i2] * quad_w[i3]
+                dk0 = D_k0[i1, i2, i3]
+                dk2 = D_k2[i1, i2, i3]
+
+                # Off-diagonal at p₃
+                r0 = rho_offdiag[0, i3]  # Re(ρ_eμ)
+                r1 = rho_offdiag[1, i3]  # Im(ρ_eμ)
+                r2 = rho_offdiag[2, i3]  # Re(ρ_eτ)
+                r3 = rho_offdiag[3, i3]  # Im(ρ_eτ)
+                r4 = rho_offdiag[4, i3]  # Re(ρ_μτ)
+                r5 = rho_offdiag[5, i3]  # Im(ρ_μτ)
+
+                # ============ ν-e scattering gain ============
+                # ν(1)+e(2)→ν(3)+e(4)
+                x_e4 = y4 / Te_com
+                f4_e = 0.0
+                if x_e4 < 500.0:
+                    f4_e = 1.0 / (np.exp(x_e4) + 1.0)
+
+                K_scat = wt * (dk0 + dk2) * f2_e * (1.0 - f4_e)
+
+                # e-μ and e-τ pairs (same coupling)
+                K_emu = K_scat * c_emu_scat * fnu_emu_scat_val
+                G0 += K_emu * r0
+                G1 += K_emu * r1
+                G2 += K_emu * r2
+                G3 += K_emu * r3
+
+                # μ-τ pair (diagonal-μ coupling)
+                K_mt = K_scat * c_mutau_scat * fnu_mutau_scat_val
+                G4 += K_mt * r4
+                G5 += K_mt * r5
+
+                # ============ ν-ν scattering gain ============
+                # Spectator distributions at p₄ (off-grid)
+                f4_numu = _interp_grid(y4, y_grid, f_all[2],
+                                       tail_params[2, 0], tail_params[2, 1])
+                f4_nue = _interp_grid(y4, y_grid, f_all[0],
+                                      tail_params[0, 0], tail_params[0, 1])
+                f4_nuebar = _interp_grid(y4, y_grid, f_all[1],
+                                         tail_params[1, 0], tail_params[1, 1])
+                f4_B_e = _interp_grid(y4, y_grid, f_all[B_spectator_e_idx],
+                                      tail_params[B_spectator_e_idx, 0],
+                                      tail_params[B_spectator_e_idx, 1])
+
+                # Process A: different-flavour scattering, D_k0.
+                # For ρ_eμ / ρ_eτ: 4 μ/τ-type spectators (same as diag ν_e).
+                K_A_mu = wt * dk0 * f2_numu * (1.0 - f4_numu)
+                G0 += 4.0 * K_A_mu * r0
+                G1 += 4.0 * K_A_mu * r1
+                G2 += 4.0 * K_A_mu * r2
+                G3 += 4.0 * K_A_mu * r3
+
+                # For ρ_μτ: ν_e + ν̄_e + 2×ν_μ spectators (same as diag ν_μ).
+                K_A_mt = wt * dk0 * (f2_nue * (1.0 - f4_nue)
+                                     + f2_nuebar * (1.0 - f4_nuebar)
+                                     + 2.0 * f2_numu * (1.0 - f4_numu))
+                G4 += K_A_mt * r4
+                G5 += K_A_mt * r5
+
+                # Process B: same-flavour ν+ν̄ forward, 4×D_k2.
+                # For ρ_eμ / ρ_eτ: ½(ν̄_e + ν̄_μ) spectators (averaging e,μ perspectives)
+                K_B_em = wt * 4.0 * dk2 * 0.5 * (
+                    f2_B_e * (1.0 - f4_B_e)
+                    + f2_numu * (1.0 - f4_numu))
+                G0 += K_B_em * r0
+                G1 += K_B_em * r1
+                G2 += K_B_em * r2
+                G3 += K_B_em * r3
+
+                # For ρ_μτ: ν̄_μ spectator (≈ f_numu)
+                K_B_mt = wt * 4.0 * dk2 * f2_numu * (1.0 - f4_numu)
+                G4 += K_B_mt * r4
+                G5 += K_B_mt * r5
+
+                # Process C (pair annihilation to different flavour):
+                # No off-diagonal gain — inverse produces definite flavour.
+
+        gain[0, i1] = pref * pauli_emu * G0
+        gain[1, i1] = pref * pauli_emu * G1
+        gain[2, i1] = pref * pauli_emu * G2
+        gain[3, i1] = pref * pauli_emu * G3
+        gain[4, i1] = pref * pauli_mutau * G4
+        gain[5, i1] = pref * pauli_mutau * G5
+
+    return gain
 
 
 ###############################################################################
@@ -1321,21 +1513,25 @@ class BoltzmannSolver(object):
             f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
             self.D_k0, self.D_k2, self.Ny_coll)
 
-        # Nu-e processes (uses D_k0 for scattering, D_k1 for annihilation, D_k2 for both)
-        fnu_e_scat_val = float(self._fnu_e_scat(Tg))
-        fnu_e_ann_val = float(self._fnu_e_ann(Tg))
-        fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
-        fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
-
-        # Nu-e processes (uses D_k0 for scattering, D_k1 for annihilation, D_k2 for both)
-        I_nu_e = _collision_integral_nu_e(
-            f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-            self.geL2, self.geR2, self.geLgeR,
-            self.gmuL2, self.gmuR2, self.gmuLgmuR,
-            PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-            fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-            self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
-            1.0, 1.0, 1.0, 1.0)
+        # Nu-e processes: massive or massless electron kinematics
+        if PRyMini.massive_electron_flag:
+            I_nu_e = _collision_integral_nu_e_massive(
+                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                PRyMini.me, self.Ny_coll)
+        else:
+            fnu_e_scat_val = float(self._fnu_e_scat(Tg))
+            fnu_e_ann_val = float(self._fnu_e_ann(Tg))
+            fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
+            fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
+            I_nu_e = _collision_integral_nu_e(
+                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.geLgeR,
+                self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+                1.0, 1.0, 1.0, 1.0)
 
         I_total = I_nu_nu + I_nu_e
 
@@ -1469,3 +1665,823 @@ class BoltzmannSolver(object):
         PRyMthermo.f_numubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
         PRyMthermo.f_nutau_general = _make_f_callable(f_numu_grid, current_a, a_func)
         PRyMthermo.f_nutaubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
+
+    def make_f_callable(self, f_grid, a, a_of_T_func=None):
+        """Public interface to create a f(p, Tg) callable from a grid array.
+
+        Used by DensityMatrixSolver to create callables for each of the 6
+        neutrino flavors independently.
+        """
+        import PRyM.PRyM_thermo as PRyMthermo  # noqa: F811
+        y_grid = self.y_grid
+        f_min = 1.0e-12
+
+        # Fit FD-tail extrapolation
+        tail_y, tail_l = [], []
+        for i in range(len(y_grid) - 1, -1, -1):
+            fi = f_grid[i]
+            if fi > f_min and fi < 1.0 - f_min:
+                tail_y.append(y_grid[i])
+                tail_l.append(np.log(1.0/fi - 1.0))
+                if len(tail_y) >= 10:
+                    break
+        if len(tail_y) >= 2:
+            tail_y = np.array(tail_y)
+            tail_l = np.array(tail_l)
+            coeffs = np.polyfit(tail_y, tail_l, 1)
+            _tail_b, _tail_a = coeffs[0], coeffs[1]
+            if _tail_b <= 0:
+                _tail_b = 1.0 / y_grid[-1]
+                _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
+        else:
+            _tail_a, _tail_b = 0.0, 1.0
+        y_max_grid = y_grid[-1]
+
+        f_safe = np.clip(f_grid, f_min, 1.0 - f_min)
+        L_grid = np.log(1.0/f_safe - 1.0)
+        L_interp = interp1d(y_grid, L_grid, bounds_error=False,
+                            fill_value=(L_grid[0], L_grid[-1]), kind='linear')
+
+        def _eval_f(y_arr):
+            y_arr = np.asarray(y_arr, dtype=float)
+            result = np.empty_like(y_arr)
+            in_grid = y_arr <= y_max_grid
+            if np.any(in_grid):
+                L = L_interp(y_arr[in_grid])
+                L = np.clip(L, -500.0, 500.0)
+                result[in_grid] = 1.0 / (np.exp(L) + 1.0)
+            mask = ~in_grid
+            if np.any(mask):
+                arg = _tail_a + _tail_b * y_arr[mask]
+                arg = np.clip(arg, -500.0, 500.0)
+                result[mask] = 1.0 / (np.exp(arg) + 1.0)
+            return result
+
+        if a_of_T_func is not None:
+            a_of_T = a_of_T_func
+            def f_nu(p, Tg):
+                y = np.asarray(p, dtype=float) * a_of_T(Tg)
+                return _eval_f(y)
+        else:
+            a_val = a
+            def f_nu(p, Tg):
+                y = np.asarray(p, dtype=float) * a_val
+                return _eval_f(y)
+        return f_nu
+
+
+###############################################################################
+# Density matrix representation helpers                                        #
+###############################################################################
+
+def _rho_vec_batch_to_matrix(rho_vec):
+    """Convert (9, Ny) real array to (Ny, 3, 3) complex Hermitian matrices.
+
+    Layout: [rho_ee, rho_mumu, rho_tautau,
+             Re(rho_emu), Im(rho_emu),
+             Re(rho_etau), Im(rho_etau),
+             Re(rho_mutau), Im(rho_mutau)]
+    """
+    Ny = rho_vec.shape[1]
+    rho = np.zeros((Ny, 3, 3), dtype=complex)
+    rho[:, 0, 0] = rho_vec[0]
+    rho[:, 1, 1] = rho_vec[1]
+    rho[:, 2, 2] = rho_vec[2]
+    rho[:, 0, 1] = rho_vec[3] + 1j * rho_vec[4]
+    rho[:, 1, 0] = rho_vec[3] - 1j * rho_vec[4]
+    rho[:, 0, 2] = rho_vec[5] + 1j * rho_vec[6]
+    rho[:, 2, 0] = rho_vec[5] - 1j * rho_vec[6]
+    rho[:, 1, 2] = rho_vec[7] + 1j * rho_vec[8]
+    rho[:, 2, 1] = rho_vec[7] - 1j * rho_vec[8]
+    return rho
+
+
+def _matrix_batch_to_rho_vec(rho):
+    """Convert (Ny, 3, 3) complex Hermitian matrices to (9, Ny) real array."""
+    Ny = rho.shape[0]
+    vec = np.zeros((9, Ny))
+    vec[0] = rho[:, 0, 0].real
+    vec[1] = rho[:, 1, 1].real
+    vec[2] = rho[:, 2, 2].real
+    vec[3] = rho[:, 0, 1].real
+    vec[4] = rho[:, 0, 1].imag
+    vec[5] = rho[:, 0, 2].real
+    vec[6] = rho[:, 0, 2].imag
+    vec[7] = rho[:, 1, 2].real
+    vec[8] = rho[:, 1, 2].imag
+    return vec
+
+
+###############################################################################
+# DensityMatrixSolver class                                                    #
+###############################################################################
+
+class DensityMatrixSolver(object):
+    """
+    Full 3x3 density matrix QKE solver for neutrino flavor evolution.
+
+    Tracks the complete 3x3 Hermitian density matrix rho(y) for neutrinos
+    and rho_bar(y) for antineutrinos at each comoving momentum mode y.
+    Off-diagonal elements encode flavor coherences from neutrino oscillations.
+
+    The Quantum Kinetic Equations (QKE) are solved via Strang operator splitting:
+      1. Half oscillation step: exact unitary rotation exp(-iHdt/2) rho exp(iHdt/2)
+      2. Full collision step: diagonal rates from D-kernel integrals,
+         off-diagonal damping C_ij = -1/2 (Gamma_i + Gamma_j) rho_ij
+      3. Half oscillation step
+
+    State representation: rho_all shape (2, 9, Ny)
+      sector 0 = neutrinos, sector 1 = antineutrinos
+      9 components per mode: [rho_ee, rho_mumu, rho_tautau,
+        Re(rho_emu), Im(rho_emu), Re(rho_etau), Im(rho_etau),
+        Re(rho_mutau), Im(rho_mutau)]
+    """
+
+    def __init__(self, Ny=None, y_max=None, y_coll_max=None, C_NP_funcs=None):
+        # Create internal BoltzmannSolver for collision integrals and grid
+        self._boltz = BoltzmannSolver(Ny=Ny, y_max=y_max, y_coll_max=y_coll_max,
+                                       C_NP_funcs=C_NP_funcs)
+        self.Ny = self._boltz.Ny
+        self.y_grid = self._boltz.y_grid
+        self.dy = self._boltz.dy
+        self.y_max = self._boltz.y_max
+        self.n_species = self._boltz.n_species  # 3 for collision integrals
+
+        # Build 3x3 PMNS mixing matrix from PDG parameters
+        self._build_PMNS()
+
+        # Precompute vacuum Hamiltonian base matrices (eV^2)
+        # H_vac_nu(y) = Omega_nu / E(y),  H_vac_nubar(y) = Omega_nubar / E(y)
+        Dm2 = np.array([0.0, PRyMini.Dm2_21, PRyMini.Dm2_31])  # eV^2
+        Dm2_half = np.diag(Dm2 / 2.0)
+        self._Omega_nu = self.U_PMNS @ Dm2_half @ self.U_PMNS.conj().T      # eV^2
+        self._Omega_nubar = self.U_PMNS.conj() @ Dm2_half @ self.U_PMNS.T   # eV^2
+
+        # Electron-flavor projector for matter potential
+        self._diag_e = np.zeros((3, 3), dtype=complex)
+        self._diag_e[0, 0] = 1.0
+
+        # W boson mass squared for thermal matter potential
+        self.mW2 = (PRyMini.mZ * np.sqrt(1.0 - PRyMini.sW2))**2  # MeV^2
+
+        # Collision damping coefficients (de Salas & Pastor 2016)
+        # D_alpha = C_D_alpha * GF^2 * T^4 * E  [natural units]
+        self.C_D = np.array([3.06, 2.22, 2.22])  # [nue, numu, nutau]
+
+        # Off-diagonal ν-e scattering couplings (for collision gain terms).
+        # Diagonal: 4(g_{L,α}² + g_R²); off-diagonal: 4(g_{L,α} g_{L,β} + g_R²).
+        geL = PRyMini.geL    # ½ + sW²
+        gmuL = PRyMini.gmuL  # -½ + sW²
+        geR2 = PRyMini.geR**2  # sW⁴
+        self.c_emu_scat = 4.0 * (geL * gmuL + geR2)   # e-μ and e-τ (g_{L,τ} = g_{L,μ})
+        self.c_mutau_scat = 4.0 * (gmuL**2 + geR2)    # μ-τ = diagonal μ coupling
+
+        # eV <-> seconds conversion: 1 eV = eV_to_secm1 s^{-1}
+        self._eV_to_secm1 = PRyMini.MeV_to_secm1 * 1.0e-6
+
+        if PRyMini.verbose_flag:
+            print(f"  DensityMatrixSolver: 3x3 QKE, {2*9*self.Ny} real DOFs")
+
+    def _build_PMNS(self):
+        """Construct the 3x3 PMNS mixing matrix from oscillation parameters."""
+        s12 = np.sin(PRyMini.theta_12)
+        c12 = np.cos(PRyMini.theta_12)
+        s13 = np.sin(PRyMini.theta_13)
+        c13 = np.cos(PRyMini.theta_13)
+        s23 = np.sin(PRyMini.theta_23)
+        c23 = np.cos(PRyMini.theta_23)
+        eidCP = np.exp(1j * PRyMini.delta_CP)
+        emidCP = np.exp(-1j * PRyMini.delta_CP)
+
+        self.U_PMNS = np.array([
+            [c12*c13,                        s12*c13,                        s13*emidCP],
+            [-s12*c23 - c12*s23*s13*eidCP,   c12*c23 - s12*s23*s13*eidCP,   s23*c13],
+            [s12*s23 - c12*c23*s13*eidCP,   -c12*s23 - s12*c23*s13*eidCP,   c23*c13]
+        ], dtype=complex)
+
+    def initial_conditions(self, Tnu, a):
+        """Return initial density matrices: thermal FD on diagonals, zero off-diagonals.
+
+        Returns rho_all shape (2, 9, Ny).
+        """
+        rho_all = np.zeros((2, 9, self.Ny))
+        Tnu_com = Tnu * a
+        for i in range(self.Ny):
+            x = self.y_grid[i] / Tnu_com
+            if x < 500.0:
+                f_eq = 1.0 / (np.exp(x) + 1.0)
+                for sector in range(2):
+                    rho_all[sector, 0, i] = f_eq  # rho_ee
+                    rho_all[sector, 1, i] = f_eq  # rho_mumu
+                    rho_all[sector, 2, i] = f_eq  # rho_tautau
+        return rho_all
+
+    def oscillation_step(self, rho_all, dt, a, Tg):
+        """Apply exact unitary oscillation evolution for time interval dt.
+
+        For each momentum mode and each sector (nu, nubar), diagonalizes
+        the effective Hamiltonian H = H_vac + H_matter, computes the exact
+        phase rotation, and transforms back to the flavor basis.
+
+        Vectorized over all Ny momentum modes using batch eigendecomposition.
+
+        Parameters
+        ----------
+        rho_all : ndarray, shape (2, 9, Ny)
+            Modified in-place.
+        dt : float
+            Time interval in seconds.
+        a : float
+            Scale factor.
+        Tg : float
+            Photon temperature in MeV.
+        """
+        Ny = self.Ny
+        # Convert dt to natural units: phase = H[eV] * dt_nat is dimensionless
+        dt_nat = dt * self._eV_to_secm1
+
+        # Physical energies in eV: E = y/a (massless neutrinos)
+        E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)  # (Ny,) eV
+        inv_E = 1.0 / E_eV  # (Ny,) 1/eV
+
+        # Thermal matter potential (Notzold-Raffelt 1988):
+        #   V_th(E) = -8*sqrt(2)/3 * GF * E * rho_e / mW^2
+        # where rho_e = 7*pi^2/60 * T^4 (relativistic e+e- energy density).
+        # V_th suppresses oscillations at high T via matter-induced mass.
+        rho_e = 7.0 * np.pi**2 / 60.0 * Tg**4  # MeV^4
+        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e / (3.0 * self.mW2)  # dimless
+        V_eV = V0 * E_eV  # (Ny,) eV
+
+        # Neutrino self-interaction potential (Sigl & Raffelt 1993):
+        #   V_nunu = sqrt(2) * GF / (2*pi^2 * a^3) * int (rho_y - rhobar_y) y^2 dy
+        # This 3x3 matrix arises from forward nu-nu scattering and creates
+        # synchronized oscillation effects that enhance flavor conversion.
+        rho_nu_mat = _rho_vec_batch_to_matrix(rho_all[0])   # (Ny, 3, 3)
+        rho_nubar_mat = _rho_vec_batch_to_matrix(rho_all[1])  # (Ny, 3, 3)
+        diff_mat = rho_nu_mat - rho_nubar_mat  # (Ny, 3, 3)
+        # Quadrature: sum w_i * y_i^2 * diff_mat[i] over collision grid
+        Ny_coll = min(self._boltz.Ny_coll, Ny)
+        y2w = self._boltz.quad_w[:Ny_coll] * self.y_grid[:Ny_coll]**2  # (Ny_coll,) MeV^3
+        V_nunu_mat = np.einsum('i,ijk->jk', y2w, diff_mat[:Ny_coll])  # (3,3) MeV^3
+        V_nunu_prefactor = np.sqrt(2.0) * PRyMini.GF / (2.0 * np.pi**2 * a**3)  # MeV^{-2} / MeV^0 = MeV^{-2}... no
+        # GF [MeV^{-2}] * MeV^3 / a^3 = MeV / a^3 -> multiply by 1e6 for eV
+        V_nunu_eV = V_nunu_prefactor * V_nunu_mat * 1.0e6  # (3,3) eV
+
+        # Build Hamiltonians: shape (Ny, 3, 3)
+        # H = Omega/E + V_thermal*diag(1,0,0) + V_nunu
+        # In our convention (phase_signs = [-1,+1]):
+        #   nu:  exp(-iH_nu dt) rho exp(+iH_nu dt) -> i*drho/dt = [H_nu, rho]
+        #   nubar: exp(+iH_nubar dt) rhobar exp(-iH_nubar dt) -> i*drhobar/dt = -[H_nubar, rhobar]
+        # This matches the standard QKE when H_nubar uses Omega_nubar and same-sign potentials.
+        H_list = [None, None]
+        for s in range(2):
+            Omega = self._Omega_nu if s == 0 else self._Omega_nubar
+            H = np.zeros((Ny, 3, 3), dtype=complex)
+            for k in range(3):
+                for l in range(3):
+                    H[:, k, l] = Omega[k, l] * inv_E + V_nunu_eV[k, l]
+            H[:, 0, 0] += V_eV
+            H_list[s] = H
+
+        # Phase sign convention:
+        # Neutrinos:     i*drho/dt = [H, rho]   -> rho(t+dt) = exp(-iHdt) rho exp(+iHdt)
+        # Antineutrinos: i*drhobar/dt = -[Hbar, rhobar]
+        #                             -> rhobar(t+dt) = exp(+iHbar*dt) rhobar exp(-iHbar*dt)
+        phase_signs = [-1.0, +1.0]
+
+        for sector in range(2):
+            H_eff = H_list[sector]
+            sign = phase_signs[sector]
+
+            # Batch eigendecompose: H = P diag(lambda) P^dagger
+            eigenvalues, P = np.linalg.eigh(H_eff)  # (Ny,3), (Ny,3,3)
+
+            # Phase factors: exp(i * sign * lambda * dt_nat)
+            phases = np.exp(1j * sign * eigenvalues * dt_nat)  # (Ny, 3)
+
+            # Reconstruct density matrices from vec9
+            rho_mat = _rho_vec_batch_to_matrix(rho_all[sector])  # (Ny, 3, 3)
+
+            # Transform to H eigenbasis: rho_H = P^dag @ rho @ P
+            Pdag = P.conj().transpose(0, 2, 1)  # (Ny, 3, 3)
+            rho_H = np.einsum('nij,njk,nkl->nil', Pdag, rho_mat, P)
+
+            # Apply phase rotations: rho'_H[n,i,j] *= phase[n,i] * conj(phase[n,j])
+            phase_ij = phases[:, :, None] * phases[:, None, :].conj()  # (Ny, 3, 3)
+            rho_H *= phase_ij
+
+            # Transform back: rho' = P @ rho'_H @ P^dag
+            rho_new = np.einsum('nij,njk,nkl->nil', P, rho_H, Pdag)
+
+            # Store back as vec9
+            rho_all[sector] = _matrix_batch_to_rho_vec(rho_new)
+
+    def collision_step(self, rho_all, phi1_dt, dt, a, Tg):
+        """Apply collision integrals to the density matrix.
+
+        Diagonal elements: updated using existing D-kernel collision integrals
+        from the wrapped BoltzmannSolver (no collision_mixing, since the QKE
+        oscillation step handles flavor mixing directly).
+
+        Off-diagonal elements: gain (transport) + damping via exponential Euler:
+            rho_ij(t+dt) = exp(-D*dt) * rho_ij(t) + phi1(D*dt)*dt * gain_ij
+        where D = 1/2(Gamma_i + Gamma_j) and gain_ij scatters coherences
+        from other momenta to p_i via the D-kernel collision formalism.
+
+        Parameters
+        ----------
+        rho_all : ndarray, shape (2, 9, Ny)
+            Modified in-place.
+        phi1_dt : float
+            phi_1(z) * dt for exponential Euler regularization of diagonals.
+        dt : float
+            Actual time step in seconds (for off-diagonal damping).
+        a : float
+            Scale factor at midpoint.
+        Tg : float
+            Photon temperature in MeV at midpoint.
+        """
+        # --- Extract diagonal distributions for 3-species collision integrals ---
+        f_all = np.zeros((3, self.Ny))
+        f_all[0] = rho_all[0, 0]  # f_nue = rho_ee (neutrino sector)
+        f_all[1] = rho_all[1, 0]  # f_nuebar = rho_bar_ee (antineutrino sector)
+        # f_numu_eff: average over all 4 mu/tau-type species
+        f_all[2] = 0.25 * (rho_all[0, 1] + rho_all[0, 2]    # rho_mumu + rho_tautau (nu)
+                          + rho_all[1, 1] + rho_all[1, 2])    # rho_bar_mumu + rho_bar_tautau (nubar)
+
+        # Compute collision integrals via raw functions (bypassing collision_mixing)
+        GF2_pref = self._boltz.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
+        tail_params = _compute_all_tail_params(self.y_grid, f_all)
+
+        I_nu_nu = _collision_integral_nu_nu(
+            f_all, self.y_grid, self._boltz.quad_w, a, GF2_pref, tail_params,
+            self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+        if PRyMini.massive_electron_flag:
+            I_nu_e = _collision_integral_nu_e_massive(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2,
+                self._boltz.gmuL2, self._boltz.gmuR2,
+                PRyMini.me, self._boltz.Ny_coll)
+        else:
+            fnu_e_scat_val = float(self._boltz._fnu_e_scat(Tg))
+            fnu_e_ann_val = float(self._boltz._fnu_e_ann(Tg))
+            fnu_mu_scat_val = float(self._boltz._fnu_mu_scat(Tg))
+            fnu_mu_ann_val = float(self._boltz._fnu_mu_ann(Tg))
+            I_nu_e = _collision_integral_nu_e(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2, self._boltz.geLgeR,
+                self._boltz.gmuL2, self._boltz.gmuR2, self._boltz.gmuLgmuR,
+                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                self._boltz.D_k0, self._boltz.D_k1, self._boltz.D_k2,
+                self._boltz.Ny_coll, 1.0, 1.0, 1.0, 1.0)
+
+        I_total = I_nu_nu + I_nu_e  # shape (3, Ny)
+
+        # Add NP collision terms
+        C_NP = self._boltz.C_NP_funcs
+        if 'nue' in C_NP:
+            I_total[0] += C_NP['nue'](self.y_grid, a, Tg, f_all)
+        if 'nuebar' in C_NP:
+            I_total[1] += C_NP['nuebar'](self.y_grid, a, Tg, f_all)
+        if 'numu' in C_NP:
+            I_total[2] += C_NP['numu'](self.y_grid, a, Tg, f_all)
+
+        # --- Update diagonal elements with exponential Euler ---
+        # I_total[0] = nue, I_total[1] = nuebar, I_total[2] = numu_eff
+        # phi1_dt can be a scalar or array of shape (3, Ny).
+        if np.ndim(phi1_dt) == 0:
+            _p0 = phi1_dt
+            _p1 = phi1_dt
+            _p2 = phi1_dt
+        else:
+            _p0 = phi1_dt[0]
+            _p1 = phi1_dt[1]
+            _p2 = phi1_dt[2]
+        rho_all[0, 0] += _p0 * I_total[0]   # rho_ee neutrino
+        rho_all[1, 0] += _p1 * I_total[1]   # rho_bar_ee antineutrino
+        rho_all[0, 1] += _p2 * I_total[2]   # rho_mumu neutrino
+        rho_all[0, 2] += _p2 * I_total[2]   # rho_tautau neutrino
+        rho_all[1, 1] += _p2 * I_total[2]   # rho_bar_mumu antineutrino
+        rho_all[1, 2] += _p2 * I_total[2]   # rho_bar_tautau antineutrino
+
+        # --- Off-diagonal: damping + gain (transport) ---
+        # Gamma_alpha = C_D_alpha * GF^2 * T^4 * E  [eV], converted to 1/s
+        GF_eV = PRyMini.GF * 1.0e-12  # MeV^{-2} -> eV^{-2}
+        T_eV = Tg * 1.0e6
+        E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
+
+        Gamma = np.zeros((3, self.Ny))  # [nue, numu, nutau] collision rates in 1/s
+        for alpha in range(3):
+            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
+
+        # Damping rates D_αβ = ½(Γ_α + Γ_β) for each off-diagonal pair
+        D_emu = 0.5 * (Gamma[0] + Gamma[1])    # e-μ (components 3,4)
+        D_etau = 0.5 * (Gamma[0] + Gamma[2])   # e-τ (components 5,6)
+        D_mutau = 0.5 * (Gamma[1] + Gamma[2])  # μ-τ (components 7,8)
+
+        # Damping factors: exp(-D * dt)
+        damp_emu = np.exp(-D_emu * dt)
+        damp_etau = np.exp(-D_etau * dt)
+        damp_mutau = np.exp(-D_mutau * dt)
+
+        # Exponential Euler gain factor: phi1(D*dt)*dt = (1-exp(-D*dt))/D
+        # For D*dt→0: phi1*dt → dt; for D*dt→∞: phi1*dt → 1/D
+        z_emu = D_emu * dt
+        z_etau = D_etau * dt
+        z_mutau = D_mutau * dt
+        _eps = 1.0e-8
+        phi1dt_emu = np.where(z_emu > 1.0e-4,
+                              (1.0 - damp_emu) / np.maximum(D_emu, _eps),
+                              dt * (1.0 - 0.5 * z_emu))
+        phi1dt_etau = np.where(z_etau > 1.0e-4,
+                               (1.0 - damp_etau) / np.maximum(D_etau, _eps),
+                               dt * (1.0 - 0.5 * z_etau))
+        phi1dt_mutau = np.where(z_mutau > 1.0e-4,
+                                (1.0 - damp_mutau) / np.maximum(D_mutau, _eps),
+                                dt * (1.0 - 0.5 * z_mutau))
+
+        # Finite-mass correction for off-diagonal ν-e scattering
+        if PRyMini.massive_electron_flag:
+            # Massive electron kinematics already exact; no correction needed
+            fnu_emu_scat_val = 1.0
+            fnu_mutau_scat_val = 1.0
+        else:
+            fnu_emu_scat_val = np.sqrt(max(fnu_e_scat_val * fnu_mu_scat_val, 0.0))
+            fnu_mutau_scat_val = fnu_mu_scat_val  # μ-τ = diagonal μ
+
+        # Compute off-diagonal gain (transport) for each sector
+        for sector in range(2):
+            # Extract off-diagonal: shape (6, Ny) = components 3..8
+            rho_offdiag = rho_all[sector, 3:, :]
+            B_idx = 1 if sector == 0 else 0  # ν̄_e for ν sector, ν_e for ν̄
+
+            gain = _offdiag_collision_gain(
+                rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                GF2_pref,
+                self.c_emu_scat, self.c_mutau_scat,
+                fnu_emu_scat_val, fnu_mutau_scat_val,
+                B_idx, tail_params,
+                self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+            # Update off-diagonals: ρ_new = damp × ρ_old + phi1dt × gain
+            # e-μ (components 3,4 → gain indices 0,1)
+            rho_all[sector, 3] = damp_emu * rho_all[sector, 3] + phi1dt_emu * gain[0]
+            rho_all[sector, 4] = damp_emu * rho_all[sector, 4] + phi1dt_emu * gain[1]
+            # e-τ (components 5,6 → gain indices 2,3)
+            rho_all[sector, 5] = damp_etau * rho_all[sector, 5] + phi1dt_etau * gain[2]
+            rho_all[sector, 6] = damp_etau * rho_all[sector, 6] + phi1dt_etau * gain[3]
+            # μ-τ (components 7,8 → gain indices 4,5)
+            rho_all[sector, 7] = damp_mutau * rho_all[sector, 7] + phi1dt_mutau * gain[4]
+            rho_all[sector, 8] = damp_mutau * rho_all[sector, 8] + phi1dt_mutau * gain[5]
+
+        # Clip diagonal elements to valid range [0, 1]
+        f_min = 1.0e-30
+        f_max = 1.0 - f_min
+        for sector in range(2):
+            for d in range(3):
+                rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
+
+    def evolve_step(self, rho_all, dt, phi1_dt, a, Tg):
+        """Combined oscillation + collision step (implicit off-diagonal).
+
+        Instead of Strang splitting (half-osc, collision, half-osc), this
+        solves the combined oscillation + damping ODE for off-diagonal
+        elements analytically using a complex exponential Euler scheme:
+
+            dρ_αβ/dt = -(D_αβ + i*s*ω_αβ)*ρ_αβ + S_αβ
+
+        where s = +1 for ν, -1 for ν̄, ω_αβ = (H_αα - H_ββ) is the
+        effective oscillation frequency, and S_αβ includes both the
+        oscillation source (-i*s*H_αβ*(ρ_ββ-ρ_αα)) and collision gain.
+
+        This correctly captures the steady-state ρ_αβ = S/(D + iω), which
+        produces the Sigl-Raffelt relaxation rate ω²D/(ω²+D²) for the
+        diagonal elements, without the splitting error that occurs when
+        oscillation and collision are applied sequentially.
+
+        Diagonal elements are updated with exponential Euler from collision
+        integrals plus the oscillation-induced relaxation feedback.
+
+        Parameters
+        ----------
+        rho_all : ndarray, shape (2, 9, Ny)
+            Modified in-place.
+        dt : float
+            Physical time step in seconds.
+        phi1_dt : float
+            phi_1(z) * dt for exponential Euler regularization of diagonals.
+        a : float
+            Scale factor at midpoint.
+        Tg : float
+            Photon temperature in MeV at midpoint.
+        """
+        Ny = self.Ny
+
+        # ================================================================
+        # 1. Diagonal collision integrals (same as collision_step)
+        # ================================================================
+        f_all = np.zeros((3, Ny))
+        f_all[0] = rho_all[0, 0]
+        f_all[1] = rho_all[1, 0]
+        f_all[2] = 0.25 * (rho_all[0, 1] + rho_all[0, 2]
+                          + rho_all[1, 1] + rho_all[1, 2])
+
+        GF2_pref = self._boltz.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
+        tail_params = _compute_all_tail_params(self.y_grid, f_all)
+
+        I_nu_nu = _collision_integral_nu_nu(
+            f_all, self.y_grid, self._boltz.quad_w, a, GF2_pref, tail_params,
+            self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+        if PRyMini.massive_electron_flag:
+            I_nu_e = _collision_integral_nu_e_massive(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2,
+                self._boltz.gmuL2, self._boltz.gmuR2,
+                PRyMini.me, self._boltz.Ny_coll)
+        else:
+            fnu_e_scat_val = float(self._boltz._fnu_e_scat(Tg))
+            fnu_e_ann_val = float(self._boltz._fnu_e_ann(Tg))
+            fnu_mu_scat_val = float(self._boltz._fnu_mu_scat(Tg))
+            fnu_mu_ann_val = float(self._boltz._fnu_mu_ann(Tg))
+            I_nu_e = _collision_integral_nu_e(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2, self._boltz.geLgeR,
+                self._boltz.gmuL2, self._boltz.gmuR2, self._boltz.gmuLgmuR,
+                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                self._boltz.D_k0, self._boltz.D_k1, self._boltz.D_k2,
+                self._boltz.Ny_coll, 1.0, 1.0, 1.0, 1.0)
+
+        I_total = I_nu_nu + I_nu_e
+        C_NP = self._boltz.C_NP_funcs
+        if 'nue' in C_NP:
+            I_total[0] += C_NP['nue'](self.y_grid, a, Tg, f_all)
+        if 'nuebar' in C_NP:
+            I_total[1] += C_NP['nuebar'](self.y_grid, a, Tg, f_all)
+        if 'numu' in C_NP:
+            I_total[2] += C_NP['numu'](self.y_grid, a, Tg, f_all)
+
+        # Update diagonals with collision integrals (exponential Euler).
+        # phi1_dt can be a scalar or array of shape (3, Ny) for mode-dependent
+        # regularization (species order: nue, nuebar, numu_equiv).
+        if np.ndim(phi1_dt) == 0:
+            # Scalar phi1_dt: apply uniformly
+            _p0 = phi1_dt
+            _p1 = phi1_dt
+            _p2 = phi1_dt
+        else:
+            # Array phi1_dt[species, y]: mode-dependent
+            _p0 = phi1_dt[0]
+            _p1 = phi1_dt[1]
+            _p2 = phi1_dt[2]
+        rho_all[0, 0] += _p0 * I_total[0]
+        rho_all[1, 0] += _p1 * I_total[1]
+        rho_all[0, 1] += _p2 * I_total[2]
+        rho_all[0, 2] += _p2 * I_total[2]
+        rho_all[1, 1] += _p2 * I_total[2]
+        rho_all[1, 2] += _p2 * I_total[2]
+
+        # ================================================================
+        # 2. Build Hamiltonians (flavor basis, per momentum mode)
+        # ================================================================
+        E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
+        inv_E = 1.0 / E_eV
+
+        # Thermal matter potential (Notzold-Raffelt)
+        rho_e_th = 7.0 * np.pi**2 / 60.0 * Tg**4
+        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / (3.0 * self.mW2)
+        V_thermal_eV = V0 * E_eV
+
+        # CC matter potential: V_CC = sqrt(2) GF (n_e- - n_e+)
+        # Charge neutrality: n_e- - n_e+ = n_p ~ eta_b * n_gamma
+        # n_gamma = 2 zeta(3)/pi^2 * T^3, in comoving: T -> Tg
+        from scipy.special import zeta as _zeta
+        n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3  # MeV^3
+        n_e_asym = PRyMini.eta0b * n_gamma  # MeV^3
+        V_CC_MeV = np.sqrt(2.0) * PRyMini.GF * n_e_asym  # MeV
+        V_CC_eV = V_CC_MeV * 1.0e6  # eV (scalar, same for all modes)
+
+        # V_nunu self-interaction potential (diagonal part only).
+        # Off-diagonal ρ elements oscillate rapidly and time-average to zero,
+        # so only the diagonal (number density) asymmetry ρ_αα - ρ̄_αα enters.
+        # In a CP-symmetric universe this is ~0; nonzero only from CP violation.
+        Ny_coll = min(self._boltz.Ny_coll, Ny)
+        y2w = self._boltz.quad_w[:Ny_coll] * self.y_grid[:Ny_coll]**2
+        V_nunu_eV = np.zeros((3, 3), dtype=complex)
+        V_nunu_pref = np.sqrt(2.0) * PRyMini.GF / (2.0 * np.pi**2 * a**3) * 1.0e6  # eV/MeV³
+        for fl in range(3):
+            diff_diag = rho_all[0, fl, :Ny_coll] - rho_all[1, fl, :Ny_coll]
+            V_nunu_eV[fl, fl] = V_nunu_pref * np.dot(y2w, diff_diag)
+
+        # Build H for each sector: H = Omega/E + V_thermal*diag_e + V_CC*diag_e + V_nunu
+        H_list = [None, None]
+        for s in range(2):
+            Omega = self._Omega_nu if s == 0 else self._Omega_nubar
+            H = np.zeros((Ny, 3, 3), dtype=complex)
+            for k in range(3):
+                for l in range(3):
+                    H[:, k, l] = Omega[k, l] * inv_E + V_nunu_eV[k, l]
+            H[:, 0, 0] += V_thermal_eV + V_CC_eV
+            H_list[s] = H
+
+        # ================================================================
+        # 3. Damping rates and off-diagonal gain
+        # ================================================================
+        GF_eV = PRyMini.GF * 1.0e-12
+        T_eV = Tg * 1.0e6
+        Gamma = np.zeros((3, Ny))
+        for alpha in range(3):
+            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
+
+        # D_αβ = ½(Γ_α + Γ_β) in 1/s, for each off-diagonal pair
+        D_pairs = np.zeros((3, Ny))
+        D_pairs[0] = 0.5 * (Gamma[0] + Gamma[1])   # e-μ
+        D_pairs[1] = 0.5 * (Gamma[0] + Gamma[2])   # e-τ
+        D_pairs[2] = 0.5 * (Gamma[1] + Gamma[2])   # μ-τ
+
+        # Finite-mass correction for off-diagonal ν-e scattering
+        if PRyMini.massive_electron_flag:
+            fnu_emu_scat_val = 1.0
+            fnu_mutau_scat_val = 1.0
+        else:
+            fnu_emu_scat_val = np.sqrt(max(fnu_e_scat_val * fnu_mu_scat_val, 0.0))
+            fnu_mutau_scat_val = fnu_mu_scat_val
+
+        # ================================================================
+        # 4. Oscillation relaxation (channel-separated Sigl-Raffelt)
+        # ================================================================
+        # The 3-flavor Hamiltonian H_ee - H_μμ is dominated by the atmospheric
+        # mass splitting Δm²₃₁, which suppresses the solar-channel relaxation
+        # if used naively. Instead, we separate the solar (Δm²₂₁, θ₁₂) and
+        # atmospheric (Δm²₃₁, θ₁₃) channels, each with its own ω_eff:
+        #   Γ = sin²(2θ) × ω² × D / (2(ω_eff² + D²))  per channel
+        # This is the proven Sigl-Raffelt quasi-static approximation.
+
+        p_MeV = np.maximum(self.y_grid / a, 1.0e-10)
+        E_eV_osc = p_MeV * 1.0e6
+
+        # Vacuum oscillation frequencies (eV)
+        omega_21 = PRyMini.Dm2_21 / (2.0 * E_eV_osc)
+        omega_31 = PRyMini.Dm2_31 / (2.0 * E_eV_osc)
+
+        # Matter potential in eV (already computed as V_thermal_eV)
+        V_eV_osc = V_thermal_eV + V_CC_eV
+
+        # Damping rate in eV (use nue coefficient, matching diagonal solver)
+        D_eV_osc = self.C_D[0] * GF_eV**2 * T_eV**4 * E_eV_osc
+
+        # Solar channel: Δm²₂₁, θ₁₂
+        sin2_2theta12 = np.sin(2.0 * PRyMini.theta_12)**2
+        cos_2theta12 = np.cos(2.0 * PRyMini.theta_12)
+        omega_eff_21 = omega_21 * cos_2theta12 - V_eV_osc
+        Gamma_21_eV = sin2_2theta12 * omega_21**2 * D_eV_osc / (
+            2.0 * (omega_eff_21**2 + D_eV_osc**2))
+
+        # Atmospheric channel: Δm²₃₁, θ₁₃
+        sin2_2theta13 = np.sin(2.0 * PRyMini.theta_13)**2
+        cos_2theta13 = np.cos(2.0 * PRyMini.theta_13)
+        omega_eff_31 = omega_31 * cos_2theta13 - V_eV_osc
+        Gamma_31_eV = sin2_2theta13 * omega_31**2 * D_eV_osc / (
+            2.0 * (omega_eff_31**2 + D_eV_osc**2))
+
+        # Total relaxation rate (1/s)
+        Gamma_osc = (Gamma_21_eV + Gamma_31_eV) * self._eV_to_secm1
+
+        # Apply relaxation using 3-species pooling (matching diagonal solver).
+        # Oscillation connects ν_e↔ν_μ within each CP sector, but the collision
+        # integral treats all mu/tau as a single effective species (numu_equiv).
+        # Using combined conservation ensures the effective numu seen by the next
+        # collision step is correctly updated.
+        f_nue = rho_all[0, 0]       # nue (neutrino)
+        f_nuebar = rho_all[1, 0]    # nue (antineutrino)
+        f_mu = 0.25 * (rho_all[0, 1] + rho_all[0, 2]
+                       + rho_all[1, 1] + rho_all[1, 2])
+
+        # Equilibrium targets for particle and antiparticle sectors
+        f_eq_p = (f_nue + 2.0 * f_mu) / 3.0
+        f_eq_a = (f_nuebar + 2.0 * f_mu) / 3.0
+
+        # Exact exponential decay (unconditionally stable)
+        decay = np.exp(-Gamma_osc * dt)
+
+        # Compute changes
+        df_nue = (f_eq_p - f_nue) * (1.0 - decay)
+        df_nuebar = (f_eq_a - f_nuebar) * (1.0 - decay)
+        df_numu = -(df_nue + df_nuebar) / 2.0  # combined conservation
+
+        # Apply to density matrix
+        rho_all[0, 0] += df_nue       # nue (nu)
+        rho_all[1, 0] += df_nuebar    # nue (nubar)
+        # Spread numu change equally across all 4 mu/tau sectors
+        rho_all[0, 1] += df_numu
+        rho_all[0, 2] += df_numu
+        rho_all[1, 1] += df_numu
+        rho_all[1, 2] += df_numu
+
+        # ================================================================
+        # 5. Off-diagonal evolution (combined oscillation + damping)
+        # ================================================================
+        # Off-diagonal density matrix elements track flavor coherences.
+        # Combined osc+damping: dρ_αβ/dt = -(D + isω)ρ_αβ + source
+        pair_flavors = [(0, 1), (0, 2), (1, 2)]
+        osc_signs = [+1.0, -1.0]
+        dt_nat = dt * self._eV_to_secm1
+
+        for sector in range(2):
+            s = osc_signs[sector]
+            H = H_list[sector]
+
+            # Off-diagonal collision gain
+            rho_offdiag = rho_all[sector, 3:, :]
+            B_idx = 1 if sector == 0 else 0
+            gain = _offdiag_collision_gain(
+                rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                GF2_pref,
+                self.c_emu_scat, self.c_mutau_scat,
+                fnu_emu_scat_val, fnu_mutau_scat_val,
+                B_idx, tail_params,
+                self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+            for p_idx, (alpha, beta) in enumerate(pair_flavors):
+                re_idx = 2 * p_idx + 3
+                im_idx = 2 * p_idx + 4
+                rho_ab = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
+
+                # Hamiltonian elements (eV)
+                H_ab_eV = H[:, alpha, beta]
+                omega_eV = (H[:, alpha, alpha] - H[:, beta, beta]).real
+                D_nat = D_pairs[p_idx] / self._eV_to_secm1
+
+                # Complex stiffness
+                z_c = (D_nat + 1j * s * omega_eV) * dt_nat
+
+                # Source: oscillation drive + collision gain
+                rho_aa = rho_all[sector, alpha]
+                rho_bb = rho_all[sector, beta]
+                S_osc_eV = -1j * s * H_ab_eV * (rho_bb - rho_aa)
+                S_gain_eV = (gain[2*p_idx] + 1j*gain[2*p_idx+1]) / self._eV_to_secm1
+                S_total_eV = S_osc_eV + S_gain_eV
+
+                # Complex exponential Euler
+                exp_neg_z = np.exp(-z_c)
+                _small = np.abs(z_c) < 1.0e-4
+                phi1_c = np.where(_small,
+                                  1.0 - 0.5*z_c + z_c**2/6.0,
+                                  (1.0 - exp_neg_z) / np.where(_small, 1.0, z_c))
+
+                rho_ab_new = exp_neg_z * rho_ab + phi1_c * dt_nat * S_total_eV
+
+                # Clamp off-diagonal magnitude
+                ab_mag = np.abs(rho_ab_new)
+                max_mag = np.minimum(0.5, np.sqrt(np.maximum(rho_aa*rho_bb, 0.0)) + 1e-10)
+                scale = np.where(ab_mag > max_mag,
+                                 max_mag / np.maximum(ab_mag, 1e-30), 1.0)
+                rho_ab_new *= scale
+
+                rho_all[sector, re_idx] = rho_ab_new.real
+                rho_all[sector, im_idx] = rho_ab_new.imag
+
+        # Clip diagonal elements to valid range [0, 1]
+        f_min = 1.0e-30
+        f_max = 1.0 - f_min
+        for sector in range(2):
+            for d in range(3):
+                rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
+
+    def extract_f_all_3species(self, rho_all):
+        """Extract 3-species f_all array compatible with BoltzmannSolver.
+
+        Returns shape (3, Ny): [nue, nuebar, numu_eff].
+        """
+        f_all = np.zeros((3, self.Ny))
+        f_all[0] = rho_all[0, 0]
+        f_all[1] = rho_all[1, 0]
+        f_all[2] = 0.25 * (rho_all[0, 1] + rho_all[0, 2]
+                          + rho_all[1, 1] + rho_all[1, 2])
+        return f_all
+
+    def update_thermo_distributions(self, rho_all, a, a_of_T_func=None):
+        """Patch PRyMthermo with all 6 flavor distributions from density matrix.
+
+        Unlike the diagonal BoltzmannSolver which uses mu-tau symmetry,
+        this extracts all 6 independent distributions: nue, nuebar,
+        numu, numubar, nutau, nutaubar.
+        """
+        import PRyM.PRyM_thermo as PRyMthermo
+
+        f_nue = rho_all[0, 0].copy()
+        f_nuebar = rho_all[1, 0].copy()
+        f_numu = rho_all[0, 1].copy()
+        f_numubar = rho_all[1, 1].copy()
+        f_nutau = rho_all[0, 2].copy()
+        f_nutaubar = rho_all[1, 2].copy()
+
+        PRyMthermo.f_nue_general = self._boltz.make_f_callable(f_nue, a, a_of_T_func)
+        PRyMthermo.f_nuebar_general = self._boltz.make_f_callable(f_nuebar, a, a_of_T_func)
+        PRyMthermo.f_numu_general = self._boltz.make_f_callable(f_numu, a, a_of_T_func)
+        PRyMthermo.f_numubar_general = self._boltz.make_f_callable(f_numubar, a, a_of_T_func)
+        PRyMthermo.f_nutau_general = self._boltz.make_f_callable(f_nutau, a, a_of_T_func)
+        PRyMthermo.f_nutaubar_general = self._boltz.make_f_callable(f_nutaubar, a, a_of_T_func)

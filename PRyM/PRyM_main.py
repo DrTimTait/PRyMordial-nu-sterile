@@ -212,11 +212,11 @@ class PRyMclass(object):
               Ny_boltz = boltz_solver.Ny
               n_species_boltz = boltz_solver.n_species
 
-              # Physical scale factor from plasma entropy conservation: spl(T)*a^3 = const.
-              # Normalized so a(T_boltz_start) = 1, keeping comoving momenta y = p*a
-              # in the MeV range matching the Boltzmann grid.
+              # Initial scale factor from plasma entropy conservation (normalization only).
+              # During Phase B, a is evolved via Friedmann equation and Tg is determined
+              # from the plasma entropy equation following Froustey et al. (arXiv:2008.01074).
               spl_ref = PRyMthermo.spl(PRyMini.T_boltz_start)
-              def a_of_T(Tg):
+              def _a_of_T_entropy(Tg):
                   return (spl_ref / PRyMthermo.spl(Tg))**(1./3.)
 
               # Phase A: Standard thermal ODE from T_start to T_boltz_start
@@ -258,7 +258,7 @@ class PRyMclass(object):
               # rate at high T (CFL stability condition: dt * Gamma_coll < 2).
               Tg_boltz_ini = Tg_A[-1]
               Tnu_boltz_ini = Tnu_A[-1]  # use Phase A's evolved Tnu, not Tg
-              a_boltz_ini = a_of_T(Tg_boltz_ini)
+              a_boltz_ini = _a_of_T_entropy(Tg_boltz_ini)
               if PRyMini.qke_density_matrix_flag:
                   rho_curr = dm_solver.initial_conditions(Tnu_boltz_ini, a_boltz_ini)
                   dm_solver.update_thermo_distributions(rho_curr, a_boltz_ini)
@@ -268,72 +268,72 @@ class PRyMclass(object):
 
               t_B_start = t_A[-1]
 
-              # Temperature-based stepping: log-uniform grid in Tg
+              # Phase B: Froustey et al. formalism (arXiv:2008.01074)
+              # Scale factor a evolved via Friedmann equation (da/dt = aH).
+              # Photon temperature Tg determined from plasma entropy equation:
+              #   d(spl * a³)/dt = -(Q/Tg) * a³
+              # where Q is the collision energy transfer rate to neutrinos.
+              # This self-consistently tracks the plasma cooling from e+e-
+              # annihilation energy flowing to neutrinos, producing Neff > 3
+              # without the momentum drift correction needed by the entropy-
+              # based scale factor approach.
+              me = PRyMini.me
               n_B = max(2000, int(PRyMini.n_sampling * 2))
-              Tg_B_grid = np.logspace(np.log10(Tg_boltz_ini),
-                                       np.log10(PRyMini.T_boltz_end), n_B + 1)
 
-              # Get LSODA-accurate cosmic times at each Phase B temperature step.
-              # The 2-variable thermal ODE provides precise t(Tg) timing that
-              # nuclear reactions are sensitive to. Forward Euler dt estimates
-              # accumulate timing errors that propagate to BBN observables.
-              _Tnu_B_ini = Tnu_A[-1]
-              sol_Tg_full = solve_ivp(dTtotdt_thermal,
-                                       [t_B_start, tfin],
-                                       [Tg_boltz_ini, _Tnu_B_ini],
-                                       method='LSODA', rtol=1.e-8, atol=1.e-11,
-                                       dense_output=True)
-              from scipy.interpolate import interp1d as _interp1d
-              _t_dense = np.logspace(np.log10(t_B_start),
-                                      np.log10(sol_Tg_full.t[-1]),
-                                      max(5000, n_B * 2))
-              _Tg_dense = sol_Tg_full.sol(_t_dense)[0]
-              _mask = np.concatenate([[True], np.diff(_Tg_dense) < 0])
-              _t_dense = _t_dense[_mask]
-              _Tg_dense = _Tg_dense[_mask]
-              _t_of_Tg = _interp1d(_Tg_dense, _t_dense, kind='linear',
-                                    bounds_error=False,
-                                    fill_value=(_t_dense[0], _t_dense[-1]))
-              t_B_exact = _t_of_Tg(Tg_B_grid)
-              t_B_exact[0] = t_B_start
+              # Log-uniform grid in a, estimated from entropy-based relation
+              a_end_est = _a_of_T_entropy(PRyMini.T_boltz_end) * 1.02
+              a_grid = np.logspace(np.log10(a_boltz_ini),
+                                     np.log10(a_end_est), n_B + 1)
 
               if(PRyMini.verbose_flag):
                   if PRyMini.qke_density_matrix_flag:
-                      print(f"Phase B: QKE density matrix evolution, Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
-                      print(f"  Combined osc+collision: {n_B} steps, Ny={Ny_boltz}, {2*9*Ny_boltz} DOFs")
+                      print(f"Phase B: QKE density matrix (Froustey), Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
+                      print(f"  {n_B} steps, Ny={Ny_boltz}, {2*9*Ny_boltz} DOFs")
                   else:
-                      print(f"Phase B: Boltzmann evolution, Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
-                      print(f"  Exponential Euler: {n_B} steps, Ny={Ny_boltz}")
+                      print(f"Phase B: Boltzmann (Froustey), Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
+                      print(f"  {n_B} steps, Ny={Ny_boltz}")
 
-              # Mode-dependent collision damping coefficients for exponential Euler.
-              # C_D[s] * GF^2 * T^4 * p gives the collision rate for species s
-              # at physical momentum p. Using these instead of a scalar Gamma
-              # avoids over-regularizing low-momentum modes (which carry most of
-              # the energy) while still stabilizing high-momentum modes.
+              # Mode-dependent collision damping coefficients for exponential Euler
               _C_D_boltz = np.array([3.06, 3.06, 2.22])  # [nue, nuebar, numu]
               _GF2_secm1 = PRyMini.GF**2 * PRyMini.MeV_to_secm1
               _y_grid_boltz = boltz_solver.y_grid
-
-              # Degeneracy factors for comoving energy: [nu_e, nuebar, numu+nutau+anti]
-              _dof_boltz = np.array([1.0, 1.0, 4.0])
               _dy_boltz = boltz_solver.dy
 
               # Storage for Phase B trajectory
-              t_B_list = [t_B_exact[0]]
+              t_B_list = [t_B_start]
               Tg_B_list = [Tg_boltz_ini]
-              Tg_curr = Tg_boltz_ini
+              a_B_list = [a_boltz_ini]
               f_min_clip = 1.0e-30
 
+              # Froustey state variables
+              sigma_curr = PRyMthermo.spl(Tg_boltz_ini) * a_boltz_ini**3
+              Tg_curr = Tg_boltz_ini
+              t_curr = t_B_start
+
+              # Precompute y³ grid for comoving energy calculation
+              _y3_grid = _y_grid_boltz**3
+              _dy_2pi2 = _dy_boltz / (2.0 * np.pi**2)
+
               for istep in range(n_B):
-                  Tg_next = Tg_B_grid[istep + 1]
-                  dt = t_B_exact[istep + 1] - t_B_exact[istep]
+                  a_curr = a_grid[istep]
+                  a_next = a_grid[istep + 1]
+                  da = a_next - a_curr
+                  a_mid = 0.5 * (a_curr + a_next)
 
-                  Tg_mid = 0.5 * (Tg_curr + Tg_next)
-                  a_mid = a_of_T(Tg_mid)
+                  # Midpoint Tg estimate (adiabatic cooling)
+                  Tg_mid = Tg_curr * (a_curr / a_mid)
 
-                  # Mode-dependent exponential Euler regularization:
-                  # z(s,i) = C_D[s] * GF² * T⁴ * (y_i/a) * dt
-                  # phi_1(z) = (1-exp(-z))/z
+                  # Time step: midpoint Hubble for O(da²) accuracy
+                  # (Forward Euler dt = da/(a_curr*H_curr) has O(da) errors
+                  # that accumulate to ~0.2% timing offset over Phase B)
+                  if PRyMini.qke_density_matrix_flag:
+                      dm_solver.update_thermo_distributions(rho_curr, a_curr)
+                  else:
+                      boltz_solver.update_thermo_distributions(f_curr, a_curr)
+                  H_mid = Hubble(Tg_mid)
+                  dt = da / (a_mid * H_mid)
+
+                  # Exponential Euler regularization
                   _rate_base = _GF2_secm1 * Tg_mid**4 / a_mid * dt
                   _z_mode = np.outer(_C_D_boltz, _y_grid_boltz) * _rate_base
                   _z_mode = np.maximum(_z_mode, 1.0e-15)
@@ -342,102 +342,112 @@ class PRyMclass(object):
                                         (1.0 - np.exp(-_z_mode)) / _z_mode)
 
                   if PRyMini.qke_density_matrix_flag:
-                      # QKE: combined oscillation + collision step
-                      # Pass mode-dependent phi1_dt to evolve_step
-                      dm_solver.update_thermo_distributions(
-                          rho_curr, a_of_T(Tg_curr), a_of_T_func=a_of_T)
+                      # QKE: track comoving energy before/after for entropy equation
+                      _diag_sum_pre = (rho_curr[0,0] + rho_curr[1,0] + rho_curr[0,1]
+                                       + rho_curr[0,2] + rho_curr[1,1] + rho_curr[1,2])
+                      E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
+
                       dm_solver.evolve_step(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
 
-                      # Momentum drift correction (same physics as diagonal case).
-                      # Compute total comoving energy from all 6 diagonal components.
-                      _eps_qke = 1.0 / (2.*np.pi**2) * _dy_boltz * np.sum(
-                          _y_grid_boltz**3 * (
-                              rho_curr[0, 0] + rho_curr[1, 0]    # nue + nuebar
-                            + rho_curr[0, 1] + rho_curr[0, 2]    # numu + nutau
-                            + rho_curr[1, 1] + rho_curr[1, 2]))  # numubar + nutaubar
-                      _Tnu_eff_qke = (_eps_qke / (3.0 * 7.*np.pi**2/120.))**0.25 / a_mid
-                      _drho_drift_qke = (
-                          PRyMthermo.delta_rho_nue(Tg_mid, _Tnu_eff_qke, _Tnu_eff_qke)
-                          + 2.*PRyMthermo.delta_rho_numu(Tg_mid, _Tnu_eff_qke, _Tnu_eff_qke))
-                      _Gamma_qke = _drho_drift_qke / (3.0 * Tg_mid * PRyMthermo.spl(Tg_mid))
-                      _shift_qke = _y_grid_boltz * _Gamma_qke * dt
-                      # Advect all density matrix components (diag + off-diag)
-                      _y_shifted_qke = _y_grid_boltz - _shift_qke
-                      _idx_f_qke = (_y_shifted_qke - _y_grid_boltz[0]) / _dy_boltz
-                      _idx_qke = np.clip(np.floor(_idx_f_qke).astype(int), 0, Ny_boltz - 2)
-                      _frac_qke = _idx_f_qke - _idx_qke
-                      _valid_qke = ((_y_shifted_qke > _y_grid_boltz[0])
-                                    & (_y_shifted_qke < _y_grid_boltz[-1]))
-                      _rho_pre = rho_curr.copy()
-                      for _sec in range(2):
-                          for _comp in range(9):
-                              _r_interp = (_rho_pre[_sec, _comp, _idx_qke] * (1 - _frac_qke)
-                                           + _rho_pre[_sec, _comp, _idx_qke + 1] * _frac_qke)
-                              rho_curr[_sec, _comp] = np.where(
-                                  _valid_qke, _r_interp, rho_curr[_sec, _comp])
+                      _diag_sum_post = (rho_curr[0,0] + rho_curr[1,0] + rho_curr[0,1]
+                                        + rho_curr[0,2] + rho_curr[1,1] + rho_curr[1,2])
+                      E_com_post = np.sum(_y3_grid * _diag_sum_post) * _dy_2pi2
                   else:
-                      # Diagonal Boltzmann: exponential Euler + operator-split oscillation
-                      boltz_solver.update_thermo_distributions(
-                          f_curr, a_of_T(Tg_curr), a_of_T_func=a_of_T)
+                      # Diagonal Boltzmann: track comoving energy before/after
+                      _f_weighted_pre = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
+                      E_com_pre = np.sum(_y3_grid * _f_weighted_pre) * _dy_2pi2
+
                       C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
                       f_curr = np.clip(f_curr + _phi1_mode * dt * C_f,
                                        f_min_clip, 1.0 - f_min_clip)
 
-                      # Momentum drift correction for non-inertial comoving frame.
-                      # The comoving variable y = p*a(Tg) drifts because a(Tg)
-                      # (defined via photon-electron entropy) grows faster than
-                      # a_phys when energy flows from plasma to neutrinos.
-                      # Drift rate: Gamma = delta_rho / (3 * Tg * spl(Tg))
-                      # where delta_rho is the photon-side collision rate,
-                      # approximated by the thermal rate at effective Tnu.
-                      _eps_grid = np.sum(
-                          _dof_boltz[:, None] / (2.*np.pi**2)
-                          * _dy_boltz * _y_grid_boltz**3 * f_curr)
-                      _Tnu_eff = (_eps_grid / (3.0 * 7.*np.pi**2/120.))**0.25 / a_mid
-                      _drho_drift = (PRyMthermo.delta_rho_nue(Tg_mid, _Tnu_eff, _Tnu_eff)
-                                     + 2.*PRyMthermo.delta_rho_numu(Tg_mid, _Tnu_eff, _Tnu_eff))
-                      _Gamma_drift = _drho_drift / (3.0 * Tg_mid * PRyMthermo.spl(Tg_mid))
-                      _shift = _y_grid_boltz * _Gamma_drift * dt
-                      # Advection: f(y) -> f(y - shift) via linear interpolation
-                      _y_shifted = _y_grid_boltz - _shift
-                      _idx_f = (_y_shifted - _y_grid_boltz[0]) / _dy_boltz
-                      _idx = np.clip(np.floor(_idx_f).astype(int), 0, Ny_boltz - 2)
-                      _frac = _idx_f - _idx
-                      _valid = (_y_shifted > _y_grid_boltz[0]) & (_y_shifted < _y_grid_boltz[-1])
-                      _f_pre = f_curr.copy()
-                      for _s in range(n_species_boltz):
-                          _f_interp = _f_pre[_s, _idx] * (1 - _frac) + _f_pre[_s, _idx + 1] * _frac
-                          f_curr[_s] = np.where(_valid, _f_interp, f_curr[_s])
-
-                      # Oscillation mixing: operator-split relaxation (Sigl-Raffelt).
-                      # Skipped when using collision_mixing (handled inside collision_integrals).
+                      # Oscillation mixing (operator-split relaxation)
                       if PRyMini.nu_oscillation_flag and \
                               getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'relaxation':
                           boltz_solver.apply_oscillation_mixing(f_curr, a_mid, Tg_mid, dt)
 
-                  # Advance state
-                  Tg_curr = Tg_next
+                      _f_weighted_post = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
+                      E_com_post = np.sum(_y3_grid * _f_weighted_post) * _dy_2pi2
 
-                  t_B_list.append(t_B_exact[istep + 1])
-                  Tg_B_list.append(Tg_curr)
+                  # Update plasma entropy from energy conservation:
+                  #   d(spl * a³)/dt = -(Q/Tg) * a³
+                  # where Q = ΔE_com / (a⁴ * dt) is the collision energy transfer rate.
+                  # Substituting: Δσ = -ΔE_com / (a * Tg)
+                  dE_com = E_com_post - E_com_pre
+                  sigma_new = sigma_curr - dE_com / (a_mid * Tg_mid)
+
+                  # Find Tg_new from spl(Tg_new) * a_next³ = sigma_new
+                  s_target = sigma_new / a_next**3
+                  Tg_guess = Tg_curr * (a_curr / a_next)  # adiabatic estimate
+                  for _newton in range(10):
+                      s_val = PRyMthermo.spl(Tg_guess)
+                      ds_dT = (PRyMthermo.spl(Tg_guess * 1.001)
+                               - PRyMthermo.spl(Tg_guess * 0.999)) / (0.002 * Tg_guess)
+                      delta_T = (s_val - s_target) / ds_dT
+                      Tg_guess -= delta_T
+                      if abs(delta_T) < 1.0e-10 * Tg_guess:
+                          break
+                  Tg_new = Tg_guess
+
+                  # Advance state
+                  sigma_curr = sigma_new
+                  Tg_curr = Tg_new
+                  t_curr += dt
+
+                  t_B_list.append(t_curr)
+                  Tg_B_list.append(Tg_new)
+                  a_B_list.append(a_next)
 
                   if(PRyMini.verbose_flag and (istep+1) % max(1, n_B//5) == 0):
-                      print(f"    step {istep+1}/{n_B}: Tg={Tg_curr:.4f} MeV, a={a_of_T(Tg_curr):.2f}")
+                      print(f"    step {istep+1}/{n_B}: Tg={Tg_curr:.4f} MeV, a={a_next:.2f}")
+
+                  # Stop when Tg drops below T_boltz_end
+                  if Tg_new <= PRyMini.T_boltz_end:
+                      break
 
               t_B = np.array(t_B_list)
               Tg_B = np.array(Tg_B_list)
 
+              # Build a_of_T from Phase B trajectory for frozen distribution readout.
+              # For Tg below the trajectory endpoint, extrapolate using entropy-based a
+              # renormalized to match the trajectory (collisions are negligible there).
+              from scipy.interpolate import interp1d as _interp1d
+              _a_B_arr = np.array(a_B_list)
+              _a_of_T_traj = _interp1d(Tg_B[::-1], _a_B_arr[::-1],
+                                        kind='linear', bounds_error=False,
+                                        fill_value='extrapolate')
+              _a_end_traj = _a_B_arr[-1]
+              _Tg_end_traj = Tg_B[-1]
+              _a_entropy_end = _a_of_T_entropy(_Tg_end_traj)
+              _a_ratio_end = _a_end_traj / _a_entropy_end
+
+              def a_of_T(Tg):
+                  if np.isscalar(Tg):
+                      if Tg >= _Tg_end_traj:
+                          return float(_a_of_T_traj(Tg))
+                      else:
+                          return _a_of_T_entropy(Tg) * _a_ratio_end
+                  else:
+                      Tg = np.asarray(Tg, dtype=float)
+                      result = np.empty_like(Tg)
+                      above = Tg >= _Tg_end_traj
+                      if np.any(above):
+                          result[above] = _a_of_T_traj(Tg[above])
+                      if np.any(~above):
+                          result[~above] = _a_of_T_entropy(Tg[~above]) * _a_ratio_end
+                      return result
+
               # Freeze final distributions with dynamic a_of_T for Phase C
               if PRyMini.qke_density_matrix_flag:
-                  dm_solver.update_thermo_distributions(rho_curr, a_of_T(Tg_B[-1]),
+                  dm_solver.update_thermo_distributions(rho_curr, _a_B_arr[-1],
                                                          a_of_T_func=a_of_T)
               else:
-                  boltz_solver.update_thermo_distributions(f_curr, a_of_T(Tg_B[-1]),
+                  boltz_solver.update_thermo_distributions(f_curr, _a_B_arr[-1],
                                                            a_of_T_func=a_of_T)
 
               # Store final Boltzmann grid state for diagnostics / validation
               self._boltz_solver = boltz_solver
-              self._boltz_a_final = a_of_T(Tg_B[-1])
+              self._boltz_a_final = _a_B_arr[-1]
               self._boltz_Tg_final = Tg_B[-1]
               self._boltz_Tnu_ini = Tnu_boltz_ini
               self._boltz_a_ini = a_boltz_ini

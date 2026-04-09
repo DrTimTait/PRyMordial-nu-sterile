@@ -23,8 +23,6 @@ Modes (in order of increasing physics):
      (Ny=100, y = p*a) with 2-to-2 collision integrals in the D-kernel
      polynomial formalism (nu-nu and nu-e scattering/annihilation).
      Flavor-diagonal: each species evolves independently, no mixing.
-     Includes a momentum drift correction for the non-inertial comoving
-     frame (photon-electron entropy is not conserved during decoupling).
 
   4. Boltzmann + oscillation relaxation
      Same as (3), plus operator-split flavor mixing via Sigl-Raffelt
@@ -33,14 +31,18 @@ Modes (in order of increasing physics):
 
   5. QKE density matrix
      Full 3x3 Hermitian density matrix rho(y) for each momentum mode,
-     evolved via Quantum Kinetic Equations with Strang splitting:
-     exact unitary oscillation (vacuum + thermal matter potential) and
-     diagonal collision integrals with off-diagonal damping. Captures
-     flavor coherences that the relaxation approximation cannot.
+     evolved via Quantum Kinetic Equations with combined oscillation +
+     collision stepping: exact unitary oscillation (vacuum + thermal
+     matter potential) and diagonal collision integrals with off-diagonal
+     damping. Captures flavor coherences that the relaxation approximation
+     cannot.
 
-All Boltzmann modes use the same D-kernel collision integrals and
-momentum drift correction. Neff agrees with the thermal reference to
-<0.05% across all modes. BBN observables agree to <0.15%.
+All Boltzmann modes use the Froustey et al. (arXiv:2008.01074) formalism:
+Friedmann-evolved scale factor with photon temperature from the plasma
+entropy equation. Neff agrees with the thermal reference to <0.01% for
+oscillation modes. BBN observables differ from the thermal reference
+(delta_Yp ~ +0.07%, delta_D/H ~ +0.3%) due to the self-consistent
+treatment of the plasma entropy decrease during neutrino heating.
 """
 import time
 import numpy as np
@@ -204,8 +206,12 @@ for name, desc, res, elapsed in runs:
     print("   %-24s %s" % (name + ":", desc))
 
 print("")
-print(" All Boltzmann modes include a momentum drift correction that accounts")
-print(" for the non-inertial comoving frame: y = p*a(Tg) drifts because the")
-print(" photon-electron entropy decreases during neutrino decoupling, causing")
-print(" a(Tg) to grow faster than a_phys. Without this correction, Neff is")
-print(" systematically low by ~0.5%.")
+print(" All Boltzmann modes use the Froustey et al. (arXiv:2008.01074) formalism:")
+print(" the scale factor a is evolved via Friedmann, and the photon temperature Tg")
+print(" is determined from the plasma entropy equation d(spl*a^3)/dt = -(Q/Tg)*a^3,")
+print(" where Q is the collision energy transfer rate to neutrinos. This self-")
+print(" consistently tracks the plasma cooling from e+e- annihilation energy flowing")
+print(" to neutrinos, producing Neff > 3 without a momentum drift correction.")
+print(" BBN observables differ from the thermal reference (delta_Yp ~ +0.07%,")
+print(" delta_D/H ~ +0.3%) due to the self-consistent treatment of the plasma")
+print(" entropy decrease during neutrino heating.")

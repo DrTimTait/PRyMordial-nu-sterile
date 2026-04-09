@@ -435,6 +435,19 @@ class PRyMclass(object):
                   boltz_solver.update_thermo_distributions(f_curr, a_of_T(Tg_B[-1]),
                                                            a_of_T_func=a_of_T)
 
+              # Store final Boltzmann grid state for diagnostics / validation
+              self._boltz_solver = boltz_solver
+              self._boltz_a_final = a_of_T(Tg_B[-1])
+              self._boltz_Tg_final = Tg_B[-1]
+              self._boltz_Tnu_ini = Tnu_boltz_ini
+              self._boltz_a_ini = a_boltz_ini
+              if PRyMini.qke_density_matrix_flag:
+                  self._boltz_rho_final = rho_curr.copy()
+                  self._boltz_f_final = None
+              else:
+                  self._boltz_f_final = f_curr.copy()
+                  self._boltz_rho_final = None
+
               # Phase C: Frozen distributions, 1-variable Tg ODE to end
               Tg_C_ini = Tg_B[-1]
               t_C_start = t_B[-1]

@@ -612,6 +612,183 @@ def _collision_integral_nu_nu(f_all, y_grid, quad_w, a, GF2_prefactor, tail_para
     return I_coll
 
 
+@njit(parallel=True)
+def _collision_integral_nu_nu_asym4(f_all, y_grid, quad_w, a, GF2_prefactor,
+                                     tail_params, D_k0, D_k2, Ny_coll,
+                                     scale_nunu_A=1.0, scale_nunu_B=1.0, scale_nunu_C=1.0):
+    """n=4 asymmetric nu-nu collision integral (mu-tau symmetry broken).
+
+    Species layout: f_all shape (4, Ny) = [nue, nuebar, numu_eff, nutau_eff].
+    Each of numu_eff, nutau_eff still aggregates particle+antiparticle for that
+    flavor (shared distribution under CPT in SM BBN). The function is derived
+    from _collision_integral_nu_nu by splitting every mu-tau-combined factor
+    into explicit mu and tau pieces, so that when f_all[2] == f_all[3] the
+    result reproduces the n=3 case exactly (I_coll[2] == I_coll[3] == n=3 I_numu).
+
+    See _collision_integral_nu_nu for the Sabti Process A/B/C conventions.
+    """
+    Ny = len(y_grid)
+    I_coll = np.zeros((4, Ny))
+    prefactor = GF2_prefactor / (64.0 * np.pi**3 * a**5)
+
+    for i1 in prange(Ny):
+        y1 = y_grid[i1]
+        if y1 < 1.0e-10 or i1 >= Ny_coll:
+            continue
+
+        f1_nue = f_all[0, i1]
+        f1_nuebar = f_all[1, i1]
+        f1_numu = f_all[2, i1]
+        f1_nutau = f_all[3, i1]
+
+        I_nue = 0.0
+        I_nuebar = 0.0
+        I_numu = 0.0
+        I_nutau = 0.0
+
+        for i2 in range(Ny_coll):
+            y2 = y_grid[i2]
+            if y2 < 1.0e-10:
+                continue
+            f2_nue = f_all[0, i2]
+            f2_nuebar = f_all[1, i2]
+            f2_numu = f_all[2, i2]
+            f2_nutau = f_all[3, i2]
+
+            for i3 in range(Ny_coll):
+                y4 = y1 + y2 - y_grid[i3]
+                if y4 <= 0.0 or y_grid[i3] < 1.0e-10:
+                    continue
+
+                f3_nue = f_all[0, i3]
+                f3_nuebar = f_all[1, i3]
+                f3_numu = f_all[2, i3]
+                f3_nutau = f_all[3, i3]
+
+                f4_nue = _interp_grid(y4, y_grid, f_all[0],
+                                      tail_params[0, 0], tail_params[0, 1])
+                f4_nuebar = _interp_grid(y4, y_grid, f_all[1],
+                                         tail_params[1, 0], tail_params[1, 1])
+                f4_numu = _interp_grid(y4, y_grid, f_all[2],
+                                       tail_params[2, 0], tail_params[2, 1])
+                f4_nutau = _interp_grid(y4, y_grid, f_all[3],
+                                        tail_params[3, 0], tail_params[3, 1])
+
+                wt = quad_w[i2] * quad_w[i3]
+                D_k0_val = D_k0[i1, i2, i3]
+                D_k2_val = D_k2[i1, i2, i3]
+                D_A_sum = scale_nunu_A * (D_k0_val + D_k2_val)
+                D_B = scale_nunu_B * 2.0 * D_k0_val
+                D_C = scale_nunu_C * D_k2_val
+
+                # --- Process A (different-flavor scattering) ---
+                # nue(1) with mu-sector partner: 2 partners (numu + numubar) = D_A_sum
+                F_stat = (f3_nue * f4_numu * (1.0 - f1_nue) * (1.0 - f2_numu)
+                          - f1_nue * f2_numu * (1.0 - f3_nue) * (1.0 - f4_numu))
+                I_nue += wt * D_A_sum * F_stat
+                # nue(1) with tau-sector partner: 2 partners (nutau + nutaubar) = D_A_sum
+                F_stat = (f3_nue * f4_nutau * (1.0 - f1_nue) * (1.0 - f2_nutau)
+                          - f1_nue * f2_nutau * (1.0 - f3_nue) * (1.0 - f4_nutau))
+                I_nue += wt * D_A_sum * F_stat
+
+                # nuebar(1) with mu-sector partner
+                F_stat = (f3_nuebar * f4_numu * (1.0 - f1_nuebar) * (1.0 - f2_numu)
+                          - f1_nuebar * f2_numu * (1.0 - f3_nuebar) * (1.0 - f4_numu))
+                I_nuebar += wt * D_A_sum * F_stat
+                # nuebar(1) with tau-sector partner
+                F_stat = (f3_nuebar * f4_nutau * (1.0 - f1_nuebar) * (1.0 - f2_nutau)
+                          - f1_nuebar * f2_nutau * (1.0 - f3_nuebar) * (1.0 - f4_nutau))
+                I_nuebar += wt * D_A_sum * F_stat
+
+                # numu(1) with nue(2): 0.5*D_A_sum (averaging over mu pcle/antipcle)
+                F_stat = (f3_numu * f4_nue * (1.0 - f1_numu) * (1.0 - f2_nue)
+                          - f1_numu * f2_nue * (1.0 - f3_numu) * (1.0 - f4_nue))
+                I_numu += 0.5 * wt * D_A_sum * F_stat
+                # numu(1) with nuebar(2)
+                F_stat = (f3_numu * f4_nuebar * (1.0 - f1_numu) * (1.0 - f2_nuebar)
+                          - f1_numu * f2_nuebar * (1.0 - f3_numu) * (1.0 - f4_nuebar))
+                I_numu += 0.5 * wt * D_A_sum * F_stat
+                # numu(1) with tau-sector partner (nutau + nutaubar = 2 partners): D_A_sum
+                F_stat = (f3_numu * f4_nutau * (1.0 - f1_numu) * (1.0 - f2_nutau)
+                          - f1_numu * f2_nutau * (1.0 - f3_numu) * (1.0 - f4_nutau))
+                I_numu += wt * D_A_sum * F_stat
+
+                # nutau(1) with nue(2)
+                F_stat = (f3_nutau * f4_nue * (1.0 - f1_nutau) * (1.0 - f2_nue)
+                          - f1_nutau * f2_nue * (1.0 - f3_nutau) * (1.0 - f4_nue))
+                I_nutau += 0.5 * wt * D_A_sum * F_stat
+                # nutau(1) with nuebar(2)
+                F_stat = (f3_nutau * f4_nuebar * (1.0 - f1_nutau) * (1.0 - f2_nuebar)
+                          - f1_nutau * f2_nuebar * (1.0 - f3_nutau) * (1.0 - f4_nuebar))
+                I_nutau += 0.5 * wt * D_A_sum * F_stat
+                # nutau(1) with mu-sector partner: D_A_sum
+                F_stat = (f3_nutau * f4_numu * (1.0 - f1_nutau) * (1.0 - f2_numu)
+                          - f1_nutau * f2_numu * (1.0 - f3_nutau) * (1.0 - f4_numu))
+                I_nutau += wt * D_A_sum * F_stat
+
+                # --- Process B (same-flavor forward scattering, nu+nubar) ---
+                # nue(1) + nuebar(2)
+                F_stat = (f3_nue * f4_nuebar * (1.0 - f1_nue) * (1.0 - f2_nuebar)
+                          - f1_nue * f2_nuebar * (1.0 - f3_nue) * (1.0 - f4_nuebar))
+                I_nue += wt * D_B * F_stat
+                # nuebar(1) + nue(2)
+                F_stat = (f3_nuebar * f4_nue * (1.0 - f1_nuebar) * (1.0 - f2_nue)
+                          - f1_nuebar * f2_nue * (1.0 - f3_nuebar) * (1.0 - f4_nue))
+                I_nuebar += wt * D_B * F_stat
+                # numu(1) + numubar(2): same flavor = f1_numu, f2_numu
+                F_stat = (f3_numu * f4_numu * (1.0 - f1_numu) * (1.0 - f2_numu)
+                          - f1_numu * f2_numu * (1.0 - f3_numu) * (1.0 - f4_numu))
+                I_numu += wt * D_B * F_stat
+                # nutau(1) + nutaubar(2)
+                F_stat = (f3_nutau * f4_nutau * (1.0 - f1_nutau) * (1.0 - f2_nutau)
+                          - f1_nutau * f2_nutau * (1.0 - f3_nutau) * (1.0 - f4_nutau))
+                I_nutau += wt * D_B * F_stat
+
+                # --- Process C (pair annihilation to different flavor) ---
+                # nue + nuebar -> numu + numubar:  2x (counts both final-state particle types)
+                F_stat = (f3_numu * f4_numu * (1.0 - f1_nue) * (1.0 - f2_nuebar)
+                          - f1_nue * f2_nuebar * (1.0 - f3_numu) * (1.0 - f4_numu))
+                I_nue += wt * D_C * F_stat
+                # nue + nuebar -> nutau + nutaubar
+                F_stat = (f3_nutau * f4_nutau * (1.0 - f1_nue) * (1.0 - f2_nuebar)
+                          - f1_nue * f2_nuebar * (1.0 - f3_nutau) * (1.0 - f4_nutau))
+                I_nue += wt * D_C * F_stat
+
+                # nuebar + nue -> numubar + numu
+                F_stat = (f3_numu * f4_numu * (1.0 - f1_nuebar) * (1.0 - f2_nue)
+                          - f1_nuebar * f2_nue * (1.0 - f3_numu) * (1.0 - f4_numu))
+                I_nuebar += wt * D_C * F_stat
+                # nuebar + nue -> nutaubar + nutau
+                F_stat = (f3_nutau * f4_nutau * (1.0 - f1_nuebar) * (1.0 - f2_nue)
+                          - f1_nuebar * f2_nue * (1.0 - f3_nutau) * (1.0 - f4_nutau))
+                I_nuebar += wt * D_C * F_stat
+
+                # numu + numubar -> nue + nuebar (and inverse contributes to numu loss)
+                F_stat = (f3_nue * f4_nuebar * (1.0 - f1_numu) * (1.0 - f2_numu)
+                          - f1_numu * f2_numu * (1.0 - f3_nue) * (1.0 - f4_nuebar))
+                I_numu += wt * D_C * F_stat
+                # numu + numubar -> nutau + nutaubar
+                F_stat = (f3_nutau * f4_nutau * (1.0 - f1_numu) * (1.0 - f2_numu)
+                          - f1_numu * f2_numu * (1.0 - f3_nutau) * (1.0 - f4_nutau))
+                I_numu += wt * D_C * F_stat
+
+                # nutau + nutaubar -> nue + nuebar
+                F_stat = (f3_nue * f4_nuebar * (1.0 - f1_nutau) * (1.0 - f2_nutau)
+                          - f1_nutau * f2_nutau * (1.0 - f3_nue) * (1.0 - f4_nuebar))
+                I_nutau += wt * D_C * F_stat
+                # nutau + nutaubar -> numu + numubar
+                F_stat = (f3_numu * f4_numu * (1.0 - f1_nutau) * (1.0 - f2_nutau)
+                          - f1_nutau * f2_nutau * (1.0 - f3_numu) * (1.0 - f4_numu))
+                I_nutau += wt * D_C * F_stat
+
+        I_coll[0, i1] = prefactor / (y1 * y1) * I_nue
+        I_coll[1, i1] = prefactor / (y1 * y1) * I_nuebar
+        I_coll[2, i1] = prefactor / (y1 * y1) * I_numu
+        I_coll[3, i1] = prefactor / (y1 * y1) * I_nutau
+
+    return I_coll
+
+
 @njit
 def _F_stat_stable(f1, f2, f3, f4):
     """Numerically stable statistical factor for collision integral.
@@ -1325,7 +1502,13 @@ class BoltzmannSolver(object):
         self.y_max = y_max if y_max is not None else PRyMini.y_max_boltz
         self.dy = self.y_max / self.Ny
         self.y_grid = np.linspace(self.dy / 2.0, self.y_max - self.dy / 2.0, self.Ny)
-        self.n_species = 3  # nue, nuebar, numu (mu-tau symmetric)
+        # Species layout:
+        #   mu_tau_symmetric_flag=True  -> n_species=3 [nue, nuebar, numu_eff]
+        #       (numu_eff aggregates {numu, numubar, nutau, nutaubar})
+        #   mu_tau_symmetric_flag=False -> n_species=4 [nue, nuebar, numu_eff, nutau_eff]
+        #       (numu_eff aggregates pcle+antipcle of mu; nutau_eff same for tau)
+        self.mu_tau_symmetric = PRyMini.mu_tau_symmetric_flag
+        self.n_species = 3 if self.mu_tau_symmetric else 4
 
         # Collision integral summation cutoff
         if y_coll_max is not None and y_coll_max < self.y_max:
@@ -1417,20 +1600,44 @@ class BoltzmannSolver(object):
         """
         Apply PMNS time-averaged oscillation mixing to collision integrals.
 
+        n=3 (mu_tau_symmetric=True):
+          I_mixed[0] = P_ee * I[0] + (1-P_ee) * I[2]          # nue
+          I_mixed[1] = P_ee * I[1] + (1-P_ee) * I[2]          # nuebar
+          I_mixed[2] = (1-P_ee)/2 * (I[0]+I[1])/2
+                       + (1+P_ee)/2 * I[2]                    # numu_eff
+
+        n=4 (mu_tau_symmetric=False): split the mu-tau sector. We use the
+        maximal-theta_23, no-CP-phase PMNS approximation for the mu/tau
+        mixing (P_mu_tau = P_mu_mu = P_tau_tau = (1+P_ee)/4). This keeps
+        the vacuum oscillation physics mu-tau-symmetric even when the
+        distributions are not — consistent with the user intent that the
+        flag breaks COLLISION dynamics, not the SM PMNS. Exact PMNS could
+        be reintroduced in a future pass by computing the full 3x3 |V|^4
+        matrix from the current sin^2(theta_ij) values.
+
         Returns the mixed collision integral array (same shape as I_total).
         """
-        I_mixed = np.empty_like(I_total)
         P_ee = self.P_ee
-        P_off = 1.0 - P_ee  # P_e,mu_eff = P_emu + P_etau
+        P_off = 1.0 - P_ee
 
-        # nue: gets (1-P_ee) share of mu-type collision rate
-        I_mixed[0] = P_ee * I_total[0] + P_off * I_total[2]
-        # nuebar: same mixing (CPT)
-        I_mixed[1] = P_ee * I_total[1] + P_off * I_total[2]
-        # numu_eff: averages over mu and tau contributions
-        # P_mu_eff,e = (P_mue + P_taue)/2 = (1-P_ee)/2 by 3-flavor column sum
-        I_mixed[2] = (P_off / 2.0) * (I_total[0] + I_total[1]) / 2.0 \
-                    + (1.0 + P_ee) / 2.0 * I_total[2]
+        if self.mu_tau_symmetric:
+            I_mixed = np.empty_like(I_total)
+            I_mixed[0] = P_ee * I_total[0] + P_off * I_total[2]
+            I_mixed[1] = P_ee * I_total[1] + P_off * I_total[2]
+            I_mixed[2] = (P_off / 2.0) * (I_total[0] + I_total[1]) / 2.0 \
+                        + (1.0 + P_ee) / 2.0 * I_total[2]
+            return I_mixed
+
+        # n=4 path
+        I_mixed = np.empty_like(I_total)
+        half_off = 0.5 * P_off
+        I_mu_plus_tau = I_total[2] + I_total[3]
+        avg_e = 0.5 * (I_total[0] + I_total[1])
+        I_mixed[0] = P_ee * I_total[0] + half_off * I_mu_plus_tau
+        I_mixed[1] = P_ee * I_total[1] + half_off * I_mu_plus_tau
+        # P_mu_e = P_tau_e = (1-P_ee)/2; P_mu_mu = P_tau_tau = P_mu_tau = (1+P_ee)/4
+        I_mixed[2] = half_off * avg_e + 0.25 * (1.0 + P_ee) * I_mu_plus_tau
+        I_mixed[3] = half_off * avg_e + 0.25 * (1.0 + P_ee) * I_mu_plus_tau
         return I_mixed
 
     def _setup_oscillation_relaxation(self):
@@ -1491,6 +1698,11 @@ class BoltzmannSolver(object):
 
         Drives nue toward numu (and vice versa), conserving total number.
         """
+        if not self.mu_tau_symmetric:
+            raise NotImplementedError(
+                "Sigl-Raffelt relaxation not yet generalized to n=4 asymmetric "
+                "diagonal mode. Use nu_oscillation_method='collision_mixing' "
+                "(default) or enable qke_density_matrix_flag for full 3x3 QKE.")
         I_osc = np.zeros_like(f_all)
 
         # Physical momentum: p = y / a  [MeV]
@@ -1546,23 +1758,61 @@ class BoltzmannSolver(object):
 
         return I_osc
 
-    def initial_conditions(self, Tnu, a):
+    def initial_conditions(self, Tnu, a, f_initial=None):
         """
-        Return thermal Fermi-Dirac distributions on the comoving grid.
+        Return initial distributions on the comoving grid.
 
-        f_alpha(y_i) = 1 / (exp(y_i / (Tnu * a)) + 1)
+        Default (f_initial is None or symmetric mode): thermal Fermi-Dirac at
+        Tnu for all species, f_alpha(y_i) = 1 / (exp(y_i / (Tnu * a)) + 1).
 
-        Tnu is the (physical) neutrino temperature at the handoff moment,
-        which may already differ from Tg if Phase A's thermal ODE has
-        separated them. Callers must pass Tnu_A[-1], NOT Tg, or the
-        initial rho_nu will be biased.
+        Tnu is the (physical) neutrino temperature at the handoff moment.
+        Callers must pass Tnu_A[-1], NOT Tg, or the initial rho_nu will be
+        biased.
+
+        Asymmetric mode (mu_tau_symmetric_flag=False, n_species=4): if
+        f_initial is provided, it may include 'nue', 'nuebar', 'numu',
+        'nutau' callables f(p_MeV, Tnu_MeV) used to initialize each slot.
+        Any missing key falls back to thermal FD. 'numubar' and 'nutaubar'
+        callables are NOT used in the diagonal n=4 path because particle
+        and antiparticle are still aggregated per flavor — for full ν/ν̄
+        asymmetry use the QKE density-matrix path (Stage 3 will extend
+        the diagonal solver to n=6).
         """
         f_all = np.zeros((self.n_species, self.Ny))
-        Tnu_com = Tnu * a  # comoving neutrino temperature
+        Tnu_com = Tnu * a
+        p_grid = self.y_grid / a
+
+        # Thermal FD default
+        fd_default = np.zeros(self.Ny)
         for i in range(self.Ny):
             x = self.y_grid[i] / Tnu_com
             if x < 500.0:
-                f_all[:, i] = 1.0 / (np.exp(x) + 1.0)
+                fd_default[i] = 1.0 / (np.exp(x) + 1.0)
+
+        if self.mu_tau_symmetric:
+            # n=3: single thermal FD for all 3 species
+            f_all[:, :] = fd_default
+            # Optional override: only 'nue', 'nuebar', 'numu' are honored in n=3
+            if f_initial is not None:
+                _slot_map = {'nue': 0, 'nuebar': 1, 'numu': 2}
+                for key, idx in _slot_map.items():
+                    if f_initial.get(key) is not None:
+                        vals = np.asarray(f_initial[key](p_grid, Tnu), dtype=float)
+                        f_all[idx] = vals
+        else:
+            # n=4: separate mu and tau slots
+            _slot_map = {'nue': 0, 'nuebar': 1, 'numu': 2, 'nutau': 3}
+            for key, idx in _slot_map.items():
+                cb = f_initial.get(key) if f_initial else None
+                if cb is not None:
+                    vals = np.asarray(cb(p_grid, Tnu), dtype=float)
+                    if vals.shape != (self.Ny,):
+                        raise ValueError(
+                            f"initial_conditions: callable for {key} returned "
+                            f"shape {vals.shape}, expected {(self.Ny,)}")
+                    f_all[idx] = vals
+                else:
+                    f_all[idx] = fd_default
         return f_all
 
     def apply_oscillation_mixing(self, f_all, a, Tg, dt):
@@ -1597,6 +1847,12 @@ class BoltzmannSolver(object):
         """
         if not PRyMini.nu_oscillation_flag:
             return f_all
+        if not self.mu_tau_symmetric:
+            raise NotImplementedError(
+                "apply_oscillation_mixing (Sigl-Raffelt relaxation) not yet "
+                "generalized to n=4 asymmetric mode. Use "
+                "nu_oscillation_method='collision_mixing' or enable "
+                "qke_density_matrix_flag for full 3x3 QKE.")
 
         # Compute per-momentum relaxation rate Gamma_tot [1/s]
         p_MeV = np.maximum(self.y_grid / a, 1.0e-10)
@@ -1657,6 +1913,8 @@ class BoltzmannSolver(object):
         Compute total collision integrals for all species.
 
         Returns array of shape (n_species, Ny).
+        When mu_tau_symmetric_flag=False, n_species=4 and the returned array
+        has rows [I_nue, I_nuebar, I_numu, I_nutau].
         """
         # Convert units: GF in MeV^{-2}, collision integral in MeV * s^{-1}
         # coll_scale applied to the overall prefactor, scaling both nu-nu
@@ -1666,30 +1924,84 @@ class BoltzmannSolver(object):
         # Compute FD-tail extrapolation parameters for off-grid interpolation
         tail_params = _compute_all_tail_params(self.y_grid, f_all)
 
-        # Nu-nu processes (uses D_k0, D_k2)
-        I_nu_nu = _collision_integral_nu_nu(
-            f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
-            self.D_k0, self.D_k2, self.Ny_coll)
+        if self.mu_tau_symmetric:
+            # Nu-nu processes (uses D_k0, D_k2)
+            I_nu_nu = _collision_integral_nu_nu(
+                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
+                self.D_k0, self.D_k2, self.Ny_coll)
 
-        # Nu-e processes: massive or massless electron kinematics
-        if PRyMini.massive_electron_flag:
-            I_nu_e = _collision_integral_nu_e_massive(
-                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                self.geL2, self.geR2, self.gmuL2, self.gmuR2,
-                PRyMini.me, self.Ny_coll)
+            # Nu-e processes: massive or massless electron kinematics
+            if PRyMini.massive_electron_flag:
+                I_nu_e = _collision_integral_nu_e_massive(
+                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                    PRyMini.me, self.Ny_coll)
+            else:
+                fnu_e_scat_val = float(self._fnu_e_scat(Tg))
+                fnu_e_ann_val = float(self._fnu_e_ann(Tg))
+                fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
+                fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
+                I_nu_e = _collision_integral_nu_e(
+                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.geLgeR,
+                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                    fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+                    1.0, 1.0, 1.0, 1.0)
         else:
-            fnu_e_scat_val = float(self._fnu_e_scat(Tg))
-            fnu_e_ann_val = float(self._fnu_e_ann(Tg))
-            fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
-            fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
-            I_nu_e = _collision_integral_nu_e(
-                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                self.geL2, self.geR2, self.geLgeR,
-                self.gmuL2, self.gmuR2, self.gmuLgmuR,
-                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-                self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
-                1.0, 1.0, 1.0, 1.0)
+            # n=4 asymmetric path. nu-nu uses the dedicated asym4 function;
+            # nu-e is assembled from two n=3 calls (one for mu slot, one for
+            # tau slot) since I_nue, I_nuebar don't depend on the mu/tau
+            # distribution and I_numu/I_nutau use identical couplings.
+            I_nu_nu = _collision_integral_nu_nu_asym4(
+                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
+                self.D_k0, self.D_k2, self.Ny_coll)
+
+            # Build 3-slot arrays for mu and tau calls into the n=3 nu-e
+            f3_mu = np.stack([f_all[0], f_all[1], f_all[2]], axis=0)
+            f3_tau = np.stack([f_all[0], f_all[1], f_all[3]], axis=0)
+            tp_mu = tail_params[[0, 1, 2]]
+            tp_tau = tail_params[[0, 1, 3]]
+
+            if PRyMini.massive_electron_flag:
+                I_mu = _collision_integral_nu_e_massive(
+                    f3_mu, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                    PRyMini.me, self.Ny_coll)
+                I_tau = _collision_integral_nu_e_massive(
+                    f3_tau, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                    PRyMini.me, self.Ny_coll)
+            else:
+                fnu_e_scat_val = float(self._fnu_e_scat(Tg))
+                fnu_e_ann_val = float(self._fnu_e_ann(Tg))
+                fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
+                fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
+                I_mu = _collision_integral_nu_e(
+                    f3_mu, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.geLgeR,
+                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                    fnu_mu_scat_val, fnu_mu_ann_val, tp_mu,
+                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+                    1.0, 1.0, 1.0, 1.0)
+                I_tau = _collision_integral_nu_e(
+                    f3_tau, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.geLgeR,
+                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                    fnu_mu_scat_val, fnu_mu_ann_val, tp_tau,
+                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+                    1.0, 1.0, 1.0, 1.0)
+
+            I_nu_e = np.zeros((4, self.Ny))
+            # I_nue, I_nuebar come from either call; average for symmetry/safety
+            # (they should be bit-identical as I[0,1] don't depend on slot 2).
+            I_nu_e[0] = 0.5 * (I_mu[0] + I_tau[0])
+            I_nu_e[1] = 0.5 * (I_mu[1] + I_tau[1])
+            I_nu_e[2] = I_mu[2]
+            I_nu_e[3] = I_tau[2]
 
         I_total = I_nu_nu + I_nu_e
 
@@ -1722,13 +2034,25 @@ class BoltzmannSolver(object):
 
         Returns delta_rho in MeV^4 / s (after MeV_to_secm1 conversion in I_coll).
         """
+        # Species weights convention (see __init__):
+        #   n=3 [nue, nuebar, numu_eff]            → {1, 1, 2}
+        #     numu_eff encodes I[2] = 2*per-species rate AND represents the
+        #     shared value of all 4 mu-sector DOF (mu,mubar,tau,taubar).
+        #     Weight 2 gives sum over 4 DOF: 2*(2*per) = 4*per.
+        #   n=4 [nue, nuebar, numu_eff, nutau_eff] → {1, 1, 1, 1}
+        #     I[2], I[3] each encode 2*per-species rate for one flavor
+        #     (pcle+antipcle aggregated). Weight 1 each gives sum over 2 DOF.
+        # In the symmetric limit f_numu==f_nutau: I[2]_n4 == I[2]_n3, so the
+        # n=4 sum (I[0]+I[1]+I[2]+I[3]) equals the n=3 sum (I[0]+I[1]+2*I[2]).
+        if self.mu_tau_symmetric:
+            _weights = (1.0, 1.0, 2.0)
+        else:
+            _weights = (1.0, 1.0, 1.0, 1.0)
+
         delta_rho = 0.0
         for alpha in range(self.n_species):
-            # g_alpha = 1 per species (particle+antiparticle counted separately)
-            # Multiply by 2 for numu to account for nutau
-            mult = 2.0 if alpha == 2 else 1.0
             integrand = self.y_grid**3 * I_coll[alpha]
-            delta_rho += mult * self.dy / (2.0 * np.pi**2 * a**4) * np.sum(integrand)
+            delta_rho += _weights[alpha] * self.dy / (2.0 * np.pi**2 * a**4) * np.sum(integrand)
         return delta_rho
 
     def update_thermo_distributions(self, f_all, a, a_of_T_func=None):
@@ -1819,10 +2143,20 @@ class BoltzmannSolver(object):
 
         PRyMthermo.f_nue_general = _make_f_callable(f_nue_grid, current_a, a_func)
         PRyMthermo.f_nuebar_general = _make_f_callable(f_nuebar_grid, current_a, a_func)
-        PRyMthermo.f_numu_general = _make_f_callable(f_numu_grid, current_a, a_func)
-        PRyMthermo.f_numubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
-        PRyMthermo.f_nutau_general = _make_f_callable(f_numu_grid, current_a, a_func)
-        PRyMthermo.f_nutaubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
+        if self.mu_tau_symmetric:
+            PRyMthermo.f_numu_general = _make_f_callable(f_numu_grid, current_a, a_func)
+            PRyMthermo.f_numubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
+            PRyMthermo.f_nutau_general = _make_f_callable(f_numu_grid, current_a, a_func)
+            PRyMthermo.f_nutaubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
+        else:
+            # n=4: mu_eff and tau_eff aggregate pcle+antipcle per flavor, so
+            # f_numu_general == f_numubar_general and f_nutau_general == f_nutaubar_general
+            # Full nu/nu-bar asymmetry is Stage 3 (n=6 diagonal) or use QKE now.
+            f_nutau_grid = f_all[3].copy()
+            PRyMthermo.f_numu_general = _make_f_callable(f_numu_grid, current_a, a_func)
+            PRyMthermo.f_numubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
+            PRyMthermo.f_nutau_general = _make_f_callable(f_nutau_grid, current_a, a_func)
+            PRyMthermo.f_nutaubar_general = _make_f_callable(f_nutau_grid, current_a, a_func)
 
     def make_f_callable(self, f_grid, a, a_of_T_func=None):
         """Public interface to create a f(p, Tg) callable from a grid array.

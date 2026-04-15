@@ -22,17 +22,18 @@ class PRyMclass(object):
         import PRyM.PRyM_thermo as PRyMthermo
         # Loading New Physics species (constructor default: none)
         PRyMthermo.rho_NP,PRyMthermo.p_NP,PRyMthermo.drho_NP_dT,PRyMthermo.delta_rho_NP=my_rho_NP,my_p_NP,my_drho_NP_dT,my_delta_rho_NP
-        # mu-tau symmetry breaking (Stage 1) requires the 3x3 density-matrix
-        # path because only DensityMatrixSolver currently carries the full
-        # 6-species machinery natively. Auto-enable QKE when the user asks
-        # for asymmetric evolution, and warn if oscillation mixing was left on
-        # (it is a 2-flavor collapse incompatible with mu != tau).
+        # mu-tau symmetry breaking dispatch.
+        #   - Stage 1: qke_density_matrix_flag route, full 6-species native.
+        #   - Stage 2: diagonal BoltzmannSolver with n=4 (mu/tau distinct,
+        #             pcle+antipcle per flavor aggregated). Enabled when the
+        #             user sets boltzmann_nu_flag=True explicitly.
+        #   - If neither Boltzmann nor QKE is already enabled, auto-enable
+        #     QKE as the default (most capable) path.
         if not PRyMini.mu_tau_symmetric_flag:
-            if not PRyMini.qke_density_matrix_flag:
+            if not (PRyMini.qke_density_matrix_flag or PRyMini.boltzmann_nu_flag):
                 if PRyMini.verbose_flag:
-                    print(" mu_tau_symmetric_flag=False: auto-enabling "
-                          "qke_density_matrix_flag (only QKE path supports "
-                          "asymmetric evolution in this stage).")
+                    print(" mu_tau_symmetric_flag=False with no evolution "
+                          "path selected: auto-enabling qke_density_matrix_flag.")
                 PRyMini.qke_density_matrix_flag = True
         # QKE density matrix solver implies Boltzmann solver
         if PRyMini.qke_density_matrix_flag:
@@ -286,7 +287,18 @@ class PRyMclass(object):
                       Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_dm)
                   dm_solver.update_thermo_distributions(rho_curr, a_boltz_ini)
               else:
-                  f_curr = boltz_solver.initial_conditions(Tnu_boltz_ini, a_boltz_ini)
+                  # Diagonal Boltzmann: n=3 or n=4 (Stage 2).
+                  # In n=4, the solver accepts 'nue','nuebar','numu','nutau'
+                  # ICs; pcle+antipcle remain merged per flavor (Stage 3 will
+                  # extend to full n=6 with nu/nu-bar per flavor).
+                  f_initial_boltz = None
+                  if not PRyMini.mu_tau_symmetric_flag:
+                      f_initial_boltz = {
+                          'nue':   my_f_nue,   'nuebar': my_f_nuebar,
+                          'numu':  my_f_numu,  'nutau':  my_f_nutau,
+                      }
+                  f_curr = boltz_solver.initial_conditions(
+                      Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_boltz)
                   boltz_solver.update_thermo_distributions(f_curr, a_boltz_ini)
 
               t_B_start = t_A[-1]
@@ -316,8 +328,13 @@ class PRyMclass(object):
                       print(f"Phase B: Boltzmann (Froustey), Tg={Tg_boltz_ini:.3f} to {PRyMini.T_boltz_end:.4f} MeV")
                       print(f"  {n_B} steps, Ny={Ny_boltz}")
 
-              # Mode-dependent collision damping coefficients for exponential Euler
-              _C_D_boltz = np.array([3.06, 3.06, 2.22])  # [nue, nuebar, numu]
+              # Mode-dependent collision damping coefficients for exponential Euler.
+              # n=3 (mu_tau_symmetric=True): [nue, nuebar, numu_eff]
+              # n=4 (mu_tau_symmetric=False): [nue, nuebar, numu, nutau]
+              if PRyMini.mu_tau_symmetric_flag:
+                  _C_D_boltz = np.array([3.06, 3.06, 2.22])
+              else:
+                  _C_D_boltz = np.array([3.06, 3.06, 2.22, 2.22])
               _GF2_secm1 = PRyMini.GF**2 * PRyMini.MeV_to_secm1
               _y_grid_boltz = boltz_solver.y_grid
               _dy_boltz = boltz_solver.dy
@@ -377,7 +394,10 @@ class PRyMclass(object):
                       E_com_post = np.sum(_y3_grid * _diag_sum_post) * _dy_2pi2
                   else:
                       # Diagonal Boltzmann: track comoving energy before/after
-                      _f_weighted_pre = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
+                      if PRyMini.mu_tau_symmetric_flag:
+                          _f_weighted_pre = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
+                      else:
+                          _f_weighted_pre = f_curr[0] + f_curr[1] + 2.0 * f_curr[2] + 2.0 * f_curr[3]
                       E_com_pre = np.sum(_y3_grid * _f_weighted_pre) * _dy_2pi2
 
                       C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
@@ -389,7 +409,10 @@ class PRyMclass(object):
                               getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'relaxation':
                           boltz_solver.apply_oscillation_mixing(f_curr, a_mid, Tg_mid, dt)
 
-                      _f_weighted_post = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
+                      if PRyMini.mu_tau_symmetric_flag:
+                          _f_weighted_post = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
+                      else:
+                          _f_weighted_post = f_curr[0] + f_curr[1] + 2.0 * f_curr[2] + 2.0 * f_curr[3]
                       E_com_post = np.sum(_y3_grid * _f_weighted_post) * _dy_2pi2
 
                   # Update plasma entropy from energy conservation:

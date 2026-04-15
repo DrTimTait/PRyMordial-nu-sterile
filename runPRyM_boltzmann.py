@@ -225,6 +225,56 @@ print(" done (%.1f s)" % elapsed)
 PRyMini.mu_tau_symmetric_flag = True
 
 # ============================================================
+# 8. Diagonal Boltzmann asymmetric, equal IC (Stage 2 regression)
+#    n=4 species with identical FD initial distributions.
+#    Should match mode 3 "Boltzmann diagonal" (symmetric) within numerics.
+# ============================================================
+PRyMini.general_nu_flag = True
+PRyMini.boltzmann_nu_flag = True
+PRyMini.nu_oscillation_flag = False
+PRyMini.qke_density_matrix_flag = False
+PRyMini.massive_electron_flag = False
+PRyMini.mu_tau_symmetric_flag = False
+importlib.reload(PRyMthermo)
+
+print(" Running: Diag Boltz asym (equal IC, Stage 2) ...", end="", flush=True)
+t0 = time.time()
+res = PRyMmain.PRyMclass(
+    my_f_nue=_fd_thermal, my_f_nuebar=_fd_thermal,
+    my_f_numu=_fd_thermal, my_f_nutau=_fd_thermal,
+).PRyMresults()
+elapsed = time.time() - t0
+runs.append(("Diag Boltz asym eq IC",
+             "n=4 diagonal, mu=tau equal thermal FD (matches mode 3)",
+             res, elapsed))
+print(" done (%.1f s)" % elapsed)
+
+# ============================================================
+# 9. Diagonal Boltzmann asymmetric, unequal mu/tau IC (BSM smoke test)
+#    numu starts at 1.1 x FD, nutau at 0.9 x FD. Total rho_3nu preserved
+#    initially; nu-nu collisions should partially equilibrate mu vs tau.
+# ============================================================
+def _fd_numu_hot(p, T):
+    return 1.1 * _fd_thermal(p, T)
+def _fd_nutau_cold(p, T):
+    return 0.9 * _fd_thermal(p, T)
+
+print(" Running: Diag Boltz asym (unequal IC, Stage 2) ...", end="", flush=True)
+t0 = time.time()
+res = PRyMmain.PRyMclass(
+    my_f_nue=_fd_thermal, my_f_nuebar=_fd_thermal,
+    my_f_numu=_fd_numu_hot, my_f_nutau=_fd_nutau_cold,
+).PRyMresults()
+elapsed = time.time() - t0
+runs.append(("Diag Boltz asym uneq IC",
+             "n=4 diagonal, numu=1.1 FD, nutau=0.9 FD (BSM smoke)",
+             res, elapsed))
+print(" done (%.1f s)" % elapsed)
+
+# Restore defaults
+PRyMini.mu_tau_symmetric_flag = True
+
+# ============================================================
 # Summary
 # ============================================================
 ref = runs[0][2]  # Standard thermal as reference
@@ -247,6 +297,8 @@ flag_table = [
     ("QKE density matrix",     " True", " True", "  --",  " True"),
     ("Standard + O(e^4) QED",  "False", "False", "  --",  " --"),
     ("QKE asym equal IC",      " True", " True", "  --",  " True"),
+    ("Diag Boltz asym eq IC",  " True", " True", "False", "False"),
+    ("Diag Boltz asym uneq IC"," True", " True", "False", "False"),
 ]
 for name, g, b, o, q in flag_table:
     print(" %-24s %10s %12s %14s %6s" % (name, g, b, o, q))

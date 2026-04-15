@@ -62,6 +62,13 @@ t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 #######################################
 # Set flag to True for incomplete decoupling effects in a(T)
 aTid_flag = True
+# Set flag to True to include O(e^4) two-loop QED plasma corrections
+# (Escudero, Jackson, Laine, Sandner 2025, arXiv:2511.04747; NUDEC_BSM v2).
+# When True, the plasma pressure P, dP/dT, d^2P/dT^2 pick up the p^(4) term
+# on top of the baseline O(e^2) + O(e^3) contributions. Expected shifts:
+# delta Neff ~ +1e-4, delta Yp/Yp ~ +1e-4. Tables live in PRyMrates/thermo/
+# (regenerate via PRyMrates/thermo/build_QED_e4.py).
+two_loop_QED_flag = False
 # Set flag to compute background
 compute_bckg_flag = True
 # Set flag to True to save background thermodynamics, if recomputed

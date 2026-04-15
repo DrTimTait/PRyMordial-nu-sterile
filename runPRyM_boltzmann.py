@@ -161,6 +161,31 @@ runs.append(("QKE density matrix",
 print(" done (%.1f s)" % elapsed)
 
 # ============================================================
+# 6. Standard thermal + O(e^4) two-loop QED
+# ============================================================
+# Same physics as mode 1, but with the NUDEC_BSM v2 / Escudero+2025 two-loop
+# QED plasma correction turned on. Expected shifts ~1e-4 on Neff and Yp.
+PRyMini.general_nu_flag = False
+PRyMini.boltzmann_nu_flag = False
+PRyMini.nu_oscillation_flag = False
+PRyMini.qke_density_matrix_flag = False
+PRyMini.massive_electron_flag = False
+PRyMini.two_loop_QED_flag = True
+importlib.reload(PRyMthermo)
+
+print(" Running: Standard thermal + O(e^4) QED ...", end="", flush=True)
+t0 = time.time()
+res = PRyMmain.PRyMclass().PRyMresults()
+elapsed = time.time() - t0
+runs.append(("Standard + O(e^4) QED",
+             "Standard thermal with NUDEC_BSM v2 two-loop QED correction",
+             res, elapsed))
+print(" done (%.1f s)" % elapsed)
+
+# Restore default so subsequent imports don't carry state
+PRyMini.two_loop_QED_flag = False
+
+# ============================================================
 # Summary
 # ============================================================
 ref = runs[0][2]  # Standard thermal as reference
@@ -181,6 +206,7 @@ flag_table = [
     ("Boltzmann diagonal",     " True", " True", "False", "False"),
     ("Boltzmann + osc relax",  " True", " True", " True", "False"),
     ("QKE density matrix",     " True", " True", "  --",  " True"),
+    ("Standard + O(e^4) QED",  "False", "False", "  --",  " --"),
 ]
 for name, g, b, o, q in flag_table:
     print(" %-24s %10s %12s %14s %6s" % (name, g, b, o, q))

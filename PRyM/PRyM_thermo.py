@@ -27,13 +27,42 @@ fnu_e_ann_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"nue_ann.txt")
 fnu_e_ann = interp1d(fnu_e_ann_tab[:,0],fnu_e_ann_tab[:,1], bounds_error=False, fill_value="extrapolate", kind='linear')
 fnu_mu_ann_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"numu_ann.txt")
 fnu_mu_ann = interp1d(fnu_mu_ann_tab[:,0],fnu_mu_ann_tab[:,1], bounds_error=False, fill_value="extrapolate", kind='linear')
-# QED plasma corrections (standard value for alphaem and me assumed)
+# QED plasma corrections (standard value for alphaem and me assumed).
+# Source: NUDEC_BSM v2 (Escudero, Jackson, Laine, Sandner 2025, arXiv:2511.04747).
+# Baseline tables always loaded: O(e^2) + O(e^3).
+# Optional O(e^4) two-loop correction enabled via PRyMini.two_loop_QED_flag,
+# loaded as separate interp1d objects so we can clamp them to zero outside
+# the tabulated range (linear extrapolation of the persistent photon-photon
+# Euler-Heisenberg piece at T << table_min diverges relative to rho_gamma
+# and destabilizes the ODE integration; clamping to zero is physically safe
+# since the O(e^4) contribution to observables is negligible at T << 5 keV).
 P_QED_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_P_int.txt")
-PofT = interp1d(P_QED_tab[:,0],P_QED_tab[:,1]+P_QED_tab[:,2], bounds_error=False, fill_value="extrapolate", kind='linear')
+_PofT_base = interp1d(P_QED_tab[:,0], P_QED_tab[:,1]+P_QED_tab[:,2],
+                      bounds_error=False, fill_value="extrapolate", kind='linear')
 dPdT_QED_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_dP_intdT.txt")
-dPdT = interp1d(dPdT_QED_tab[:,0],dPdT_QED_tab[:,1]+dPdT_QED_tab[:,2], bounds_error=False, fill_value="extrapolate", kind='linear')
+_dPdT_base = interp1d(dPdT_QED_tab[:,0], dPdT_QED_tab[:,1]+dPdT_QED_tab[:,2],
+                      bounds_error=False, fill_value="extrapolate", kind='linear')
 d2PdT2_QED_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_d2P_intdT2.txt")
-d2PdT2 = interp1d(d2PdT2_QED_tab[:,0],d2PdT2_QED_tab[:,1]+d2PdT2_QED_tab[:,2], bounds_error=False, fill_value="extrapolate", kind='linear')
+_d2PdT2_base = interp1d(d2PdT2_QED_tab[:,0], d2PdT2_QED_tab[:,1]+d2PdT2_QED_tab[:,2],
+                        bounds_error=False, fill_value="extrapolate", kind='linear')
+
+if PRyMini.two_loop_QED_flag:
+    _P_e4_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_P_int_e4.txt")
+    _PofT_e4 = interp1d(_P_e4_tab[:,0], _P_e4_tab[:,1],
+                        bounds_error=False, fill_value=0.0, kind='linear')
+    _dPdT_e4_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_dP_intdT_e4.txt")
+    _dPdT_e4 = interp1d(_dPdT_e4_tab[:,0], _dPdT_e4_tab[:,1],
+                        bounds_error=False, fill_value=0.0, kind='linear')
+    _d2PdT2_e4_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_d2P_intdT2_e4.txt")
+    _d2PdT2_e4 = interp1d(_d2PdT2_e4_tab[:,0], _d2PdT2_e4_tab[:,1],
+                          bounds_error=False, fill_value=0.0, kind='linear')
+    def PofT(T):   return _PofT_base(T)   + _PofT_e4(T)
+    def dPdT(T):   return _dPdT_base(T)   + _dPdT_e4(T)
+    def d2PdT2(T): return _d2PdT2_base(T) + _d2PdT2_e4(T)
+else:
+    PofT   = _PofT_base
+    dPdT   = _dPdT_base
+    d2PdT2 = _d2PdT2_base
 
 ##################
 # Photon species #

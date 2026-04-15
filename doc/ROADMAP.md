@@ -58,8 +58,14 @@ estimates.
    T=5 MeV (absorbed at T_boltz_start when ν-e still coupled, so
    LOWERS Neff). Docs the thermalization subtlety.
 
-10. **Update `PRyMdemoSM.ipynb` / `PRyMdemoNP.ipynb`**
-    Add cells showing the new flags and asymmetric usage patterns.
+10. **Update `PRyMdemoSM.ipynb` / `PRyMdemoNP.ipynb`** ✓ (done)
+    PRyMdemoSM has a new "PRyMordial-nu extensions" section at the end:
+    markdown overview + 4 cells exercising the `two_loop_QED_flag`
+    (ΔNeff ≈ −10⁻⁵) and the full QKE density matrix mode (Neff = 3.0446,
+    Bennett+2021 match). PRyMdemoNP has a "Task 2: μ-τ / ν-ν̄ asymmetric"
+    section at the end with a runnable lepton-asymmetry (ξ_μ = ±0.1,
+    n=6 diagonal) example. Both new blocks cross-reference
+    `validation/` for more BSM scenarios.
 
 ## Code quality
 

@@ -6,9 +6,16 @@ estimates.
 
 ## Physics extensions
 
-1. **NLO weak corrections (Z-exchange in ν-e) in Phase A**
-   ~10⁻³ shift on Neff at T > 3 MeV. Froustey+2020, Akita & Yamaguchi 2020.
-   Moderate effort — new matrix elements in `PRyM_eval_nTOp.py`.
+1. **NLO electroweak corrections to ν-e rates** ✓ (flag-gated placeholder)
+   Added `nlo_weak_flag` (default False) that multiplies the ν-e GF²
+   prefactor by `nlo_weak_rate_scale` (default 1.003) to approximate the
+   one-loop electroweak corrections discussed in Akita & Yamaguchi 2020
+   (arXiv:2005.07047) and Bennett+2021 Table 5. The reported literature
+   effect on Neff is small (~−6 to −8 × 10⁻⁵), so a single-factor
+   placeholder is sufficient for most analyses. Full vertex + box +
+   photon-emission diagrams remain future work; the `scale_scat` /
+   `scale_ann` plumbing already in `_collision_integral_nu_e` provides
+   a hook for per-process refinements. Zero overhead when the flag is off.
 
 2. **Exact 3-flavor PMNS in n=4/n=6** ✓ (done)
    Fix landed in commit `a844a62`: `_setup_collision_mixing` now computes

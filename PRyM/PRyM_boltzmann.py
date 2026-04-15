@@ -2555,7 +2555,17 @@ class BoltzmannSolver(object):
                 self.D_k0, self.D_k2, self.Ny_coll)
 
     def _nu_e_dispatch(self, f_all, a, Tg, GF2_pref, tail_params):
-        """Call the nu-e collision integral for the current n_species."""
+        """Call the nu-e collision integral for the current n_species.
+
+        When PRyMini.nlo_weak_flag is True, multiplies the nu-e prefactor
+        by PRyMini.nlo_weak_rate_scale — a single-number placeholder for
+        the one-loop electroweak corrections to nu-e scattering and
+        annihilation. This scale only affects the nu-e channel, NOT nu-nu,
+        mirroring the structure of the NLO corrections in Akita &
+        Yamaguchi 2020.
+        """
+        if PRyMini.nlo_weak_flag:
+            GF2_pref = GF2_pref * PRyMini.nlo_weak_rate_scale
         if self.n_species == 3:
             return self._nu_e_n3(f_all, a, Tg, GF2_pref, tail_params)
         elif self.n_species == 4:

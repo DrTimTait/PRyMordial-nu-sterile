@@ -69,6 +69,23 @@ aTid_flag = True
 # delta Neff ~ +1e-4, delta Yp/Yp ~ +1e-4. Tables live in PRyMrates/thermo/
 # (regenerate via PRyMrates/thermo/build_QED_e4.py).
 two_loop_QED_flag = False
+# Enable an approximate NLO electroweak correction to nu-e rates.
+# When True, the nu-e collision prefactor GF^2 is scaled by
+# nlo_weak_rate_scale. This is a single-factor placeholder for the
+# full one-loop EW corrections (vertex + box + photon emission) computed
+# by Akita & Yamaguchi 2020 (arXiv:2005.07047) and discussed in
+# Bennett+2021 Table 5. The literature reports delta Neff ~ -6e-5 to
+# -8e-5 for this class of corrections — small. Zero overhead when False.
+nlo_weak_flag = False
+# Multiplicative scale for nu-e rates when nlo_weak_flag=True. Default
+# 1.003 corresponds to a representative ~0.3% enhancement consistent
+# with the Sirlin-like NC radiative factor rho_NC ~ 1.003 (see e.g.
+# Bardin & Passarino, "The Standard Model in the Making"). Full per-
+# process corrections require the scale_scat / scale_ann plumbing
+# already present in _collision_integral_nu_e; this scalar gives the
+# leading effect in one line. Users who care about the ~5e-5 precision
+# floor should consult Akita & Yamaguchi 2020 for the exact structure.
+nlo_weak_rate_scale = 1.003
 # Set flag to compute background
 compute_bckg_flag = True
 # Set flag to True to save background thermodynamics, if recomputed

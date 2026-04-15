@@ -186,6 +186,45 @@ print(" done (%.1f s)" % elapsed)
 PRyMini.two_loop_QED_flag = False
 
 # ============================================================
+# 7. QKE asymmetric (Stage 1) — mu_tau_symmetric_flag=False with
+#    equal initial distributions. Should reproduce mode 5 (QKE
+#    density matrix) since all 6 species start as identical thermal FD.
+# ============================================================
+PRyMini.general_nu_flag = True
+PRyMini.boltzmann_nu_flag = True
+PRyMini.nu_oscillation_flag = False
+PRyMini.qke_density_matrix_flag = True
+PRyMini.massive_electron_flag = False
+PRyMini.mu_tau_symmetric_flag = False   # <-- new flag, Stage 1
+importlib.reload(PRyMthermo)
+
+# Equal thermal FD callables for all 6 species (asymmetric path with
+# symmetric content). Note: initial_conditions uses (p_phys, Tnu).
+def _fd_thermal(p, T):
+    import numpy as _np
+    x = _np.asarray(p, dtype=float) / T
+    out = _np.zeros_like(x)
+    mask = x < 500.0
+    out[mask] = 1.0 / (_np.exp(x[mask]) + 1.0)
+    return out
+
+print(" Running: QKE asymmetric (equal IC, Stage 1) ...", end="", flush=True)
+t0 = time.time()
+res = PRyMmain.PRyMclass(
+    my_f_nue=_fd_thermal, my_f_nuebar=_fd_thermal,
+    my_f_numu=_fd_thermal, my_f_numubar=_fd_thermal,
+    my_f_nutau=_fd_thermal, my_f_nutaubar=_fd_thermal,
+).PRyMresults()
+elapsed = time.time() - t0
+runs.append(("QKE asym equal IC",
+             "mu-tau asymmetric path with 6 equal FD inputs (matches QKE)",
+             res, elapsed))
+print(" done (%.1f s)" % elapsed)
+
+# Restore defaults
+PRyMini.mu_tau_symmetric_flag = True
+
+# ============================================================
 # Summary
 # ============================================================
 ref = runs[0][2]  # Standard thermal as reference
@@ -207,6 +246,7 @@ flag_table = [
     ("Boltzmann + osc relax",  " True", " True", " True", "False"),
     ("QKE density matrix",     " True", " True", "  --",  " True"),
     ("Standard + O(e^4) QED",  "False", "False", "  --",  " --"),
+    ("QKE asym equal IC",      " True", " True", "  --",  " True"),
 ]
 for name, g, b, o, q in flag_table:
     print(" %-24s %10s %12s %14s %6s" % (name, g, b, o, q))

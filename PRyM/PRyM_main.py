@@ -22,6 +22,18 @@ class PRyMclass(object):
         import PRyM.PRyM_thermo as PRyMthermo
         # Loading New Physics species (constructor default: none)
         PRyMthermo.rho_NP,PRyMthermo.p_NP,PRyMthermo.drho_NP_dT,PRyMthermo.delta_rho_NP=my_rho_NP,my_p_NP,my_drho_NP_dT,my_delta_rho_NP
+        # mu-tau symmetry breaking (Stage 1) requires the 3x3 density-matrix
+        # path because only DensityMatrixSolver currently carries the full
+        # 6-species machinery natively. Auto-enable QKE when the user asks
+        # for asymmetric evolution, and warn if oscillation mixing was left on
+        # (it is a 2-flavor collapse incompatible with mu != tau).
+        if not PRyMini.mu_tau_symmetric_flag:
+            if not PRyMini.qke_density_matrix_flag:
+                if PRyMini.verbose_flag:
+                    print(" mu_tau_symmetric_flag=False: auto-enabling "
+                          "qke_density_matrix_flag (only QKE path supports "
+                          "asymmetric evolution in this stage).")
+                PRyMini.qke_density_matrix_flag = True
         # QKE density matrix solver implies Boltzmann solver
         if PRyMini.qke_density_matrix_flag:
             PRyMini.boltzmann_nu_flag = True
@@ -260,7 +272,18 @@ class PRyMclass(object):
               Tnu_boltz_ini = Tnu_A[-1]  # use Phase A's evolved Tnu, not Tg
               a_boltz_ini = _a_of_T_entropy(Tg_boltz_ini)
               if PRyMini.qke_density_matrix_flag:
-                  rho_curr = dm_solver.initial_conditions(Tnu_boltz_ini, a_boltz_ini)
+                  # Pass user-supplied per-species initial callables through
+                  # to the density-matrix solver when running asymmetric.
+                  # In symmetric mode all entries are None → thermal FD.
+                  f_initial_dm = None
+                  if not PRyMini.mu_tau_symmetric_flag:
+                      f_initial_dm = {
+                          'nue':      my_f_nue,      'nuebar':   my_f_nuebar,
+                          'numu':     my_f_numu,     'numubar':  my_f_numubar,
+                          'nutau':    my_f_nutau,    'nutaubar': my_f_nutaubar,
+                      }
+                  rho_curr = dm_solver.initial_conditions(
+                      Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_dm)
                   dm_solver.update_thermo_distributions(rho_curr, a_boltz_ini)
               else:
                   f_curr = boltz_solver.initial_conditions(Tnu_boltz_ini, a_boltz_ini)

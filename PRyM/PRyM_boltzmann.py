@@ -2017,21 +2017,61 @@ class DensityMatrixSolver(object):
             [s12*s23 - c12*c23*s13*eidCP,   -c12*s23 - s12*c23*s13*eidCP,   c23*c13]
         ], dtype=complex)
 
-    def initial_conditions(self, Tnu, a):
-        """Return initial density matrices: thermal FD on diagonals, zero off-diagonals.
+    def initial_conditions(self, Tnu, a, f_initial=None):
+        """Return initial density matrices for the QKE solver.
 
-        Returns rho_all shape (2, 9, Ny).
+        Parameters
+        ----------
+        Tnu : float
+            Neutrino temperature at the start of the Boltzmann phase (MeV).
+            Used to construct the default thermal FD distribution.
+        a : float
+            Scale factor at start.
+        f_initial : dict, optional
+            User-supplied initial distribution callables, keyed by species
+            name: 'nue', 'nuebar', 'numu', 'numubar', 'nutau', 'nutaubar'.
+            Each callable has signature f(p_MeV, Tnu_MeV) -> array_like. Any
+            missing key falls back to thermal FD at Tnu. Used when
+            mu_tau_symmetric_flag=False to launch asymmetric initial
+            conditions.
+
+        Returns
+        -------
+        rho_all : ndarray, shape (2, 9, Ny)
+            Density matrices in flavor basis. Off-diagonals initialized to
+            zero (no initial flavor coherences).
         """
         rho_all = np.zeros((2, 9, self.Ny))
         Tnu_com = Tnu * a
+
+        # Sector 0 = neutrinos (rho_ee, rho_mumu, rho_tautau at indices 0,1,2)
+        # Sector 1 = antineutrinos (same layout)
+        # f_initial maps species -> (sector, flavor_idx)
+        _species_to_slot = {
+            'nue':      (0, 0), 'numu':      (0, 1), 'nutau':    (0, 2),
+            'nuebar':   (1, 0), 'numubar':   (1, 1), 'nutaubar': (1, 2),
+        }
+
+        # Default thermal-FD diagonal
+        p_grid = self.y_grid / a  # physical momenta at scale factor a
+        fd_default = np.zeros(self.Ny)
         for i in range(self.Ny):
             x = self.y_grid[i] / Tnu_com
             if x < 500.0:
-                f_eq = 1.0 / (np.exp(x) + 1.0)
-                for sector in range(2):
-                    rho_all[sector, 0, i] = f_eq  # rho_ee
-                    rho_all[sector, 1, i] = f_eq  # rho_mumu
-                    rho_all[sector, 2, i] = f_eq  # rho_tautau
+                fd_default[i] = 1.0 / (np.exp(x) + 1.0)
+
+        for species, (sector, flavor) in _species_to_slot.items():
+            if f_initial is not None and species in f_initial and f_initial[species] is not None:
+                # User callable: evaluate at physical momenta + Tnu
+                f_vals = np.asarray(f_initial[species](p_grid, Tnu), dtype=float)
+                if f_vals.shape != (self.Ny,):
+                    raise ValueError(
+                        f"initial_conditions: callable for {species} returned "
+                        f"shape {f_vals.shape}, expected {(self.Ny,)}")
+                rho_all[sector, flavor] = f_vals
+            else:
+                rho_all[sector, flavor] = fd_default
+
         return rho_all
 
     def oscillation_step(self, rho_all, dt, a, Tg):

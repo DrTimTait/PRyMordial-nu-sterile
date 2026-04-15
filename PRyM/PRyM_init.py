@@ -121,6 +121,16 @@ nu_oscillation_flag = True
 #       Operator-split exponential decay toward flavor-averaged f.
 #       Freezes out at T ~ 0.5 MeV; requires coll_scale >> 1.
 nu_oscillation_method = 'collision_mixing'
+# If False, evolve numu, numubar, nutau, nutaubar as four independent species
+# rather than collapsing onto a single numu_eff (default True). Required for
+# BSM scenarios that break mu-tau symmetry: L_mu-L_tau gauge bosons, flavor-
+# specific NSI, flavor-specific DM decay/annihilation, lepton asymmetry.
+# Weak rates (n<->p) only see nu_e so Yp/D/H are unaffected in SM; the flag
+# opens the door for physics that shifts Neff and the relic nu abundance.
+# Stage 1 (current): only the QKE density-matrix path supports the flag —
+# the full 6-species routing is native to DensityMatrixSolver. Stages 2-3
+# will extend the diagonal BoltzmannSolver collision integrals.
+mu_tau_symmetric_flag = True
 # Collision integral calibration scale. Applied to GF2_prefactor so that it
 # uniformly scales both nu-nu and nu-e collision integrals.
 # At coll_scale=1.0 (no fudge), the diagonal density matrix approximation

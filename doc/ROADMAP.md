@@ -63,26 +63,30 @@ estimates.
 
 ## Code quality
 
-11. **Pytest-style regression tests**
-    Freeze current mode-1 (Standard thermal) and mode-5 (QKE) outputs as
-    fixtures so future refactors can't silently regress. Low-ceremony,
-    high-confidence.
+11. **Pytest-style regression tests** ✓ (done)
+    `tests/test_regression.py` freezes mode-1, mode-2, mode-3, mode-5, and
+    mode-6 outputs with tight tolerances. Fast tests run in ~15 s;
+    full suite (`pytest`) in ~4-5 min. See `tests/README.md`.
 
 12. **Refactor the nu-e dispatcher in `collision_integrals`**
     The three-branch if/elif/else (n=3/4/6) is long. Could extract into
     helper methods with common setup.
 
-13. **Task 0 residual (+0.007% D/H in "General nu FD")**
-    See explanation below — basically noise now but not strictly zero.
-    Closure requires the deferred `aTid_flag` fix (see
-    `doc/iterative-strolling-lighthouse.md` appendix / the deferred plan
-    for the mechanism).
+13. **Task 0 residual** ✓ (closed)
+    Fix landed in commit `fd4fb0e`: new
+    `PRyMthermo.distributions_are_thermal_fd()` helper runs the smart-
+    dispatch pattern on the six general_nu callables and keeps the aTid
+    a(T) correction active when distributions are thermal FD. Residual
+    is now at the GL-quadrature convergence floor (~0.006% D/H).
 
 ## Performance
 
-14. **Numba AOT or persistent cache**
-    First run pays ~60 s JIT tax on the new n=4 / n=6 functions.
-    `@njit(cache=True)` would eliminate the cold-start cost on reruns.
+14. **Numba AOT or persistent cache** ✓ (done)
+    `@njit(cache=True)` added to all njit-decorated functions in
+    `PRyM_boltzmann.py` and `PRyM_thermo.py`. `PRyM_eval_nTOp.py`
+    already had caching. Saves ~6 s per cold-start on a full Boltzmann
+    run (110 s → 104 s); most of the remaining run time is the actual
+    collision-integral summation, not JIT.
 
 ## Open research questions
 

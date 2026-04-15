@@ -79,7 +79,7 @@ def drho_g_dT(Tg):
 ###############
 # e+- energy density
 if(PRyMini.numba_flag):
-    @njit
+    @njit(cache=True)
     def rho_e_int(E,Tg):
         return E**2*(E**2-(PRyMini.me/Tg)**2)**0.5/(np.exp(E)+1.)
 else:
@@ -93,7 +93,7 @@ def rho_e(Tg):
         return 4./(2*np.pi**2)*Tg**4*res_int
 # drho_e/dT
 if(PRyMini.numba_flag):
-    @njit
+    @njit(cache=True)
     def drho_e_dT_int(E,Tg):
         return E**3*(E**2-(PRyMini.me/Tg)**2)**0.5/np.cosh(E/2.0)**2
 else:
@@ -107,7 +107,7 @@ def drho_e_dT(Tg):
         return 1./(2*np.pi**2)*Tg**3*res_int
 # e+- pressure density
 if(PRyMini.numba_flag):
-    @njit
+    @njit(cache=True)
     def p_e_int(E,Tg):
         return (E**2-(PRyMini.me/Tg)**2)**1.5/(np.exp(E)+1.)
 else:

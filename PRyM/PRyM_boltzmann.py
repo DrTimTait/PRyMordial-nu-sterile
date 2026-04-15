@@ -44,7 +44,7 @@ if not _has_numba:
 # Five momentum-ordering cases determine the polynomial form.                 #
 ###############################################################################
 
-@njit
+@njit(cache=True)
 def _D1_raw(yi, yj, yk, yl):
     """
     D1(yi,yj,yk,yl) from Eq. E.22, with yi >= yj and yk >= yl assumed.
@@ -74,7 +74,7 @@ def _D1_raw(yi, yj, yk, yl):
     return 0.0
 
 
-@njit
+@njit(cache=True)
 def _D2_raw(yi, yj, yk, yl):
     """
     D2(yi,yj,yk,yl) from Eq. E.23, with yi >= yj and yk >= yl assumed.
@@ -101,7 +101,7 @@ def _D2_raw(yi, yj, yk, yl):
     return 0.0
 
 
-@njit
+@njit(cache=True)
 def _D3_raw(yi, yj, yk, yl):
     """
     D3(yi,yj,yk,yl) from Eq. E.24, with yi >= yj and yk >= yl assumed.
@@ -143,7 +143,7 @@ def _D3_raw(yi, yj, yk, yl):
     return 0.0
 
 
-@njit
+@njit(cache=True)
 def D1(y1, y2, y3, y4):
     """D1 with proper ordering enforced: yi >= yj and yk >= yl."""
     yi = max(y1, y2)
@@ -153,7 +153,7 @@ def D1(y1, y2, y3, y4):
     return _D1_raw(yi, yj, yk, yl)
 
 
-@njit
+@njit(cache=True)
 def D2(y1, y2, y3, y4, s3, s4):
     """
     D2 from Eq. E.23. Includes sign factors sk*sl from the angular integrals.
@@ -166,7 +166,7 @@ def D2(y1, y2, y3, y4, s3, s4):
     return s3 * s4 * _D2_raw(yi, yj, yk, yl)
 
 
-@njit
+@njit(cache=True)
 def D3(y1, y2, y3, y4, s1, s2, s3, s4):
     """
     D3 from Eq. E.24. Includes sign factors si*sj*sk*sl.
@@ -183,7 +183,7 @@ def D3(y1, y2, y3, y4, s1, s2, s3, s4):
 # For massless neutrinos: E_tilde = y, mi=mj=0 so K2 terms vanish.           #
 ###############################################################################
 
-@njit
+@njit(cache=True)
 def D_kernel_massless(y1, y2, y3, y4, c_D1, c_D2, c_D3):
     """
     Compute the full angular kernel for massless 4-particle processes.
@@ -231,7 +231,7 @@ def D_kernel_massless(y1, y2, y3, y4, c_D1, c_D2, c_D3):
     return result
 
 
-@njit
+@njit(cache=True)
 def D_kernel_massive(y1, y2, y3, y4, E1, E2, E3, E4, c_D1, c_D2, c_D3):
     """
     Compute the full angular kernel with massive particles (Sabti E.21).
@@ -281,7 +281,7 @@ def D_kernel_massive(y1, y2, y3, y4, E1, E2, E3, E4, c_D1, c_D2, c_D3):
 # Pre-computed D-kernel tables and collision integral computation              #
 ###############################################################################
 
-@njit
+@njit(cache=True)
 def _fit_tail_params(y_grid, f_grid):
     """
     Fit log(1/f - 1) = a + b*y to the high-momentum tail of the distribution.
@@ -330,7 +330,7 @@ def _fit_tail_params(y_grid, f_grid):
     return a, b
 
 
-@njit
+@njit(cache=True)
 def _compute_all_tail_params(y_grid, f_all):
     """Compute tail fit parameters for all species. Returns shape (n_species, 2)."""
     n_species = f_all.shape[0]
@@ -342,7 +342,7 @@ def _compute_all_tail_params(y_grid, f_all):
     return params
 
 
-@njit
+@njit(cache=True)
 def _interp_grid(y, y_grid, f_grid, tail_a, tail_b):
     """
     Linear interpolation of f on the grid with FD-tail extrapolation.
@@ -372,7 +372,7 @@ def _interp_grid(y, y_grid, f_grid, tail_a, tail_b):
     return f_grid[idx] * (1.0 - frac) + f_grid[idx + 1] * frac
 
 
-@njit
+@njit(cache=True)
 def _quad_weights(N, dy):
     """
     Composite Simpson's quadrature weights for N equally-spaced points.
@@ -425,7 +425,7 @@ def _quad_weights(N, dy):
     return w
 
 
-@njit
+@njit(cache=True)
 def _precompute_D_tables(y_grid):
     """
     Pre-compute D-kernel basis values for all (i1,i2,i3) grid triples.
@@ -467,7 +467,7 @@ def _precompute_D_tables(y_grid):
 # With mu-tau symmetry: only 3 independent species (0,1,2)
 # numu represents numu+nutau, numubar represents numubar+nutaubar
 
-@njit
+@njit(cache=True)
 def _collision_integral_nu_nu(f_all, y_grid, quad_w, a, GF2_prefactor, tail_params,
                                D_k0, D_k2, Ny_coll,
                                scale_nunu_A=1.0, scale_nunu_B=1.0, scale_nunu_C=1.0):
@@ -612,7 +612,7 @@ def _collision_integral_nu_nu(f_all, y_grid, quad_w, a, GF2_prefactor, tail_para
     return I_coll
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def _collision_integral_nu_nu_asym4(f_all, y_grid, quad_w, a, GF2_prefactor,
                                      tail_params, D_k0, D_k2, Ny_coll,
                                      scale_nunu_A=1.0, scale_nunu_B=1.0, scale_nunu_C=1.0):
@@ -789,7 +789,7 @@ def _collision_integral_nu_nu_asym4(f_all, y_grid, quad_w, a, GF2_prefactor,
     return I_coll
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def _collision_integral_nu_nu_asym6(f_all, y_grid, quad_w, a, GF2_prefactor,
                                      tail_params, D_k0, D_k2, Ny_coll,
                                      scale_nunu_A=1.0, scale_nunu_B=1.0, scale_nunu_C=1.0):
@@ -1017,7 +1017,7 @@ def _collision_integral_nu_nu_asym6(f_all, y_grid, quad_w, a, GF2_prefactor,
     return I_coll
 
 
-@njit
+@njit(cache=True)
 def _F_stat_stable(f1, f2, f3, f4):
     """Numerically stable statistical factor for collision integral.
 
@@ -1051,7 +1051,7 @@ def _F_stat_stable(f1, f2, f3, f4):
         return f1 * f2 * (1.0 - f3) * (1.0 - f4) * np.expm1(d_mu)
 
 
-@njit
+@njit(cache=True)
 def _collision_integral_nu_e(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
                               geL2, geR2, geLgeR, gmuL2, gmuR2, gmuLgmuR,
                               me, fnu_e_scat_val, fnu_e_ann_val,
@@ -1178,7 +1178,7 @@ def _collision_integral_nu_e(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
     return I_coll
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def _collision_integral_nu_e_asym6(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
                                     geL2, geR2, geLgeR, gmuL2, gmuR2, gmuLgmuR,
                                     me, fnu_e_scat_val, fnu_e_ann_val,
@@ -1277,7 +1277,7 @@ def _collision_integral_nu_e_asym6(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
     return I_coll
 
 
-@njit
+@njit(cache=True)
 def _collision_integral_nu_e_massive(f_all, y_grid, quad_w, a, Tg, GF2_prefactor,
                                       geL2, geR2, gmuL2, gmuR2,
                                       me, Ny_coll):
@@ -1466,7 +1466,7 @@ def _collision_integral_nu_e_massive(f_all, y_grid, quad_w, a, Tg, GF2_prefactor
 # For ν-e: g_α g_β = g_{L,α} g_{L,β} + g_R² (flavor-asymmetric)              #
 ###############################################################################
 
-@njit
+@njit(cache=True)
 def _offdiag_collision_gain(rho_offdiag, f_all, y_grid, quad_w, a, Tg,
                              GF2_prefactor,
                              c_emu_scat, c_mutau_scat,
@@ -1636,7 +1636,7 @@ def _offdiag_collision_gain(rho_offdiag, f_all, y_grid, quad_w, a, Tg,
     return gain
 
 
-@njit
+@njit(cache=True)
 def _offdiag_collision_gain_massive(rho_offdiag, f_all, y_grid, quad_w, a, Tg,
                                      GF2_prefactor,
                                      c_emu_scat, c_mutau_scat,

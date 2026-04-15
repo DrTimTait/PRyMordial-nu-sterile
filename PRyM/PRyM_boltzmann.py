@@ -1452,6 +1452,149 @@ def _collision_integral_nu_e_massive(f_all, y_grid, quad_w, a, Tg, GF2_prefactor
     return I_coll
 
 
+@njit(parallel=True, cache=True)
+def _collision_integral_nu_e_massive_asym6(f_all, y_grid, quad_w, a, Tg,
+                                            GF2_prefactor, geL2, geR2,
+                                            gmuL2, gmuR2, me, Ny_coll):
+    """n=6 nu-e collision integral with MASSIVE electron kinematics.
+
+    Port of `_collision_integral_nu_e_massive` (n=3) to the
+    [nue, nuebar, numu, numubar, nutau, nutaubar] species layout, with
+    the same ν/ν̄-per-flavor-distinct annihilation logic as the massless
+    `_collision_integral_nu_e_asym6`. Scattering is diagonal in species;
+    annihilation pairs slot α with slot α^1 (its CPT partner) so
+    f_ν(y1) != f_ν̄(y2) is handled correctly.
+
+    Species 0,1 use e-flavor couplings (geL², geR²); species 2..5 use
+    mu-flavor (gmuL², gmuR²). μ and τ carry identical couplings in the SM.
+
+    D-kernels are computed on-the-fly via `D_kernel_massive` since
+    energy conservation with E = sqrt(y² + me²a²) makes y4 table-lookup
+    impractical. See the n=3 function for the phase-space factor
+    derivation (Sabti Eq. E.14).
+    """
+    Ny = len(y_grid)
+    I_coll = np.zeros((6, Ny))
+    prefactor = GF2_prefactor / (64.0 * np.pi**3 * a**5)
+    Te_comoving = Tg * a
+    me_a = me * a
+    me_a2 = me_a * me_a
+
+    c_scat_e_D13 = 4.0 * (geL2 + geR2)
+    c_scat_mu_D13 = 4.0 * (gmuL2 + gmuR2)
+    c_ann_e_D2 = 4.0 * geL2
+    c_ann_e_D3 = 4.0 * geR2
+    c_ann_mu_D2 = 4.0 * gmuL2
+    c_ann_mu_D3 = 4.0 * gmuR2
+
+    for i1 in prange(Ny):
+        y1 = y_grid[i1]
+        if y1 < 1.0e-10 or i1 >= Ny_coll:
+            continue
+
+        f1 = np.empty(6)
+        for s in range(6):
+            f1[s] = f_all[s, i1]
+
+        I_local = np.zeros(6)
+
+        for i2 in range(Ny_coll):
+            y2 = y_grid[i2]
+            if y2 < 1.0e-10:
+                continue
+
+            # Slot 2 is MASSIVE electron for scattering (y2 -> E2_e)
+            E2_e = np.sqrt(y2 * y2 + me_a2)
+            x_e2 = E2_e / Te_comoving
+            f2_e = 0.0 if x_e2 > 500.0 else 1.0 / (np.exp(x_e2) + 1.0)
+
+            # Slot 2 is neutrino for annihilation (massless)
+            f2 = np.empty(6)
+            for s in range(6):
+                f2[s] = f_all[s, i2]
+
+            for i3 in range(Ny_coll):
+                y3 = y_grid[i3]
+                if y3 < 1.0e-10:
+                    continue
+                wt = quad_w[i2] * quad_w[i3]
+
+                # --- Scattering: nu(1) + e(2) -> nu(3) + e(4) ---
+                E4_scat = y1 + E2_e - y3
+                if E4_scat > me_a:
+                    y4s_sq = E4_scat * E4_scat - me_a2
+                    if y4s_sq > 0.0:
+                        y4_scat = np.sqrt(y4s_sq)
+                        x_e4s = E4_scat / Te_comoving
+                        f4_e_s = 0.0 if x_e4s > 500.0 else 1.0 / (np.exp(x_e4s) + 1.0)
+
+                        # Neutrino distribution at slot 3 (y3, on grid)
+                        f3 = np.empty(6)
+                        for s in range(6):
+                            f3[s] = f_all[s, i3]
+
+                        ps_scat = y2 / E2_e
+
+                        D_scat_e = ps_scat * D_kernel_massive(
+                            y1, y2, y3, y4_scat,
+                            y1, E2_e, y3, E4_scat,
+                            c_scat_e_D13, 0.0, c_scat_e_D13)
+                        D_scat_mu = ps_scat * D_kernel_massive(
+                            y1, y2, y3, y4_scat,
+                            y1, E2_e, y3, E4_scat,
+                            c_scat_mu_D13, 0.0, c_scat_mu_D13)
+
+                        # Scattering is diagonal in species
+                        for alpha in range(6):
+                            D_scat = D_scat_e if alpha < 2 else D_scat_mu
+                            I_local[alpha] += wt * D_scat * _F_stat_stable(
+                                f1[alpha], f2_e, f3[alpha], f4_e_s)
+
+                # --- Annihilation: nu(1) + nubar(2) -> e+(3) + e-(4) ---
+                # Positions 3,4 are MASSIVE electrons (E = sqrt(y^2 + me_a^2))
+                E3_e = np.sqrt(y3 * y3 + me_a2)
+                E4_ann = y1 + y2 - E3_e
+                if E4_ann > me_a:
+                    y4a_sq = E4_ann * E4_ann - me_a2
+                    if y4a_sq > 0.0:
+                        y4_ann = np.sqrt(y4a_sq)
+                        x_e3a = E3_e / Te_comoving
+                        f3_e_a = 0.0 if x_e3a > 500.0 else 1.0 / (np.exp(x_e3a) + 1.0)
+                        x_e4a = E4_ann / Te_comoving
+                        f4_e_a = 0.0 if x_e4a > 500.0 else 1.0 / (np.exp(x_e4a) + 1.0)
+
+                        ps_ann = y3 / E3_e
+
+                        D_ann_e = ps_ann * D_kernel_massive(
+                            y1, y2, y3, y4_ann,
+                            y1, y2, E3_e, E4_ann,
+                            0.0, c_ann_e_D2, c_ann_e_D3)
+                        D_ann_mu = ps_ann * D_kernel_massive(
+                            y1, y2, y3, y4_ann,
+                            y1, y2, E3_e, E4_ann,
+                            0.0, c_ann_mu_D2, c_ann_mu_D3)
+
+                        # Annihilation nu_α + nubar_α -> e+ e-: slot 1 = α,
+                        # slot 2 = α_bar (= α XOR 1 in our layout)
+                        I_local[0] += wt * D_ann_e * _F_stat_stable(
+                            f1[0], f2[1], f3_e_a, f4_e_a)
+                        I_local[1] += wt * D_ann_e * _F_stat_stable(
+                            f1[1], f2[0], f3_e_a, f4_e_a)
+                        I_local[2] += wt * D_ann_mu * _F_stat_stable(
+                            f1[2], f2[3], f3_e_a, f4_e_a)
+                        I_local[3] += wt * D_ann_mu * _F_stat_stable(
+                            f1[3], f2[2], f3_e_a, f4_e_a)
+                        I_local[4] += wt * D_ann_mu * _F_stat_stable(
+                            f1[4], f2[5], f3_e_a, f4_e_a)
+                        I_local[5] += wt * D_ann_mu * _F_stat_stable(
+                            f1[5], f2[4], f3_e_a, f4_e_a)
+
+        for alpha in range(6):
+            I_coll[alpha, i1] = prefactor / (y1 * y1) * I_local[alpha]
+
+    return I_coll
+
+
 ###############################################################################
 # Off-diagonal collision gain (transport) terms                                #
 #                                                                              #
@@ -1896,67 +2039,101 @@ class BoltzmannSolver(object):
     def _setup_collision_mixing(self):
         """
         Compute time-averaged PMNS transition probabilities for the
-        effective 2-flavor system (Sabti Eq. 3.18).
+        rapid-oscillation limit (Sabti Eq. 3.18):
 
-        In the rapid-oscillation limit, the collision integral for each
-        flavor is mixed with the PMNS transition matrix:
+            df_a/dt = sum_b P_ab * C_b[f],   P_ab = sum_i |V_ai|^2 |V_bi|^2.
 
-            df_a/dt = sum_b P_ab * C_b[f]
+        For n=3 [nue, nuebar, numu_eff] only P_ee appears (the column sum
+        P_μe + P_τe = 1 - P_ee already collapses the μ-τ average).
 
-        where P_ab = sum_i |V_ai|^2 |V_bi|^2 and C_b is the collision
-        integral for flavor b evaluated with the current distributions.
+        For n=4 [nue, nuebar, numu_eff, nutau_eff] and n=6 [nue, nuebar,
+        numu, numubar, nutau, nutaubar] the full 3×3 P_αβ matrix is used.
+        (The earlier "maximal-θ₂₃, no-CP" approximation P_μe = P_τe =
+        (1-P_ee)/2 and P_μμ = P_ττ = P_μτ = (1+P_ee)/4 is only exact at
+        θ₂₃ = π/4 and δ_CP = 0; PDG 2024 values deviate by ~14%.)
 
-        For our [nue, nuebar, numu_eff] system with mu-tau symmetry:
-
-            I_mixed[0] = P_ee * I[0] + (1-P_ee) * I[2]
-            I_mixed[1] = P_ee * I[1] + (1-P_ee) * I[2]
-            I_mixed[2] = (1-P_ee)/2 * (I[0]+I[1])/2 + (1+P_ee)/2 * I[2]
-
-        The numu_eff row automatically averages over mu and tau contributions.
+        Stores self.P_ee (n=3 fast path) and self.P_PMNS (full 3x3, used
+        by n=4 and n=6 paths).
         """
-        # Build PMNS |V_ai|^2 from mixing angles
-        s12 = np.sin(PRyMini.theta_12)
-        c12 = np.cos(PRyMini.theta_12)
-        s13 = np.sin(PRyMini.theta_13)
-        c13 = np.cos(PRyMini.theta_13)
+        s12 = np.sin(PRyMini.theta_12); c12 = np.cos(PRyMini.theta_12)
+        s13 = np.sin(PRyMini.theta_13); c13 = np.cos(PRyMini.theta_13)
+        s23 = np.sin(PRyMini.theta_23); c23 = np.cos(PRyMini.theta_23)
+        cd = np.cos(PRyMini.delta_CP)
 
-        # Electron row: |V_ei|^2 (independent of theta_23 and delta_CP)
-        Ve1_sq = c12**2 * c13**2
-        Ve2_sq = s12**2 * c13**2
-        Ve3_sq = s13**2
+        # PDG PMNS parameterization: |V_ei|^2 is real, |V_μi|^2 and |V_τi|^2
+        # pick up interference terms proportional to
+        #   K = s12 c12 s23 c23 s13 cos(delta_CP).
+        Ve1 = c12**2 * c13**2
+        Ve2 = s12**2 * c13**2
+        Ve3 = s13**2
 
-        # P_ee = sum_i |V_ei|^4 (electron survival probability)
-        self.P_ee = Ve1_sq**2 + Ve2_sq**2 + Ve3_sq**2
+        K = s12 * c12 * s23 * c23 * s13 * cd
+        Vm1 = s12**2 * c23**2 + c12**2 * s23**2 * s13**2 + 2.0 * K
+        Vm2 = c12**2 * c23**2 + s12**2 * s23**2 * s13**2 - 2.0 * K
+        Vm3 = s23**2 * c13**2
+        Vt1 = s12**2 * s23**2 + c12**2 * c23**2 * s13**2 - 2.0 * K
+        Vt2 = c12**2 * s23**2 + s12**2 * c23**2 * s13**2 + 2.0 * K
+        Vt3 = c23**2 * c13**2
+
+        # Assemble the 3x3 P_αβ matrix (rows/cols in order e, μ, τ).
+        P = np.empty((3, 3))
+        rows = ((Ve1, Ve2, Ve3), (Vm1, Vm2, Vm3), (Vt1, Vt2, Vt3))
+        for i, ai in enumerate(rows):
+            for j, bj in enumerate(rows):
+                P[i, j] = ai[0] * bj[0] + ai[1] * bj[1] + ai[2] * bj[2]
+        self.P_PMNS = P
+        self.P_ee = P[0, 0]  # backwards-compat for the n=3 path
 
         if PRyMini.verbose_flag:
-            print(f"  Collision mixing (Sabti): P_ee = {self.P_ee:.4f}, "
-                  f"1-P_ee = {1-self.P_ee:.4f}")
+            print(f"  Collision mixing (Sabti + full 3x3 PMNS):")
+            print(f"    P_ee = {P[0,0]:.4f}  1-P_ee = {1-P[0,0]:.4f}")
+            print(f"    P_eμ = {P[0,1]:.4f}  P_eτ = {P[0,2]:.4f}")
+            print(f"    P_μμ = {P[1,1]:.4f}  P_ττ = {P[2,2]:.4f}  "
+                  f"P_μτ = {P[1,2]:.4f}")
 
     def _apply_collision_mixing(self, I_total):
         """
         Apply PMNS time-averaged oscillation mixing to collision integrals.
 
-        n=3 (mu_tau_symmetric=True):
-          I_mixed[0] = P_ee * I[0] + (1-P_ee) * I[2]          # nue
-          I_mixed[1] = P_ee * I[1] + (1-P_ee) * I[2]          # nuebar
-          I_mixed[2] = (1-P_ee)/2 * (I[0]+I[1])/2
-                       + (1+P_ee)/2 * I[2]                    # numu_eff
+        n=3 [nue, nuebar, numu_eff] — exact, only P_ee appears because the
+        mu-tau aggregation in I_total[2] collapses the column sum:
+          I_mixed[0] = P_ee * I[0] + (1-P_ee) * I[2]
+          I_mixed[1] = P_ee * I[1] + (1-P_ee) * I[2]
+          I_mixed[2] = (1-P_ee)/2 * (I[0]+I[1])/2 + (1+P_ee)/2 * I[2]
 
-        n=4 (mu_tau_symmetric=False): split the mu-tau sector. We use the
-        maximal-theta_23, no-CP-phase PMNS approximation for the mu/tau
-        mixing (P_mu_tau = P_mu_mu = P_tau_tau = (1+P_ee)/4). This keeps
-        the vacuum oscillation physics mu-tau-symmetric even when the
-        distributions are not — consistent with the user intent that the
-        flag breaks COLLISION dynamics, not the SM PMNS. Exact PMNS could
-        be reintroduced in a future pass by computing the full 3x3 |V|^4
-        matrix from the current sin^2(theta_ij) values.
+        n=4 [nue, nuebar, numu_eff, nutau_eff] — uses the full 3x3 P_αβ:
+          I_mixed[0]  = P_ee I[0] + P_eμ I[2] + P_eτ I[3]
+          I_mixed[1]  = P_ee I[1] + P_eμ I[2] + P_eτ I[3]
+          I_mixed[2]  = P_μe avg(I[0],I[1]) + P_μμ I[2] + P_μτ I[3]
+          I_mixed[3]  = P_τe avg(I[0],I[1]) + P_τμ I[2] + P_ττ I[3]
 
-        Returns the mixed collision integral array (same shape as I_total).
+        n=6 [nue, nuebar, numu, numubar, nutau, nutaubar] — apply 3x3 PMNS
+        separately to the nu sector (slots 0,2,4) and nubar sector (1,3,5).
+        |V_αi|^2 is identical for nu and nubar under CPT so the P_αβ matrix
+        is shared.
+
+        With PDG 2024 (sin²θ₂₃ = 0.546, δ_CP = 1.36π) the exact mu/tau
+        probabilities deviate by ~14% from the maximal-θ₂₃, no-CP
+        approximation, so this upgrade matters for BSM scenarios with
+        I[2] != I[3] or asymmetric nu/nubar distributions.
+
+        Returns a new array (same shape as I_total).
         """
-        P_ee = self.P_ee
-        P_off = 1.0 - P_ee
+        P = self.P_PMNS  # 3x3 matrix, rows/cols (e, μ, τ)
+        P_ee = P[0, 0]
+        P_eμ = P[0, 1]
+        P_eτ = P[0, 2]
+        P_μe = P[1, 0]
+        P_μμ = P[1, 1]
+        P_μτ = P[1, 2]
+        P_τe = P[2, 0]
+        P_τμ = P[2, 1]
+        P_ττ = P[2, 2]
 
         if self.n_species == 3:
+            # numu_eff = <I_μ, I_τ> symmetric average; reduces to the same
+            # P_ee-only formula as before (independent of θ₂₃ or δ_CP).
+            P_off = 1.0 - P_ee
             I_mixed = np.empty_like(I_total)
             I_mixed[0] = P_ee * I_total[0] + P_off * I_total[2]
             I_mixed[1] = P_ee * I_total[1] + P_off * I_total[2]
@@ -1965,37 +2142,27 @@ class BoltzmannSolver(object):
             return I_mixed
 
         if self.n_species == 4:
-            I_mixed = np.empty_like(I_total)
-            half_off = 0.5 * P_off
-            I_mu_plus_tau = I_total[2] + I_total[3]
+            # Average of pcle/antipcle e-flavor collision rates, used to mix
+            # into the (pcle+antipcle)-aggregated mu/tau slots.
             avg_e = 0.5 * (I_total[0] + I_total[1])
-            I_mixed[0] = P_ee * I_total[0] + half_off * I_mu_plus_tau
-            I_mixed[1] = P_ee * I_total[1] + half_off * I_mu_plus_tau
-            I_mixed[2] = half_off * avg_e + 0.25 * (1.0 + P_ee) * I_mu_plus_tau
-            I_mixed[3] = half_off * avg_e + 0.25 * (1.0 + P_ee) * I_mu_plus_tau
+            I_mixed = np.empty_like(I_total)
+            I_mixed[0] = P_ee * I_total[0] + P_eμ * I_total[2] + P_eτ * I_total[3]
+            I_mixed[1] = P_ee * I_total[1] + P_eμ * I_total[2] + P_eτ * I_total[3]
+            I_mixed[2] = P_μe * avg_e + P_μμ * I_total[2] + P_μτ * I_total[3]
+            I_mixed[3] = P_τe * avg_e + P_τμ * I_total[2] + P_ττ * I_total[3]
             return I_mixed
 
-        # n=6 path: apply PMNS per sector (particles, antiparticles).
-        # Under maximal-theta_23 + no-CP:
-        #   P_ee, P_mu_mu = P_tau_tau = P_mu_tau = (1+P_ee)/4, P_mu_e = (1-P_ee)/2.
-        # Mixing is separate for nu sector (slots 0,2,4) and nu-bar (1,3,5).
+        # n=6 path: full per-species mixing, applied independently to
+        # particle (slots 0,2,4) and antiparticle (slots 1,3,5) sectors.
         I_mixed = np.empty_like(I_total)
-        half_off = 0.5 * P_off
-        qtr_pee = 0.25 * (1.0 + P_ee)
         # Particle sector
-        I_mu_p = I_total[2]
-        I_tau_p = I_total[4]
-        I_mt_p = I_mu_p + I_tau_p
-        I_mixed[0] = P_ee * I_total[0] + half_off * I_mt_p
-        I_mixed[2] = half_off * I_total[0] + qtr_pee * I_mt_p
-        I_mixed[4] = half_off * I_total[0] + qtr_pee * I_mt_p
-        # Antiparticle sector
-        I_mu_a = I_total[3]
-        I_tau_a = I_total[5]
-        I_mt_a = I_mu_a + I_tau_a
-        I_mixed[1] = P_ee * I_total[1] + half_off * I_mt_a
-        I_mixed[3] = half_off * I_total[1] + qtr_pee * I_mt_a
-        I_mixed[5] = half_off * I_total[1] + qtr_pee * I_mt_a
+        I_mixed[0] = P_ee * I_total[0] + P_eμ * I_total[2] + P_eτ * I_total[4]
+        I_mixed[2] = P_μe * I_total[0] + P_μμ * I_total[2] + P_μτ * I_total[4]
+        I_mixed[4] = P_τe * I_total[0] + P_τμ * I_total[2] + P_ττ * I_total[4]
+        # Antiparticle sector (CPT-identical P_αβ)
+        I_mixed[1] = P_ee * I_total[1] + P_eμ * I_total[3] + P_eτ * I_total[5]
+        I_mixed[3] = P_μe * I_total[1] + P_μμ * I_total[3] + P_μτ * I_total[5]
+        I_mixed[5] = P_τe * I_total[1] + P_τμ * I_total[3] + P_ττ * I_total[5]
         return I_mixed
 
     def _setup_oscillation_relaxation(self):
@@ -2377,24 +2544,24 @@ class BoltzmannSolver(object):
                 f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
                 self.D_k0, self.D_k2, self.Ny_coll)
 
-            # nu-e: dedicated n=6 function. Massive-electron n=6 not yet
-            # implemented (Stage 3 validation uses massless; massive is a
-            # future polish). Force massless for now in this path.
+            # nu-e: dedicated n=6 function (massless or massive electron).
             if PRyMini.massive_electron_flag:
-                raise NotImplementedError(
-                    "massive_electron_flag + n=6 diagonal not yet implemented. "
-                    "Set massive_electron_flag=False for n=6, or use QKE path.")
-            fnu_e_scat_val = float(self._fnu_e_scat(Tg))
-            fnu_e_ann_val = float(self._fnu_e_ann(Tg))
-            fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
-            fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
-            I_nu_e = _collision_integral_nu_e_asym6(
-                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                self.geL2, self.geR2, self.geLgeR,
-                self.gmuL2, self.gmuR2, self.gmuLgmuR,
-                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-                self.D_k0, self.D_k1, self.D_k2, self.Ny_coll)
+                I_nu_e = _collision_integral_nu_e_massive_asym6(
+                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                    PRyMini.me, self.Ny_coll)
+            else:
+                fnu_e_scat_val = float(self._fnu_e_scat(Tg))
+                fnu_e_ann_val = float(self._fnu_e_ann(Tg))
+                fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
+                fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
+                I_nu_e = _collision_integral_nu_e_asym6(
+                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                    self.geL2, self.geR2, self.geLgeR,
+                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                    fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll)
 
         I_total = I_nu_nu + I_nu_e
 

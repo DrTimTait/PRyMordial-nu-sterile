@@ -223,6 +223,49 @@ def Tnu_eff_tau(Tg):
     rho_nutau = rho_nu_from_f(f_nutau_general, Tg) + rho_nu_from_f(f_nutaubar_general, Tg)
     return (rho_nutau / (2.*(7./8.)*(np.pi**2)/30.))**0.25
 
+def distributions_are_thermal_fd(Tg_test=1.0, tol=1.0e-6):
+    """Check whether the six general_nu distributions are (still) thermal FD.
+
+    Samples each of f_nue_general, f_nuebar_general, f_numu_general,
+    f_numubar_general, f_nutau_general, f_nutaubar_general at several
+    momenta and compares against FD(p / Tnu_eff), where Tnu_eff is
+    derived from the electron-flavor energy density so the test handles
+    distributions that have cooled relative to Tg. Returns True if the
+    max relative deviation across all samples is below tol.
+
+    Used to decide whether the aTid-flag a(T) correction (a thermal-only
+    branch) is still valid when general_nu_flag=True — if the distributions
+    happen to be thermal Fermi-Dirac the thermal formula applies.
+
+    Parameters
+    ----------
+    Tg_test : float
+        Photon temperature (MeV) to sample at. Default 1 MeV sits in the
+        weak freeze-out era where Tnu ~ Tg.
+    tol : float
+        Max allowed |f_general - f_FD(p/Tnu_eff)| for the test to pass.
+    """
+    if not PRyMini.general_nu_flag:
+        return False  # irrelevant in thermal path; caller uses the dedicated branch anyway
+    try:
+        Tnu_eff = float(Tnu_eff_e(Tg_test))
+    except Exception:
+        return False
+    if Tnu_eff <= 0.0:
+        return False
+    p_test = np.array([0.1, 0.5, 1.0, 2.0, 5.0]) * Tnu_eff
+    fd_ref = 1. / (np.exp(p_test / Tnu_eff) + 1.)
+    try:
+        devs = []
+        for fn in (f_nue_general, f_nuebar_general,
+                   f_numu_general, f_numubar_general,
+                   f_nutau_general, f_nutaubar_general):
+            f_vals = np.asarray(fn(p_test, Tg_test), dtype=float)
+            devs.append(np.max(np.abs(f_vals - fd_ref)))
+        return max(devs) < tol
+    except Exception:
+        return False
+
 # Placeholder for user-supplied NP collision term (additional energy injection)
 def delta_rho_nu_NP(Tg):
     return 0.

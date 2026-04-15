@@ -704,13 +704,29 @@ class PRyMclass(object):
         ######################################################
         # Relation of scale factor with temperature and time #
         ######################################################
-        # Non-instantaneous decoupling effects on the entropy of the plasma
-        # Note: when general_nu_flag is True, the N_nu_rate approach (mapping general
-        # distributions to effective temperatures for the thermal collision terms) is
-        # unreliable and can cause ODE solver stiffness. The incomplete decoupling
-        # correction to a(T) is sub-percent and already approximately captured in the
-        # general Tg(t) evolution, so we use the simpler entropy-based a(T) instead.
-        if(PRyMini.aTid_flag and not PRyMini.general_nu_flag):
+        # Non-instantaneous decoupling effects on the entropy of the plasma.
+        # The N_nu_rate path (mapping distributions to effective temperatures
+        # for the thermal collision terms) is reliable only when distributions
+        # are thermal Fermi-Dirac. For genuinely non-thermal BSM distributions
+        # it can cause ODE solver stiffness, so in that case we fall back to
+        # the simpler entropy-based a(T).
+        #
+        # Detect at construction time whether the current general_nu
+        # distributions are thermal FD (closes item 13 in doc/ROADMAP.md —
+        # the leftover +0.007% D/H difference between the thermal and
+        # general-nu paths when both describe identical thermal FD physics).
+        _use_aTid_correction = PRyMini.aTid_flag
+        if PRyMini.aTid_flag and PRyMini.general_nu_flag:
+            _thermal_fd_detected = PRyMthermo.distributions_are_thermal_fd()
+            _use_aTid_correction = _thermal_fd_detected
+            if PRyMini.verbose_flag:
+                if _thermal_fd_detected:
+                    print(" aTid correction: distributions are thermal FD, "
+                          "applying thermal-path a(T) correction.")
+                else:
+                    print(" aTid correction: distributions are non-thermal, "
+                          "falling back to entropy-based a(T).")
+        if _use_aTid_correction:
             # Heat rate due to neutrino (and NP) interactions with the plasma
             def N_nu_rate(T):
                 Tnu = TnuofT(T)
@@ -768,11 +784,14 @@ class PRyMclass(object):
         
         # Scale factor as a function of temperature of thermal bath
         def a_of_T(T):
-            # Including non-instantaneous decoupling effects (thermal path only)
-            if(PRyMini.aTid_flag and not PRyMini.general_nu_flag):
+            # Include non-instantaneous decoupling effects whenever the
+            # (thermal-path-only) branch above actually built lnalnT.
+            # _use_aTid_correction captures aTid_flag plus the thermal-FD
+            # detection for general_nu distributions.
+            if _use_aTid_correction:
                 return np.exp(lnalnT(np.log(T)))
-            # Instantaneous decoupling approximation (used for general distributions
-            # and when aTid_flag is False)
+            # Instantaneous decoupling approximation (genuinely non-thermal
+            # distributions or aTid_flag=False)
             else:
                 spl_T = PRyMthermo.spl(T)
                 return (PRyMini.s0CMB/spl_T)**(1./3.)

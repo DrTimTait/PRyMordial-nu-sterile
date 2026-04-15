@@ -78,9 +78,14 @@ estimates.
     mode-6 outputs with tight tolerances. Fast tests run in ~15 s;
     full suite (`pytest`) in ~4-5 min. See `tests/README.md`.
 
-12. **Refactor the nu-e dispatcher in `collision_integrals`**
-    The three-branch if/elif/else (n=3/4/6) is long. Could extract into
-    helper methods with common setup.
+12. **Refactor the nu-e dispatcher in `collision_integrals`** ✓ (done)
+    Extracted six helper methods: `_fnu_corrections(Tg)` (4 float lookups
+    once), `_nu_e_n3 / _nu_e_n4 / _nu_e_n6` (per-n ν-e integrals),
+    `_nu_nu_dispatch` / `_nu_e_dispatch` (route by self.n_species), and
+    `_apply_NP_collisions` (generalized NP collision dispatch — previously
+    only wrote to the first 3 slots regardless of n). `collision_integrals`
+    body dropped from 119 lines to ~25. Full pytest suite (5/5 tests)
+    passes unchanged in 236 s.
 
 13. **Task 0 residual** ✓ (closed)
     Fix landed in commit `fd4fb0e`: new

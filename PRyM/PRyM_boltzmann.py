@@ -2447,139 +2447,175 @@ class BoltzmannSolver(object):
 
         return f_all
 
+    # -------- Helpers for collision_integrals() dispatch --------
+
+    def _fnu_corrections(self, Tg):
+        """Return (fnu_e_scat, fnu_e_ann, fnu_mu_scat, fnu_mu_ann) floats.
+
+        These are the finite-m_e correction factors read from the NUDEC_BSM
+        thermal tables; needed only by the massless ν-e integrals (the
+        massive variants compute D-kernels on-the-fly with E = sqrt(y²+m²)).
+        """
+        return (float(self._fnu_e_scat(Tg)),  float(self._fnu_e_ann(Tg)),
+                float(self._fnu_mu_scat(Tg)), float(self._fnu_mu_ann(Tg)))
+
+    def _nu_e_n3(self, f_all, a, Tg, GF2_pref, tail_params):
+        """Nu-e collision integrals for the n=3 path (mu-tau symmetric)."""
+        if PRyMini.massive_electron_flag:
+            return _collision_integral_nu_e_massive(
+                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                PRyMini.me, self.Ny_coll)
+        f1, f2, f3, f4 = self._fnu_corrections(Tg)
+        return _collision_integral_nu_e(
+            f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+            self.geL2, self.geR2, self.geLgeR,
+            self.gmuL2, self.gmuR2, self.gmuLgmuR,
+            PRyMini.me, f1, f2, f3, f4, tail_params,
+            self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+            1.0, 1.0, 1.0, 1.0)
+
+    def _nu_e_n4(self, f_all, a, Tg, GF2_pref, tail_params):
+        """Nu-e collision integrals for the n=4 path (μ-τ split, ν/ν̄ merged
+        per flavor).
+
+        Assembled from two calls into the n=3 ν-e function — one with
+        slot-2 = f_numu_eff, one with slot-2 = f_nutau_eff — since I_nue
+        and I_nuebar don't depend on slot 2 and the muon-sector couplings
+        are identical for μ and τ.
+        """
+        f3_mu = np.stack([f_all[0], f_all[1], f_all[2]], axis=0)
+        f3_tau = np.stack([f_all[0], f_all[1], f_all[3]], axis=0)
+        tp_mu = tail_params[[0, 1, 2]]
+        tp_tau = tail_params[[0, 1, 3]]
+
+        if PRyMini.massive_electron_flag:
+            I_mu = _collision_integral_nu_e_massive(
+                f3_mu, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                PRyMini.me, self.Ny_coll)
+            I_tau = _collision_integral_nu_e_massive(
+                f3_tau, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                PRyMini.me, self.Ny_coll)
+        else:
+            f1, f2, f3, f4 = self._fnu_corrections(Tg)
+            I_mu = _collision_integral_nu_e(
+                f3_mu, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.geLgeR,
+                self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                PRyMini.me, f1, f2, f3, f4, tp_mu,
+                self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+                1.0, 1.0, 1.0, 1.0)
+            I_tau = _collision_integral_nu_e(
+                f3_tau, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.geLgeR,
+                self.gmuL2, self.gmuR2, self.gmuLgmuR,
+                PRyMini.me, f1, f2, f3, f4, tp_tau,
+                self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
+                1.0, 1.0, 1.0, 1.0)
+
+        # Assemble n=4 output. I_nue, I_nuebar are identical across both
+        # calls (they don't depend on slot 2); we average for symmetry/safety.
+        I_nu_e = np.zeros((4, self.Ny))
+        I_nu_e[0] = 0.5 * (I_mu[0] + I_tau[0])
+        I_nu_e[1] = 0.5 * (I_mu[1] + I_tau[1])
+        I_nu_e[2] = I_mu[2]   # numu_eff
+        I_nu_e[3] = I_tau[2]  # nutau_eff
+        return I_nu_e
+
+    def _nu_e_n6(self, f_all, a, Tg, GF2_pref, tail_params):
+        """Nu-e collision integrals for the n=6 path (full ν/ν̄ per flavor)."""
+        if PRyMini.massive_electron_flag:
+            return _collision_integral_nu_e_massive_asym6(
+                f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+                self.geL2, self.geR2, self.gmuL2, self.gmuR2,
+                PRyMini.me, self.Ny_coll)
+        f1, f2, f3, f4 = self._fnu_corrections(Tg)
+        return _collision_integral_nu_e_asym6(
+            f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
+            self.geL2, self.geR2, self.geLgeR,
+            self.gmuL2, self.gmuR2, self.gmuLgmuR,
+            PRyMini.me, f1, f2, f3, f4, tail_params,
+            self.D_k0, self.D_k1, self.D_k2, self.Ny_coll)
+
+    def _nu_nu_dispatch(self, f_all, a, GF2_pref, tail_params):
+        """Call the nu-nu collision integral for the current n_species."""
+        if self.n_species == 3:
+            return _collision_integral_nu_nu(
+                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
+                self.D_k0, self.D_k2, self.Ny_coll)
+        elif self.n_species == 4:
+            return _collision_integral_nu_nu_asym4(
+                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
+                self.D_k0, self.D_k2, self.Ny_coll)
+        else:  # n_species == 6
+            return _collision_integral_nu_nu_asym6(
+                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
+                self.D_k0, self.D_k2, self.Ny_coll)
+
+    def _nu_e_dispatch(self, f_all, a, Tg, GF2_pref, tail_params):
+        """Call the nu-e collision integral for the current n_species."""
+        if self.n_species == 3:
+            return self._nu_e_n3(f_all, a, Tg, GF2_pref, tail_params)
+        elif self.n_species == 4:
+            return self._nu_e_n4(f_all, a, Tg, GF2_pref, tail_params)
+        else:  # n_species == 6
+            return self._nu_e_n6(f_all, a, Tg, GF2_pref, tail_params)
+
+    # Species-label arrays: which NP callback key maps to which f_all row.
+    # Used by collision_integrals to add user-supplied NP collision terms.
+    _NP_SLOT_MAP_N3 = (('nue', 0), ('nuebar', 1), ('numu', 2))
+    _NP_SLOT_MAP_N4 = (('nue', 0), ('nuebar', 1), ('numu', 2), ('nutau', 3))
+    _NP_SLOT_MAP_N6 = (('nue', 0), ('nuebar', 1),
+                       ('numu', 2), ('numubar', 3),
+                       ('nutau', 4), ('nutaubar', 5))
+
+    def _apply_NP_collisions(self, I_total, f_all, a, Tg):
+        """Add user-supplied NP collision terms to each relevant species."""
+        if self.n_species == 3:
+            mapping = self._NP_SLOT_MAP_N3
+        elif self.n_species == 4:
+            mapping = self._NP_SLOT_MAP_N4
+        else:
+            mapping = self._NP_SLOT_MAP_N6
+        for name, idx in mapping:
+            fn = self.C_NP_funcs.get(name)
+            if fn is not None:
+                I_total[idx] += fn(self.y_grid, a, Tg, f_all)
+        return I_total
+
     def collision_integrals(self, f_all, a, Tg):
         """
         Compute total collision integrals for all species.
 
-        Returns array of shape (n_species, Ny).
-        When mu_tau_symmetric_flag=False, n_species=4 and the returned array
-        has rows [I_nue, I_nuebar, I_numu, I_nutau].
-        """
-        # Convert units: GF in MeV^{-2}, collision integral in MeV * s^{-1}
-        # coll_scale applied to the overall prefactor, scaling both nu-nu
-        # and nu-e collision integrals uniformly.
-        GF2_pref = self.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
+        Returns an array of shape (n_species, Ny). Row layout:
+          n=3: [I_nue, I_nuebar, I_numu_eff]
+          n=4: [I_nue, I_nuebar, I_numu_eff, I_nutau_eff]
+          n=6: [I_nue, I_nuebar, I_numu, I_numubar, I_nutau, I_nutaubar]
 
-        # Compute FD-tail extrapolation parameters for off-grid interpolation
+        Dispatches the nu-nu and nu-e integrals to the per-n_species
+        helpers (_nu_nu_dispatch, _nu_e_dispatch), then applies oscillation
+        mixing (Sabti Eq. 3.18, when nu_oscillation_flag is set and the
+        method is 'collision_mixing') and adds user-supplied NP terms from
+        self.C_NP_funcs.
+
+        `coll_scale` in PRyMini scales the overall GF^2 prefactor so both
+        nu-nu and nu-e contributions are rescaled uniformly.
+        """
+        GF2_pref = self.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
         tail_params = _compute_all_tail_params(self.y_grid, f_all)
 
-        if self.n_species == 3:
-            # Nu-nu processes (uses D_k0, D_k2)
-            I_nu_nu = _collision_integral_nu_nu(
-                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
-                self.D_k0, self.D_k2, self.Ny_coll)
-
-            # Nu-e processes: massive or massless electron kinematics
-            if PRyMini.massive_electron_flag:
-                I_nu_e = _collision_integral_nu_e_massive(
-                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
-                    PRyMini.me, self.Ny_coll)
-            else:
-                fnu_e_scat_val = float(self._fnu_e_scat(Tg))
-                fnu_e_ann_val = float(self._fnu_e_ann(Tg))
-                fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
-                fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
-                I_nu_e = _collision_integral_nu_e(
-                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.geLgeR,
-                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
-                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-                    fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
-                    1.0, 1.0, 1.0, 1.0)
-        elif self.n_species == 4:
-            # n=4 asymmetric path (Stage 2). nu-nu uses the asym4 function;
-            # nu-e is assembled from two n=3 calls (one for mu slot, one for
-            # tau slot) since I_nue, I_nuebar don't depend on the mu/tau
-            # distribution and I_numu/I_nutau use identical couplings.
-            I_nu_nu = _collision_integral_nu_nu_asym4(
-                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
-                self.D_k0, self.D_k2, self.Ny_coll)
-
-            f3_mu = np.stack([f_all[0], f_all[1], f_all[2]], axis=0)
-            f3_tau = np.stack([f_all[0], f_all[1], f_all[3]], axis=0)
-            tp_mu = tail_params[[0, 1, 2]]
-            tp_tau = tail_params[[0, 1, 3]]
-
-            if PRyMini.massive_electron_flag:
-                I_mu = _collision_integral_nu_e_massive(
-                    f3_mu, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
-                    PRyMini.me, self.Ny_coll)
-                I_tau = _collision_integral_nu_e_massive(
-                    f3_tau, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
-                    PRyMini.me, self.Ny_coll)
-            else:
-                fnu_e_scat_val = float(self._fnu_e_scat(Tg))
-                fnu_e_ann_val = float(self._fnu_e_ann(Tg))
-                fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
-                fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
-                I_mu = _collision_integral_nu_e(
-                    f3_mu, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.geLgeR,
-                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
-                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-                    fnu_mu_scat_val, fnu_mu_ann_val, tp_mu,
-                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
-                    1.0, 1.0, 1.0, 1.0)
-                I_tau = _collision_integral_nu_e(
-                    f3_tau, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.geLgeR,
-                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
-                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-                    fnu_mu_scat_val, fnu_mu_ann_val, tp_tau,
-                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll,
-                    1.0, 1.0, 1.0, 1.0)
-
-            I_nu_e = np.zeros((4, self.Ny))
-            I_nu_e[0] = 0.5 * (I_mu[0] + I_tau[0])
-            I_nu_e[1] = 0.5 * (I_mu[1] + I_tau[1])
-            I_nu_e[2] = I_mu[2]
-            I_nu_e[3] = I_tau[2]
-        else:  # n_species == 6 (Stage 3)
-            # nu-nu: dedicated n=6 function with explicit D_k2/D_k0 kinematics.
-            I_nu_nu = _collision_integral_nu_nu_asym6(
-                f_all, self.y_grid, self.quad_w, a, GF2_pref, tail_params,
-                self.D_k0, self.D_k2, self.Ny_coll)
-
-            # nu-e: dedicated n=6 function (massless or massive electron).
-            if PRyMini.massive_electron_flag:
-                I_nu_e = _collision_integral_nu_e_massive_asym6(
-                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.gmuL2, self.gmuR2,
-                    PRyMini.me, self.Ny_coll)
-            else:
-                fnu_e_scat_val = float(self._fnu_e_scat(Tg))
-                fnu_e_ann_val = float(self._fnu_e_ann(Tg))
-                fnu_mu_scat_val = float(self._fnu_mu_scat(Tg))
-                fnu_mu_ann_val = float(self._fnu_mu_ann(Tg))
-                I_nu_e = _collision_integral_nu_e_asym6(
-                    f_all, self.y_grid, self.quad_w, a, Tg, GF2_pref,
-                    self.geL2, self.geR2, self.geLgeR,
-                    self.gmuL2, self.gmuR2, self.gmuLgmuR,
-                    PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
-                    fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
-                    self.D_k0, self.D_k1, self.D_k2, self.Ny_coll)
-
+        I_nu_nu = self._nu_nu_dispatch(f_all, a, GF2_pref, tail_params)
+        I_nu_e = self._nu_e_dispatch(f_all, a, Tg, GF2_pref, tail_params)
         I_total = I_nu_nu + I_nu_e
 
-        # Apply oscillation mixing to SM collision integrals (Sabti Eq. 3.18).
-        # For 'collision_mixing' method, this replaces the operator-split
-        # relaxation step. For 'relaxation' method, mixing is applied
-        # separately via apply_oscillation_mixing() after the collision step.
         if PRyMini.nu_oscillation_flag and \
                 getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'collision_mixing':
             I_total = self._apply_collision_mixing(I_total)
 
-        # Add NP collision terms
-        if 'nue' in self.C_NP_funcs:
-            I_total[0] += self.C_NP_funcs['nue'](self.y_grid, a, Tg, f_all)
-        if 'nuebar' in self.C_NP_funcs:
-            I_total[1] += self.C_NP_funcs['nuebar'](self.y_grid, a, Tg, f_all)
-        if 'numu' in self.C_NP_funcs:
-            I_total[2] += self.C_NP_funcs['numu'](self.y_grid, a, Tg, f_all)
+        if self.C_NP_funcs:
+            I_total = self._apply_NP_collisions(I_total, f_all, a, Tg)
 
         return I_total
 

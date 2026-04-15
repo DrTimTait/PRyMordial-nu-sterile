@@ -287,15 +287,14 @@ class PRyMclass(object):
                       Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_dm)
                   dm_solver.update_thermo_distributions(rho_curr, a_boltz_ini)
               else:
-                  # Diagonal Boltzmann: n=3 or n=4 (Stage 2).
-                  # In n=4, the solver accepts 'nue','nuebar','numu','nutau'
-                  # ICs; pcle+antipcle remain merged per flavor (Stage 3 will
-                  # extend to full n=6 with nu/nu-bar per flavor).
+                  # Diagonal Boltzmann: n=3, n=4, or n=6.
+                  # n=6 (mu_tau=False + nu_nubar=False): full nu/nubar per flavor.
                   f_initial_boltz = None
                   if not PRyMini.mu_tau_symmetric_flag:
                       f_initial_boltz = {
-                          'nue':   my_f_nue,   'nuebar': my_f_nuebar,
-                          'numu':  my_f_numu,  'nutau':  my_f_nutau,
+                          'nue':      my_f_nue,      'nuebar':   my_f_nuebar,
+                          'numu':     my_f_numu,     'numubar':  my_f_numubar,
+                          'nutau':    my_f_nutau,    'nutaubar': my_f_nutaubar,
                       }
                   f_curr = boltz_solver.initial_conditions(
                       Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_boltz)
@@ -329,12 +328,16 @@ class PRyMclass(object):
                       print(f"  {n_B} steps, Ny={Ny_boltz}")
 
               # Mode-dependent collision damping coefficients for exponential Euler.
-              # n=3 (mu_tau_symmetric=True): [nue, nuebar, numu_eff]
-              # n=4 (mu_tau_symmetric=False): [nue, nuebar, numu, nutau]
-              if PRyMini.mu_tau_symmetric_flag:
+              # n=3:       [nue, nuebar, numu_eff]
+              # n=4:       [nue, nuebar, numu_eff, nutau_eff]
+              # n=6:       [nue, nuebar, numu, numubar, nutau, nutaubar]
+              _n_boltz = n_species_boltz
+              if _n_boltz == 3:
                   _C_D_boltz = np.array([3.06, 3.06, 2.22])
-              else:
+              elif _n_boltz == 4:
                   _C_D_boltz = np.array([3.06, 3.06, 2.22, 2.22])
+              else:
+                  _C_D_boltz = np.array([3.06, 3.06, 2.22, 2.22, 2.22, 2.22])
               _GF2_secm1 = PRyMini.GF**2 * PRyMini.MeV_to_secm1
               _y_grid_boltz = boltz_solver.y_grid
               _dy_boltz = boltz_solver.dy
@@ -394,10 +397,13 @@ class PRyMclass(object):
                       E_com_post = np.sum(_y3_grid * _diag_sum_post) * _dy_2pi2
                   else:
                       # Diagonal Boltzmann: track comoving energy before/after
-                      if PRyMini.mu_tau_symmetric_flag:
+                      if n_species_boltz == 3:
                           _f_weighted_pre = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
-                      else:
+                      elif n_species_boltz == 4:
                           _f_weighted_pre = f_curr[0] + f_curr[1] + 2.0 * f_curr[2] + 2.0 * f_curr[3]
+                      else:
+                          _f_weighted_pre = (f_curr[0] + f_curr[1] + f_curr[2]
+                                             + f_curr[3] + f_curr[4] + f_curr[5])
                       E_com_pre = np.sum(_y3_grid * _f_weighted_pre) * _dy_2pi2
 
                       C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
@@ -409,10 +415,13 @@ class PRyMclass(object):
                               getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'relaxation':
                           boltz_solver.apply_oscillation_mixing(f_curr, a_mid, Tg_mid, dt)
 
-                      if PRyMini.mu_tau_symmetric_flag:
+                      if n_species_boltz == 3:
                           _f_weighted_post = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
-                      else:
+                      elif n_species_boltz == 4:
                           _f_weighted_post = f_curr[0] + f_curr[1] + 2.0 * f_curr[2] + 2.0 * f_curr[3]
+                      else:
+                          _f_weighted_post = (f_curr[0] + f_curr[1] + f_curr[2]
+                                              + f_curr[3] + f_curr[4] + f_curr[5])
                       E_com_post = np.sum(_y3_grid * _f_weighted_post) * _dy_2pi2
 
                   # Update plasma entropy from energy conservation:

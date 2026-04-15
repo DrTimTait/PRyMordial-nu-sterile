@@ -127,10 +127,18 @@ nu_oscillation_method = 'collision_mixing'
 # specific NSI, flavor-specific DM decay/annihilation, lepton asymmetry.
 # Weak rates (n<->p) only see nu_e so Yp/D/H are unaffected in SM; the flag
 # opens the door for physics that shifts Neff and the relic nu abundance.
-# Stage 1 (current): only the QKE density-matrix path supports the flag —
-# the full 6-species routing is native to DensityMatrixSolver. Stages 2-3
-# will extend the diagonal BoltzmannSolver collision integrals.
+# Stage 1 (QKE path): full 6-species native to DensityMatrixSolver.
+# Stage 2 (diagonal Boltzmann, n=4): mu/tau distinct, pcle+antipcle aggregated
+#     per flavor. Uses n=3's D-kernel averaging (valid when f_nu = f_nubar).
+# Stage 3 (diagonal Boltzmann, n=6): full nu/nubar per flavor with explicit
+#     D_k2 (same-sign) vs D_k0 (opposite-sign) kinematics. Needed for
+#     lepton-asymmetric scenarios.
 mu_tau_symmetric_flag = True
+# nu/nu-bar symmetry within each flavor for the diagonal BoltzmannSolver.
+# When False (and mu_tau_symmetric_flag=False) the solver tracks all 6
+# distributions independently with proper kinematic kernels. QKE path is
+# always full 6-species regardless of this flag.
+nu_nubar_symmetric_flag = True
 # Collision integral calibration scale. Applied to GF2_prefactor so that it
 # uniformly scales both nu-nu and nu-e collision integrals.
 # At coll_scale=1.0 (no fudge), the diagonal density matrix approximation

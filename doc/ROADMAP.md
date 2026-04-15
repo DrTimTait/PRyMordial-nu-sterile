@@ -10,16 +10,20 @@ estimates.
    ~10⁻³ shift on Neff at T > 3 MeV. Froustey+2020, Akita & Yamaguchi 2020.
    Moderate effort — new matrix elements in `PRyM_eval_nTOp.py`.
 
-2. **Exact 3-flavor PMNS in n=4/n=6**
-   Currently the `_apply_collision_mixing` uses the maximal-θ₂₃, no-CP
-   approximation (P_μμ = P_ττ = P_μτ = (1+P_ee)/4). Replace with the full
-   `|V_αi|² |V_βi|²` matrix computed from PDG values. Small SM effect (~permille
-   on Neff) but matters for BSM fidelity.
+2. **Exact 3-flavor PMNS in n=4/n=6** ✓ (done)
+   Fix landed in commit `a844a62`: `_setup_collision_mixing` now computes
+   the full 3×3 `P_αβ = Σᵢ |V_αi|² |V_βi|²` matrix from the PDG 2024
+   oscillation parameters (including δ_CP = 1.36π). The n=4 and n=6
+   branches of `_apply_collision_mixing` use this directly. The earlier
+   maximal-θ₂₃/no-CP approximation (P_μe = P_τe = (1-P_ee)/2, P_μμ =
+   P_ττ = P_μτ = (1+P_ee)/4) deviated from PDG by ~14%.
 
-3. **Massive-electron n=6 nu-e integral**
-   Stage 3 currently raises `NotImplementedError` when
-   `massive_electron_flag=True` with n=6. Port the massive kinematics from
-   `_collision_integral_nu_e_massive`. ~3 hours.
+3. **Massive-electron n=6 nu-e integral** ✓ (done)
+   Fix landed in commit `a844a62`: new `_collision_integral_nu_e_massive_asym6`
+   ports the massive kinematics from the n=3 function with proper
+   ν/ν̄-per-flavor-distinct annihilation. Smoke test gives Neff = 3.03986,
+   D/H = 2.4688 (−0.08% shift from the massless n=6 path, consistent
+   with finite-m_e corrections at T ~ m_e).
 
 4. **Sigl-Raffelt relaxation for n=4/n=6**
    `_oscillation_relaxation` and `apply_oscillation_mixing` raise error

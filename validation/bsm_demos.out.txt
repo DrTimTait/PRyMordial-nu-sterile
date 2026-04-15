@@ -1,0 +1,36 @@
+SM baselines:
+  SM Standard thermal (reference)                   Neff=3.04439  Yp=0.24828  D/H=2.4643  (  3.5s)
+  SM QKE density matrix (reference)                 Neff=3.04452  Yp=0.24851  D/H=2.4714  (126.5s)
+
+Scenario A: L_μ - L_τ anomaly (μ 2.5% hotter in T, τ 2.5% cooler)
+    n=4 diag, μ hot / τ cold                        Neff=3.04207  Yp=0.24848  D/H=2.4698  (172.3s)
+
+Scenario B: Lepton asymmetry (ξ_μ = +0.1, ξ_μbar = -0.1)
+    n=6 diag, ξ_μ = +0.1, ξ_μbar = -0.1             Neff=3.04417  Yp=0.24851  D/H=2.4751  ( 90.7s)
+
+Scenario C: ν_τ + ν̄_τ injection from DM decay (Gaussian bump at x=5)
+    n=6 diag, ν_τ bump (amp=5%, x=5)                Neff=2.96225  Yp=0.24740  D/H=2.4448  ( 80.9s)
+
+======================================================================================
+  BSM scenarios summary  (all vs SM Standard thermal)
+======================================================================================
+  Scenario                                          ΔNeff%     ΔYp%     ΔD/H%
+  --------------------------------------------------------------------------------
+  SM Standard thermal (reference)                   +0.000   +0.000    +0.000
+  SM QKE density matrix (reference)                 +0.004   +0.094    +0.288
+    n=4 diag, μ hot / τ cold                        -0.076   +0.083    +0.222
+    n=6 diag, ξ_μ = +0.1, ξ_μbar = -0.1             -0.007   +0.092    +0.437
+    n=6 diag, ν_τ bump (amp=5%, x=5)                -2.698   -0.352    -0.790
+
+  Observations:
+  - Scenario A: μ hot / τ cold → small ΔNeff (total ρ not exactly
+    preserved: rho ∝ T^4 so 2.5% T asymmetry → +0.4% ρ excess →
+    partially relaxed by nu-e and nu-nu collisions, net ~-0.1%).
+  - Scenario B: ξ_μ = 0.1 lepton asymmetry on top of thermal FD.
+    Pair-annihilation rate modified but symmetrically in ν and ν̄
+    so net energy transfer to plasma is small; tiny ΔNeff.
+  - Scenario C: a ν_τ + ν̄_τ bump at y = 5T_ν injected at T_boltz_start
+    = 5 MeV (still coupled!) is ABSORBED by the plasma via nu-e
+    scattering — its energy heats photons relative to neutrinos,
+    LOWERING Neff by 2.7%. For a free-streaming post-decoupling
+    injection, T_boltz_start would need to be < ~1 MeV.

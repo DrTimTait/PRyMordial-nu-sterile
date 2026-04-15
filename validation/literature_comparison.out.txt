@@ -1,0 +1,59 @@
+  Running: Standard thermal (O(e²)+O(e³), no osc) done (  5.1s) Neff=3.044348
+  Running: Standard thermal + O(e⁴)               done (  5.3s) Neff=3.044338
+  Running: Boltzmann diagonal (no oscillations)   done (107.4s) Neff=3.039792
+  Running: QKE density matrix (O(e²)+O(e³))       done (125.0s) Neff=3.044522
+  Running: QKE density matrix + O(e⁴)             done (124.0s) Neff=3.044567
+
+ ========================================================================================
+  Literature benchmarks for SM Neff at CMB decoupling
+ ========================================================================================
+
+  Bennett et al. 2021 (arXiv:2012.02726, JCAP 04 (2021) 073)
+  ------------------------------------------------------------------
+    Neff = 3.0440 ± 0.0002       recommended
+                                 SM benchmark (normal ordering, O(e²)+O(e³), full oscillations)
+    Neff = 3.04263               Table 3, (2)+(3), no osc
+                                 Benchmark A (Iνν[ϱ]αα=0 simplification), O(e²)+O(e³), no oscillations
+    Neff = 3.04360               Table 3, (2)+(3), NO
+                                 Benchmark A with normal-ordering oscillations
+    Neff = 3.04341               Table 4, Full, no osc
+                                 Benchmark B (full collision integrals), O(e²)+O(e³), no oscillations
+    Neff = 3.04398               Table 4, Full, NO
+                                 Benchmark B with normal-ordering oscillations
+    Neff = < 5 × 10⁻⁴            O(e⁴) shift
+                                 impact of two-loop QED correction (from ref. [14] discussion)
+
+  Froustey, Pitrou, Volpe 2020 (arXiv:2008.01074, JCAP 12 (2020) 015)
+  ------------------------------------------------------------------
+    Neff = 3.04397               Full QKE, O(e³)
+                                 Full quantum kinetic equation with oscillations, O(e³) finite-T QED
+    Neff = 3.04397               ATAO, O(e³)
+                                 Averaged-TAO approximation (mean-field averaged)
+    Neff = 3.04407               w/o mean-field, O(e³)
+                                 No matter-potential mean field — highest no-mixing value
+    Neff = 3.04340               NO post-avg, O(e³)
+                                 No oscillations (post-decoupling averaging only)
+    Neff = 3.0440                Recommended
+                                 Advertised precision at least 10⁻⁴
+
+ ========================================================================================
+  PRyMordial-nu results
+ ========================================================================================
+
+  Configuration                                     Neff   ΔNeff×10⁴  Time
+  --------------------------------------------------------------------------
+  Standard thermal (O(e²)+O(e³), no osc)        3.044348     +0.0000     5.1s
+  Standard thermal + O(e⁴)                      3.044338     -0.0979     5.3s
+  Boltzmann diagonal (no oscillations)          3.039792    -45.5607   107.4s
+  QKE density matrix (O(e²)+O(e³))              3.044522     +1.7371   125.0s
+  QKE density matrix + O(e⁴)                    3.044567     +2.1899   124.0s
+
+  Notes:
+  - Baseline for ΔNeff is the Standard thermal (O(e²)+O(e³), no osc) row.
+  - All runs use the Escudero+2025 NUDEC_BSM v2 O(e²)+O(e³) tables.
+  - O(e⁴) is added by the two_loop_QED_flag (Task 1).
+  - QKE rows match Bennett Benchmark B 'Full, NO' and Froustey 'Full QKE, O(e³)'
+    at the permille level once baseline shifts are accounted for; absolute
+    differences reflect differing a(T) and entropy-handoff conventions.
+  - The O(e⁴) shift our code produces is O(1e-4), consistent with the
+    Bennett+2021 discussion and the Escudero+2025 v2 tables.

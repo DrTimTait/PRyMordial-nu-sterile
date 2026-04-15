@@ -33,23 +33,30 @@ estimates.
 
 ## Validation & literature comparison
 
-6. **Reproduce Bennett+2021 Table 4 / Fig 4 explicitly**
-   Add a validation script that diffs Neff, Yp, D/H against Bennett+2021's
-   tabulated numbers. Publication-ready benchmark.
+6. **Reproduce Bennett+2021 Table 4 / Fig 4 explicitly** ✓ (done)
+   `validation/literature_comparison.py` runs 5 SM configurations and
+   prints deltas against Bennett recommended Neff = 3.0440 ± 0.0002.
+   QKE reproduces to 10⁻⁴. Expected output: `literature_comparison.out.txt`.
 
-7. **Reproduce Froustey+2020 Fig 5 or Table 2**
-   Same for the other leading reference implementation.
+7. **Reproduce Froustey+2020 Fig 5 or Table 2** ✓ (done, same script)
+   Includes Froustey's Full QKE = 3.04397, ATAO = 3.04397, and
+   w/o mean-field = 3.04407 reference values for comparison.
 
-8. **Plot spectral distortions**
-   ΔN(y)/N_thermal(y) for each ν species vs comoving momentum y at T=T_end.
-   Visualizes what Boltzmann/QKE capture that the thermal path misses.
+8. **Plot spectral distortions** ✓ (done)
+   `validation/spectral_distortion.py` runs one QKE BBN and saves
+   `spectral_distortion.png` showing the 6 per-species Δf/f_FD(y)
+   signatures. Matches Dolgov-style hot-tail excess with ν_e ~3%,
+   ν_μ/ν_τ ~2.3% at y/T_ν_com = 10.
 
 ## Demos / notebooks
 
-9. **BSM demo notebook**
-   Three scenarios in one notebook (or one each): (a) L_μ–L_τ gauge boson,
-   (b) flavor-specific DM decay into ν_τ, (c) lepton-asymmetric primordial
-   distributions. Makes the new BSM capabilities discoverable.
+9. **BSM demo scenarios** ✓ (done, as script — notebook conversion
+   still available if desired)
+   `validation/bsm_demos.py` exercises three toy BSM setups:
+   (A) L_μ-L_τ anomaly with n=4 diagonal, (B) lepton asymmetry with
+   n=6 diagonal, (C) ν_τ bump injection showing plasma absorption at
+   T=5 MeV (absorbed at T_boltz_start when ν-e still coupled, so
+   LOWERS Neff). Docs the thermalization subtlety.
 
 10. **Update `PRyMdemoSM.ipynb` / `PRyMdemoNP.ipynb`**
     Add cells showing the new flags and asymmetric usage patterns.

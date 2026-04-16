@@ -38,6 +38,7 @@ def _reset_flags():
     PRyMini.nu_oscillation_flag = False
     PRyMini.qke_density_matrix_flag = False
     PRyMini.qke_full_ode_flag = False
+    PRyMini.n_B_override = None
     PRyMini.massive_electron_flag = False
     PRyMini.mu_tau_symmetric_flag = True
     PRyMini.nu_nubar_symmetric_flag = True

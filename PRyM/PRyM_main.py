@@ -313,6 +313,8 @@ class PRyMclass(object):
               # based scale factor approach.
               me = PRyMini.me
               n_B = max(2000, int(PRyMini.n_sampling * 2))
+              if getattr(PRyMini, "n_B_override", None) is not None:
+                  n_B = int(PRyMini.n_B_override)
 
               # Log-uniform grid in a, estimated from entropy-based relation
               a_end_est = _a_of_T_entropy(PRyMini.T_boltz_end) * 1.02

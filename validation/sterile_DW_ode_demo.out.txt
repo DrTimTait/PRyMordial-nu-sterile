@@ -1,0 +1,10 @@
+Strang 3×3 reference                     Neff=3.04452  Yp=0.24851  D/H=2.4743  Σρ_ss= -0.268  (125.5s)
+ODE    3×3 reference                     Neff=3.04057  Yp=0.24846  D/H=2.4673  Σρ_ss= -0.000  (129.8s)
+Strang DW (sin²(2θ)=0.1)                 Neff=3.97322  Yp=0.26024  D/H=2.7820  Σρ_ss=  6.033  (127.7s)
+ODE    DW (sin²(2θ)=0.1)                 Neff=3.86819  Yp=0.25902  D/H=2.7421  Σρ_ss=  6.120  (134.8s)
+
+3×3 Neff bias (ODE − Strang): -3.954 × 10⁻³
+DW ΔNeff (Strang):            +0.9287
+DW ΔNeff (ODE):               +0.8276
+DW sterile Σρ_ss (Strang):    6.033
+DW sterile Σρ_ss (ODE):       6.120

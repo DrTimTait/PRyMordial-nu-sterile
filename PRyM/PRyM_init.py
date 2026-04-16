@@ -54,6 +54,12 @@ T_nucl = 0.1*MeV_to_Kelvin # O(10^2) [s]
 T_end = 1.e-3*MeV_to_Kelvin # O(10^6) [s]
 # Number of sampling points for thermodynamics background
 n_sampling = 1200 # recommended for accuracy
+# Optional override for the Phase B (Boltzmann/QKE) step count. When None,
+# n_B defaults to max(2000, 2 * n_sampling). Setting a larger integer here
+# refines the timestep dt = da/(a H) used by the density-matrix / Boltzmann
+# integrators without perturbing Phase A or Phase C resolution. Intended
+# mainly for dt-convergence diagnostics and Stage D refinement tests.
+n_B_override = None
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

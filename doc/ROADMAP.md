@@ -106,18 +106,54 @@ consistent; the ODE driver is more self-consistent with the stated
 QKE, while the Strang path matches literature references that use
 similar quasi-static treatments.
 
-### Open follow-ups (Stage D.4 and beyond)
+**Stage D.4 (landed):** SF dt-convergence diagnostic. Unlike the 3×3
+case (D.2), the 4×4 SF regime does NOT converge cleanly at the default
+`n_B=2400`. Running the ξ=5e-2 SF scenario through the ODE driver at
+n_B ∈ {2400, 4800, 9600}:
 
-- **D.4 — ETDRK2 corrector.** Add a predictor-corrector on top of the
-  Strang-split unitary for O(dt²) local error. Will NOT close the
-  modeling-choice Neff gap (already shown to be a real bias in D.2)
-  but would tighten convergence.
-- **D.5 — Eigenbasis collision step.** Reformulate the damping and
-  collision gain in the instantaneous H-eigenbasis, so that H and C
-  commute and no splitting is needed at all. Research-grade.
-- **D.6 — Magnus / implicit BDF.** For extreme-stiffness robustness
+| n_B   | ODE Neff  | ΔNeff to prior |
+|------:|----------:|---------------:|
+| 2400  | 3.95297   | —              |
+| 4800  | 3.96172   | +8.8×10⁻³      |
+| 9600  | 3.96562   | +3.9×10⁻³      |
+
+Drift ratio = 0.45, closer to 0.5 (O(dt)) than 0.25 (O(dt²)). The
+Strang-split integrator degrades from its usual O(dt²) to O(dt) at the
+MSW resonance crossing, because the in-medium mixing angle sweeps
+through π/4 on a time-scale shorter than dt near resonance. Richardson
+extrapolation gives ODE Neff_∞ ≈ 3.97, so the Stage D.3 reported
+values (at default n_B=2400) are ~1.4×10⁻² below the true ODE answer.
+
+Two gaps to distinguish:
+
+- **Numerical gap** (~1.4×10⁻² Neff, ODE at default n_B vs ODE-∞).
+  ETDRK2 would restore O(dt²) at the resonance and close this gap at
+  default dt. A simpler workaround for users who need precision is to
+  set `PRyMini.n_B_override = 9600` or higher for SF runs — the
+  diagnostic script in `validation/stage_d_sf_convergence.py` uses
+  this knob.
+- **Physics gap** (~1×10⁻² Neff, ODE-∞ ≈ 3.97 vs Strang 3.98). The
+  quasi-static DW formula spikes at resonance (see D.3 discussion).
+  No numerical improvement closes this — it's the modeling choice.
+
+Recommendation for SF ODE users: set `n_B_override` ≥ 9600 in
+`PRyMini` before constructing `PRyMclass`. The diagnostic output
+(`validation/stage_d_sf_convergence.out.txt`) documents the trend.
+
+### Open follow-ups (Stage D.5 and beyond)
+
+- **D.5 — ETDRK2 corrector.** Add a predictor-corrector on top of the
+  Strang-split unitary to restore O(dt²) at sharp resonance crossings.
+  Would close the ~1.4×10⁻² numerical gap in SF at default n_B without
+  requiring users to bump n_B by 4×. Involves a full refactor of the
+  collision step into an N×N matrix operator plus per-mode φ_1/φ_2
+  evaluations in the H-eigenbasis. Moderate complexity (~2–4 days).
+- **D.6 — Eigenbasis collision step.** Reformulate damping and
+  collision gain in the instantaneous H-eigenbasis, so H and C commute
+  and no splitting is needed at all. Research-grade.
+- **D.7 — Magnus / implicit BDF.** For extreme-stiffness robustness
   (e.g., keV-mass sterile regimes where ω_41 dt → 10⁶).
 
 No urgency unless a concrete physics use-case demands tighter than
 ~10⁻³ accuracy in a regime where the Sigl-Raffelt/DW quasi-static
-approximation breaks down. Estimated effort per item: **~2–4 days**.
+approximation breaks down AND default n_B is inadequate.

@@ -1,0 +1,22 @@
+================================================================================
+Stage D.5 validation: SF convergence under predictor-corrector
+sin²(2θ_14)=1e-3, Δm²_41=1 eV², ξ_νe=5e-2, qke_ode_corrector_flag=True
+================================================================================
+PC  ODE SF (n_B=2400)            Neff=3.95428  Σρ_ss=5.900  n_ξe=+1.722e+00  (252s)
+PC  ODE SF (n_B=4800)            Neff=3.96442  Σρ_ss=5.912  n_ξe=+1.496e+00  (507s)
+PC  ODE SF (n_B=9600)            Neff=3.84467  Σρ_ss=6.134  n_ξe=-9.444e+00  (987s)
+
+Convergence metrics:
+--------------------------------------------------------------------------------
+  n_B= 2400  Neff=3.95428  Σρ_ss=5.900  n_ξe=+1.722e+00
+  n_B= 4800  Neff=3.96442  Σρ_ss=5.912  n_ξe=+1.496e+00
+  n_B= 9600  Neff=3.84467  Σρ_ss=6.134  n_ξe=-9.444e+00
+
+  ΔNeff (2400→4800) = +10.140 × 10⁻³
+  ΔNeff (4800→9600) = -119.755 × 10⁻³
+  Ratio = -11.811   (≈ 0.25 for converged O(dt²), ≈ 0.5 for O(dt))
+
+  Richardson extrapolation (4800/9600): Neff_∞ ≈ 3.80475
+  D.4 baseline (single-stage Strang):    Neff(n_B=2400) = 3.95297
+  D.4 extrapolated:                      Neff(∞)        = 3.96692
+  Gap D.5-at-default − D.5-extrapolated: +0.14953

@@ -140,20 +140,45 @@ Recommendation for SF ODE users: set `n_B_override` ≥ 9600 in
 `PRyMini` before constructing `PRyMclass`. The diagnostic output
 (`validation/stage_d_sf_convergence.out.txt`) documents the trend.
 
-### Open follow-ups (Stage D.5 and beyond)
+**Stage D.5 (documentary finding):** A naive predictor-corrector on
+the Hamiltonian was attempted — predictor Strang step with H(ρ_n),
+then corrector Strang step starting from ρ_n with H(ρ_mid) where
+ρ_mid = ½(ρ_n + ρ_pred). Hypothesis was that this would restore
+O(dt²) at the MSW resonance. Result
+(see `validation/stage_d5_sf_convergence_attempt.py` /.out.txt):
 
-- **D.5 — ETDRK2 corrector.** Add a predictor-corrector on top of the
-  Strang-split unitary to restore O(dt²) at sharp resonance crossings.
-  Would close the ~1.4×10⁻² numerical gap in SF at default n_B without
-  requiring users to bump n_B by 4×. Involves a full refactor of the
-  collision step into an N×N matrix operator plus per-mode φ_1/φ_2
-  evaluations in the H-eigenbasis. Moderate complexity (~2–4 days).
-- **D.6 — Eigenbasis collision step.** Reformulate damping and
-  collision gain in the instantaneous H-eigenbasis, so H and C commute
-  and no splitting is needed at all. Research-grade.
+| n_B  | Corrector Neff | vs. D.4 single-stage |
+|-----:|---------------:|---------------------:|
+| 2400 | 3.95428        | +1.3×10⁻³ (improving)|
+| 4800 | 3.96442        | +2.7×10⁻³ (improving)|
+| 9600 | 3.84467        | -12.1×10⁻² (UNSTABLE)|
+
+The corrector helps at moderate n_B but destabilizes at finer dt,
+because near the MSW resonance `ω_αs = H_αα − H_ss` sweeps through
+zero. The predictor sees ω on one side of zero, the corrector sees ω
+on the other side; the unitary halves `exp(-iω·dt/2)` rotate in
+opposite senses across the two stages, and cumulative interference
+corrupts the state. This is a known failure mode of naive H-averaging
+predictor-corrector schemes at turning points; the fix is to handle
+the commutator in the H-eigenbasis, where the phase-flip issue
+disappears because each eigenmode gets its own phase.
+
+Decision: the naive corrector was reverted; Stage D.5 ships as this
+documentary finding. The attempt script is preserved at
+`validation/stage_d5_sf_convergence_attempt.py`.
+
+### Open follow-ups (Stage D.6 and beyond)
+
+- **D.6 — ETDRK2 with eigenbasis collision.** The honest fix for the
+  SF resonance O(dt) degradation. Per-mode Hermitian eigendecomposition
+  of H (already computed by `_apply_unitary`), transform the collision
+  operator into the H-eigenbasis, apply φ_1 / φ_2 element-wise with
+  the correct Δλ·dt phases per eigenpair, transform back. Handles
+  turning points correctly because each eigenmode carries its own
+  phase through the sign flip. Moderate-heavy refactor (~4–7 days).
 - **D.7 — Magnus / implicit BDF.** For extreme-stiffness robustness
   (e.g., keV-mass sterile regimes where ω_41 dt → 10⁶).
 
-No urgency unless a concrete physics use-case demands tighter than
-~10⁻³ accuracy in a regime where the Sigl-Raffelt/DW quasi-static
-approximation breaks down AND default n_B is inadequate.
+Until D.6 lands, the practical recommendation for SF ODE users is
+unchanged from D.4: set `n_B_override ≥ 9600` to converge the
+single-stage Strang path.

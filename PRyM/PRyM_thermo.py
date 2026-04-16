@@ -162,6 +162,14 @@ def f_nutau_general(p, Tg):
 def f_nutaubar_general(p, Tg):
     return 1./(np.exp(p/Tg) + 1.)
 
+# Sterile distributions default to zero (no sterile neutrinos unless produced
+# by the QKE solver with PRyMini.sterile_flag=True). When sterile_flag=False
+# these are ignored by rho_3nu.
+def f_nus_general(p, Tg):
+    return np.zeros_like(p) if hasattr(p, '__len__') else 0.0
+def f_nusbar_general(p, Tg):
+    return np.zeros_like(p) if hasattr(p, '__len__') else 0.0
+
 # Energy density for massless neutrinos from a general distribution function
 # rho = 1/(2*pi^2) * integral dp p^3 f(p, Tg)  [per degree of freedom]
 # Uses x = p/Tg substitution: rho = Tg^4/(2*pi^2) * integral dx x^3 f(x*Tg, Tg)
@@ -182,12 +190,19 @@ def drho_nu_from_f_dTg(f_nu, Tg):
     dT = 1.e-3 * Tg
     return (rho_nu_from_f(f_nu, Tg + dT) - rho_nu_from_f(f_nu, Tg - dT)) / (2.*dT)
 
-# Total neutrino energy density (all 3 families, particles + antiparticles)
+# Total neutrino energy density (all 3 families, particles + antiparticles).
+# When PRyMini.sterile_flag=True, the sterile (+sterile-bar) contributions are
+# added as well so that any energy transferred from active → sterile remains
+# in the radiation budget (and contributes to Neff).
 def rho_3nu(Tg, Tnue=None, Tnumu=None):
     if(PRyMini.general_nu_flag):
-        return (rho_nu_from_f(f_nue_general, Tg) + rho_nu_from_f(f_nuebar_general, Tg)
-              + rho_nu_from_f(f_numu_general, Tg) + rho_nu_from_f(f_numubar_general, Tg)
-              + rho_nu_from_f(f_nutau_general, Tg) + rho_nu_from_f(f_nutaubar_general, Tg))
+        total = (rho_nu_from_f(f_nue_general, Tg) + rho_nu_from_f(f_nuebar_general, Tg)
+               + rho_nu_from_f(f_numu_general, Tg) + rho_nu_from_f(f_numubar_general, Tg)
+               + rho_nu_from_f(f_nutau_general, Tg) + rho_nu_from_f(f_nutaubar_general, Tg))
+        if getattr(PRyMini, 'sterile_flag', False):
+            total += (rho_nu_from_f(f_nus_general, Tg)
+                    + rho_nu_from_f(f_nusbar_general, Tg))
+        return total
     else:
         return rho_nu(Tnue) + 2.*rho_nu(Tnumu)
 
@@ -198,9 +213,13 @@ def p_3nu(Tg, Tnue=None, Tnumu=None):
 # Derivative of total neutrino energy density wrt Tg
 def drho_3nu_dTg(Tg, Tnue=None, Tnumu=None):
     if(PRyMini.general_nu_flag):
-        return (drho_nu_from_f_dTg(f_nue_general, Tg) + drho_nu_from_f_dTg(f_nuebar_general, Tg)
-              + drho_nu_from_f_dTg(f_numu_general, Tg) + drho_nu_from_f_dTg(f_numubar_general, Tg)
-              + drho_nu_from_f_dTg(f_nutau_general, Tg) + drho_nu_from_f_dTg(f_nutaubar_general, Tg))
+        total = (drho_nu_from_f_dTg(f_nue_general, Tg) + drho_nu_from_f_dTg(f_nuebar_general, Tg)
+               + drho_nu_from_f_dTg(f_numu_general, Tg) + drho_nu_from_f_dTg(f_numubar_general, Tg)
+               + drho_nu_from_f_dTg(f_nutau_general, Tg) + drho_nu_from_f_dTg(f_nutaubar_general, Tg))
+        if getattr(PRyMini, 'sterile_flag', False):
+            total += (drho_nu_from_f_dTg(f_nus_general, Tg)
+                    + drho_nu_from_f_dTg(f_nusbar_general, Tg))
+        return total
     else:
         return drho_nu_dT(Tnue) + 2.*drho_nu_dT(Tnumu)
 

@@ -174,6 +174,25 @@ theta_13 = np.arcsin(np.sqrt(0.0220)) # sin²θ₁₃ = 0.0220
 theta_23 = np.arcsin(np.sqrt(0.546))  # sin²θ₂₃ = 0.546
 # CP-violating phase (drops out in damped-oscillation limit)
 delta_CP = 1.36 * np.pi  # δ_CP ≈ 245° (PDG 2024 best fit)
+# 3+1 sterile neutrino extension.
+# When sterile_flag=True, the DensityMatrixSolver upgrades from 3×3 to 4×4,
+# adding an extra mass eigenstate (Δm²₄₁) and three new mixing angles
+# (θ₁₄, θ₂₄, θ₃₄) plus one new CP phase (δ₁₄). The sterile sector has
+# NO SM gauge coupling: zero collision rate, zero matter potential. Production
+# occurs via oscillation-mediated decoherence (Dodelson-Widrow) or MSW
+# resonance driven by a lepton asymmetry (Shi-Fuller).
+# Zero overhead when False (all 3×3 code paths unchanged).
+sterile_flag = False
+# Sterile mass-squared splitting [eV²]. User-settable for eV-scale
+# (short-baseline anomalies, warm DM) or keV-scale (X-ray line).
+Dm2_41 = 1.0
+# Active-sterile mixing angles [radians] in the standard 3+1 parameterization:
+#   U₄ₓ₄ = R₃₄(θ₃₄) × R₂₄(θ₂₄, δ₂₄) × R₁₄(θ₁₄) × [U_PMNS₃ₓ₃ ⊕ 1]
+# Recovers the 3-flavor PMNS when θ₁₄ = θ₂₄ = θ₃₄ = 0.
+theta_14 = 0.0
+theta_24 = 0.0
+theta_34 = 0.0
+delta_14 = 0.0   # CP phase for active-sterile sector
 # Set flag to True for some new species with temperature T_NP
 NP_thermo_flag = False
 # Set the initial temperature of the NP species via relation TNP_start = xi_NP*T_start

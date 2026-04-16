@@ -2871,6 +2871,48 @@ def _matrix_batch_to_rho_vec(rho):
     return vec
 
 
+def _rho_vec_batch_to_matrix_4(rho_vec):
+    """Convert (16, Ny) real array to (Ny, 4, 4) complex Hermitian matrices.
+
+    Layout for 3+1 sterile extension:
+      [rho_ee, rho_mumu, rho_tautau, rho_ss,           # diag: 0-3
+       Re(rho_emu), Im(rho_emu),                        # 4-5
+       Re(rho_etau), Im(rho_etau),                      # 6-7
+       Re(rho_es), Im(rho_es),                          # 8-9
+       Re(rho_mutau), Im(rho_mutau),                    # 10-11
+       Re(rho_mus), Im(rho_mus),                        # 12-13
+       Re(rho_taus), Im(rho_taus)]                      # 14-15
+    """
+    Ny = rho_vec.shape[1]
+    rho = np.zeros((Ny, 4, 4), dtype=complex)
+    # Diagonals
+    for d in range(4):
+        rho[:, d, d] = rho_vec[d]
+    # Off-diagonals: pairs (i,j) with i<j, stored as (Re, Im) at indices
+    # 4+2*k, 5+2*k where k enumerates the 6 pairs in order:
+    # (0,1), (0,2), (0,3), (1,2), (1,3), (2,3)
+    _pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    for k, (i, j) in enumerate(_pairs):
+        re_idx = 4 + 2 * k
+        im_idx = 5 + 2 * k
+        rho[:, i, j] = rho_vec[re_idx] + 1j * rho_vec[im_idx]
+        rho[:, j, i] = rho_vec[re_idx] - 1j * rho_vec[im_idx]
+    return rho
+
+
+def _matrix_batch_to_rho_vec_4(rho):
+    """Convert (Ny, 4, 4) complex Hermitian matrices to (16, Ny) real array."""
+    Ny = rho.shape[0]
+    vec = np.zeros((16, Ny))
+    for d in range(4):
+        vec[d] = rho[:, d, d].real
+    _pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    for k, (i, j) in enumerate(_pairs):
+        vec[4 + 2 * k] = rho[:, i, j].real
+        vec[5 + 2 * k] = rho[:, i, j].imag
+    return vec
+
+
 ###############################################################################
 # DensityMatrixSolver class                                                    #
 ###############################################################################
@@ -2906,18 +2948,27 @@ class DensityMatrixSolver(object):
         self.y_max = self._boltz.y_max
         self.n_species = self._boltz.n_species  # 3 for collision integrals
 
-        # Build 3x3 PMNS mixing matrix from PDG parameters
+        # Sterile extension: 3×3 or 4×4 density matrix
+        self.n_flavor = 4 if PRyMini.sterile_flag else 3
+        self.n_components = self.n_flavor**2  # 9 or 16 real components
+
+        # Build PMNS mixing matrix (3×3 or 4×4)
         self._build_PMNS()
 
         # Precompute vacuum Hamiltonian base matrices (eV^2)
         # H_vac_nu(y) = Omega_nu / E(y),  H_vac_nubar(y) = Omega_nubar / E(y)
-        Dm2 = np.array([0.0, PRyMini.Dm2_21, PRyMini.Dm2_31])  # eV^2
+        if self.n_flavor == 4:
+            Dm2 = np.array([0.0, PRyMini.Dm2_21, PRyMini.Dm2_31,
+                            PRyMini.Dm2_41])
+        else:
+            Dm2 = np.array([0.0, PRyMini.Dm2_21, PRyMini.Dm2_31])
         Dm2_half = np.diag(Dm2 / 2.0)
-        self._Omega_nu = self.U_PMNS @ Dm2_half @ self.U_PMNS.conj().T      # eV^2
-        self._Omega_nubar = self.U_PMNS.conj() @ Dm2_half @ self.U_PMNS.T   # eV^2
+        self._Omega_nu = self.U_PMNS @ Dm2_half @ self.U_PMNS.conj().T
+        self._Omega_nubar = self.U_PMNS.conj() @ Dm2_half @ self.U_PMNS.T
 
         # Electron-flavor projector for matter potential
-        self._diag_e = np.zeros((3, 3), dtype=complex)
+        N = self.n_flavor
+        self._diag_e = np.zeros((N, N), dtype=complex)
         self._diag_e[0, 0] = 1.0
 
         # W boson mass squared for thermal matter potential
@@ -2925,24 +2976,58 @@ class DensityMatrixSolver(object):
 
         # Collision damping coefficients (de Salas & Pastor 2016)
         # D_alpha = C_D_alpha * GF^2 * T^4 * E  [natural units]
-        self.C_D = np.array([3.06, 2.22, 2.22])  # [nue, numu, nutau]
+        # Sterile: Gamma_s = 0 (no SM gauge coupling)
+        if self.n_flavor == 4:
+            self.C_D = np.array([3.06, 2.22, 2.22, 0.0])
+        else:
+            self.C_D = np.array([3.06, 2.22, 2.22])
 
         # Off-diagonal ν-e scattering couplings (for collision gain terms).
-        # Diagonal: 4(g_{L,α}² + g_R²); off-diagonal: 4(g_{L,α} g_{L,β} + g_R²).
-        geL = PRyMini.geL    # ½ + sW²
-        gmuL = PRyMini.gmuL  # -½ + sW²
-        geR2 = PRyMini.geR**2  # sW⁴
-        self.c_emu_scat = 4.0 * (geL * gmuL + geR2)   # e-μ and e-τ (g_{L,τ} = g_{L,μ})
-        self.c_mutau_scat = 4.0 * (gmuL**2 + geR2)    # μ-τ = diagonal μ coupling
+        geL = PRyMini.geL
+        gmuL = PRyMini.gmuL
+        geR2 = PRyMini.geR**2
+        self.c_emu_scat = 4.0 * (geL * gmuL + geR2)
+        self.c_mutau_scat = 4.0 * (gmuL**2 + geR2)
 
-        # eV <-> seconds conversion: 1 eV = eV_to_secm1 s^{-1}
+        # eV <-> seconds conversion
         self._eV_to_secm1 = PRyMini.MeV_to_secm1 * 1.0e-6
 
+        # Helper dispatchers for vec <-> matrix conversion
+        if self.n_flavor == 4:
+            self._to_mat = _rho_vec_batch_to_matrix_4
+            self._to_vec = _matrix_batch_to_rho_vec_4
+        else:
+            self._to_mat = _rho_vec_batch_to_matrix
+            self._to_vec = _matrix_batch_to_rho_vec
+
+        # Active off-diagonal component indices (the 3 active-active pairs
+        # eμ, eτ, μτ, each with Re + Im = 6 values). Layout differs between
+        # 3-flavor (indices 3..8 contiguous) and 4-flavor (non-contiguous
+        # because sterile pairs interleave).
+        if self.n_flavor == 4:
+            # 4-flavor layout: diag 0-3, pairs (eμ)4-5, (eτ)6-7, (es)8-9,
+            # (μτ)10-11, (μs)12-13, (τs)14-15.
+            # Active-active: eμ=4,5  eτ=6,7  μτ=10,11
+            self._active_offdiag_idx = [4, 5, 6, 7, 10, 11]
+            # Write-back targets for each active pair: (Re_idx, Im_idx)
+            self._active_pair_write = [(4, 5), (6, 7), (10, 11)]
+        else:
+            self._active_offdiag_idx = [3, 4, 5, 6, 7, 8]
+            self._active_pair_write = [(3, 4), (5, 6), (7, 8)]
+
         if PRyMini.verbose_flag:
-            print(f"  DensityMatrixSolver: 3x3 QKE, {2*9*self.Ny} real DOFs")
+            tag = "4x4 (3+1 sterile)" if self.n_flavor == 4 else "3x3"
+            print(f"  DensityMatrixSolver: {tag} QKE, "
+                  f"{2*self.n_components*self.Ny} real DOFs")
 
     def _build_PMNS(self):
-        """Construct the 3x3 PMNS mixing matrix from oscillation parameters."""
+        """Construct the PMNS mixing matrix from oscillation parameters.
+
+        When sterile_flag=False: standard 3×3 PDG parameterization.
+        When sterile_flag=True: 4×4 using the 3+1 convention
+          U₄ₓ₄ = R₃₄(θ₃₄) × R₂₄(θ₂₄, δ₁₄) × R₁₄(θ₁₄) × [U₃ₓ₃ ⊕ 1]
+        which recovers the 3-flavor matrix when θ₁₄=θ₂₄=θ₃₄=0.
+        """
         s12 = np.sin(PRyMini.theta_12)
         c12 = np.cos(PRyMini.theta_12)
         s13 = np.sin(PRyMini.theta_13)
@@ -2952,11 +3037,46 @@ class DensityMatrixSolver(object):
         eidCP = np.exp(1j * PRyMini.delta_CP)
         emidCP = np.exp(-1j * PRyMini.delta_CP)
 
-        self.U_PMNS = np.array([
+        U3 = np.array([
             [c12*c13,                        s12*c13,                        s13*emidCP],
             [-s12*c23 - c12*s23*s13*eidCP,   c12*c23 - s12*s23*s13*eidCP,   s23*c13],
             [s12*s23 - c12*c23*s13*eidCP,   -c12*s23 - s12*c23*s13*eidCP,   c23*c13]
         ], dtype=complex)
+
+        if self.n_flavor == 3:
+            self.U_PMNS = U3
+            return
+
+        # 4×4 extension: embed U3 into the upper-left block, then apply
+        # the three active-sterile rotation matrices.
+        U4 = np.eye(4, dtype=complex)
+        U4[:3, :3] = U3
+
+        # R_14(theta_14): rotation in the 1-4 plane
+        s14 = np.sin(PRyMini.theta_14)
+        c14 = np.cos(PRyMini.theta_14)
+        R14 = np.eye(4, dtype=complex)
+        R14[0, 0] = c14;  R14[0, 3] = s14
+        R14[3, 0] = -s14; R14[3, 3] = c14
+
+        # R_24(theta_24, delta_14): rotation in 2-4 plane with CP phase
+        s24 = np.sin(PRyMini.theta_24)
+        c24 = np.cos(PRyMini.theta_24)
+        eid14 = np.exp(1j * PRyMini.delta_14)
+        emid14 = np.exp(-1j * PRyMini.delta_14)
+        R24 = np.eye(4, dtype=complex)
+        R24[1, 1] = c24;          R24[1, 3] = s24 * emid14
+        R24[3, 1] = -s24 * eid14; R24[3, 3] = c24
+
+        # R_34(theta_34): rotation in 3-4 plane
+        s34 = np.sin(PRyMini.theta_34)
+        c34 = np.cos(PRyMini.theta_34)
+        R34 = np.eye(4, dtype=complex)
+        R34[2, 2] = c34;  R34[2, 3] = s34
+        R34[3, 2] = -s34; R34[3, 3] = c34
+
+        # U₄ₓ₄ = R₃₄ × R₂₄ × R₁₄ × [U₃ₓ₃ ⊕ 1]
+        self.U_PMNS = R34 @ R24 @ R14 @ U4
 
     def initial_conditions(self, Tnu, a, f_initial=None):
         """Return initial density matrices for the QKE solver.
@@ -2965,36 +3085,33 @@ class DensityMatrixSolver(object):
         ----------
         Tnu : float
             Neutrino temperature at the start of the Boltzmann phase (MeV).
-            Used to construct the default thermal FD distribution.
         a : float
             Scale factor at start.
         f_initial : dict, optional
             User-supplied initial distribution callables, keyed by species
-            name: 'nue', 'nuebar', 'numu', 'numubar', 'nutau', 'nutaubar'.
-            Each callable has signature f(p_MeV, Tnu_MeV) -> array_like. Any
-            missing key falls back to thermal FD at Tnu. Used when
-            mu_tau_symmetric_flag=False to launch asymmetric initial
-            conditions.
+            name. Missing keys fall back to thermal FD at Tnu. The 'nus'
+            and 'nusbar' keys (sterile) default to ZERO (empty sterile
+            sector) rather than thermal FD.
 
         Returns
         -------
-        rho_all : ndarray, shape (2, 9, Ny)
-            Density matrices in flavor basis. Off-diagonals initialized to
-            zero (no initial flavor coherences).
+        rho_all : ndarray, shape (2, n_components, Ny)
+            Density matrices. Off-diagonals initialized to zero.
         """
-        rho_all = np.zeros((2, 9, self.Ny))
+        rho_all = np.zeros((2, self.n_components, self.Ny))
         Tnu_com = Tnu * a
 
-        # Sector 0 = neutrinos (rho_ee, rho_mumu, rho_tautau at indices 0,1,2)
-        # Sector 1 = antineutrinos (same layout)
-        # f_initial maps species -> (sector, flavor_idx)
+        # Active species map (sector, diagonal index)
         _species_to_slot = {
             'nue':      (0, 0), 'numu':      (0, 1), 'nutau':    (0, 2),
             'nuebar':   (1, 0), 'numubar':   (1, 1), 'nutaubar': (1, 2),
         }
+        if self.n_flavor == 4:
+            _species_to_slot['nus'] = (0, 3)
+            _species_to_slot['nusbar'] = (1, 3)
 
-        # Default thermal-FD diagonal
-        p_grid = self.y_grid / a  # physical momenta at scale factor a
+        # Default thermal FD for active flavors
+        p_grid = self.y_grid / a
         fd_default = np.zeros(self.Ny)
         for i in range(self.Ny):
             x = self.y_grid[i] / Tnu_com
@@ -3003,13 +3120,15 @@ class DensityMatrixSolver(object):
 
         for species, (sector, flavor) in _species_to_slot.items():
             if f_initial is not None and species in f_initial and f_initial[species] is not None:
-                # User callable: evaluate at physical momenta + Tnu
                 f_vals = np.asarray(f_initial[species](p_grid, Tnu), dtype=float)
                 if f_vals.shape != (self.Ny,):
                     raise ValueError(
                         f"initial_conditions: callable for {species} returned "
                         f"shape {f_vals.shape}, expected {(self.Ny,)}")
                 rho_all[sector, flavor] = f_vals
+            elif species in ('nus', 'nusbar'):
+                # Sterile starts EMPTY by default (not thermal)
+                rho_all[sector, flavor] = 0.0
             else:
                 rho_all[sector, flavor] = fd_default
 
@@ -3055,8 +3174,8 @@ class DensityMatrixSolver(object):
         #   V_nunu = sqrt(2) * GF / (2*pi^2 * a^3) * int (rho_y - rhobar_y) y^2 dy
         # This 3x3 matrix arises from forward nu-nu scattering and creates
         # synchronized oscillation effects that enhance flavor conversion.
-        rho_nu_mat = _rho_vec_batch_to_matrix(rho_all[0])   # (Ny, 3, 3)
-        rho_nubar_mat = _rho_vec_batch_to_matrix(rho_all[1])  # (Ny, 3, 3)
+        rho_nu_mat = self._to_mat(rho_all[0])   # (Ny, N, N)
+        rho_nubar_mat = self._to_mat(rho_all[1])  # (Ny, N, N)
         diff_mat = rho_nu_mat - rho_nubar_mat  # (Ny, 3, 3)
         # Quadrature: sum w_i * y_i^2 * diff_mat[i] over collision grid
         Ny_coll = min(self._boltz.Ny_coll, Ny)
@@ -3099,7 +3218,7 @@ class DensityMatrixSolver(object):
             phases = np.exp(1j * sign * eigenvalues * dt_nat)  # (Ny, 3)
 
             # Reconstruct density matrices from vec9
-            rho_mat = _rho_vec_batch_to_matrix(rho_all[sector])  # (Ny, 3, 3)
+            rho_mat = self._to_mat(rho_all[sector])  # (Ny, N, N)
 
             # Transform to H eigenbasis: rho_H = P^dag @ rho @ P
             Pdag = P.conj().transpose(0, 2, 1)  # (Ny, 3, 3)
@@ -3113,7 +3232,7 @@ class DensityMatrixSolver(object):
             rho_new = np.einsum('nij,njk,nkl->nil', P, rho_H, Pdag)
 
             # Store back as vec9
-            rho_all[sector] = _matrix_batch_to_rho_vec(rho_new)
+            rho_all[sector] = self._to_vec(rho_new)
 
     def collision_step(self, rho_all, phi1_dt, dt, a, Tg):
         """Apply collision integrals to the density matrix.
@@ -3250,11 +3369,15 @@ class DensityMatrixSolver(object):
             fnu_emu_scat_val = np.sqrt(max(fnu_e_scat_val * fnu_mu_scat_val, 0.0))
             fnu_mutau_scat_val = fnu_mu_scat_val  # μ-τ = diagonal μ
 
-        # Compute off-diagonal gain (transport) for each sector
+        # Compute off-diagonal gain (transport) for each sector.
+        # _active_offdiag_idx maps the 6 active-active off-diagonal
+        # components to the correct rho_all indices (contiguous for 3-flavor,
+        # non-contiguous for 4-flavor where sterile pairs interleave).
+        _oidx = self._active_offdiag_idx
+        _pw = self._active_pair_write
         for sector in range(2):
-            # Extract off-diagonal: shape (6, Ny) = components 3..8
-            rho_offdiag = rho_all[sector, 3:, :]
-            B_idx = 1 if sector == 0 else 0  # ν̄_e for ν sector, ν_e for ν̄
+            rho_offdiag = rho_all[sector, _oidx, :]  # shape (6, Ny)
+            B_idx = 1 if sector == 0 else 0
 
             gain = _offdiag_collision_gain(
                 rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
@@ -3265,15 +3388,15 @@ class DensityMatrixSolver(object):
                 self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
 
             # Update off-diagonals: ρ_new = damp × ρ_old + phi1dt × gain
-            # e-μ (components 3,4 → gain indices 0,1)
-            rho_all[sector, 3] = damp_emu * rho_all[sector, 3] + phi1dt_emu * gain[0]
-            rho_all[sector, 4] = damp_emu * rho_all[sector, 4] + phi1dt_emu * gain[1]
-            # e-τ (components 5,6 → gain indices 2,3)
-            rho_all[sector, 5] = damp_etau * rho_all[sector, 5] + phi1dt_etau * gain[2]
-            rho_all[sector, 6] = damp_etau * rho_all[sector, 6] + phi1dt_etau * gain[3]
-            # μ-τ (components 7,8 → gain indices 4,5)
-            rho_all[sector, 7] = damp_mutau * rho_all[sector, 7] + phi1dt_mutau * gain[4]
-            rho_all[sector, 8] = damp_mutau * rho_all[sector, 8] + phi1dt_mutau * gain[5]
+            # e-μ
+            rho_all[sector, _pw[0][0]] = damp_emu * rho_all[sector, _pw[0][0]] + phi1dt_emu * gain[0]
+            rho_all[sector, _pw[0][1]] = damp_emu * rho_all[sector, _pw[0][1]] + phi1dt_emu * gain[1]
+            # e-τ
+            rho_all[sector, _pw[1][0]] = damp_etau * rho_all[sector, _pw[1][0]] + phi1dt_etau * gain[2]
+            rho_all[sector, _pw[1][1]] = damp_etau * rho_all[sector, _pw[1][1]] + phi1dt_etau * gain[3]
+            # μ-τ
+            rho_all[sector, _pw[2][0]] = damp_mutau * rho_all[sector, _pw[2][0]] + phi1dt_mutau * gain[4]
+            rho_all[sector, _pw[2][1]] = damp_mutau * rho_all[sector, _pw[2][1]] + phi1dt_mutau * gain[5]
 
         # Clip diagonal elements to valid range [0, 1]
         f_min = 1.0e-30
@@ -3535,8 +3658,11 @@ class DensityMatrixSolver(object):
             s = osc_signs[sector]
             H = H_list[sector]
 
-            # Off-diagonal collision gain
-            rho_offdiag = rho_all[sector, 3:, :]
+            # Off-diagonal collision gain (active-active pairs only; sterile
+            # pairs have zero gain from SM collisions).
+            _oidx = self._active_offdiag_idx
+            _pw = self._active_pair_write
+            rho_offdiag = rho_all[sector, _oidx, :]  # shape (6, Ny)
             B_idx = 1 if sector == 0 else 0
             if PRyMini.massive_electron_flag:
                 gain = _offdiag_collision_gain_massive(
@@ -3556,8 +3682,8 @@ class DensityMatrixSolver(object):
                     self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
 
             for p_idx, (alpha, beta) in enumerate(pair_flavors):
-                re_idx = 2 * p_idx + 3
-                im_idx = 2 * p_idx + 4
+                re_idx = _pw[p_idx][0]
+                im_idx = _pw[p_idx][1]
                 rho_ab = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
 
                 # Hamiltonian elements (eV)
@@ -3598,7 +3724,7 @@ class DensityMatrixSolver(object):
         f_min = 1.0e-30
         f_max = 1.0 - f_min
         for sector in range(2):
-            for d in range(3):
+            for d in range(self.n_flavor):
                 rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
 
     def extract_f_all_3species(self, rho_all):

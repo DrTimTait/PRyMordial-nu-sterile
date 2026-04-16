@@ -385,15 +385,21 @@ class PRyMclass(object):
                                         (1.0 - np.exp(-_z_mode)) / _z_mode)
 
                   if PRyMini.qke_density_matrix_flag:
-                      # QKE: track comoving energy before/after for entropy equation
-                      _diag_sum_pre = (rho_curr[0,0] + rho_curr[1,0] + rho_curr[0,1]
-                                       + rho_curr[0,2] + rho_curr[1,1] + rho_curr[1,2])
+                      # QKE: track comoving energy before/after for entropy equation.
+                      # Sum over all flavor diagonals × 2 sectors (ν, ν̄).
+                      # For 3×3: diag indices 0,1,2 (e, μ, τ).
+                      # For 4×4 (sterile_flag=True): also include index 3 (s).
+                      _n_diag = dm_solver.n_flavor
+                      _diag_sum_pre = sum(rho_curr[s, d]
+                                          for s in range(2)
+                                          for d in range(_n_diag))
                       E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
 
                       dm_solver.evolve_step(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
 
-                      _diag_sum_post = (rho_curr[0,0] + rho_curr[1,0] + rho_curr[0,1]
-                                        + rho_curr[0,2] + rho_curr[1,1] + rho_curr[1,2])
+                      _diag_sum_post = sum(rho_curr[s, d]
+                                           for s in range(2)
+                                           for d in range(_n_diag))
                       E_com_post = np.sum(_y3_grid * _diag_sum_post) * _dy_2pi2
                   else:
                       # Diagonal Boltzmann: track comoving energy before/after

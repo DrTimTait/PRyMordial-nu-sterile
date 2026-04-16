@@ -193,6 +193,16 @@ theta_14 = 0.0
 theta_24 = 0.0
 theta_34 = 0.0
 delta_14 = 0.0   # CP phase for active-sterile sector
+# Initial lepton chemical potentials ξ_α = μ_α / T_ν at the start of the
+# Boltzmann phase. Stage C (Shi-Fuller): a nonzero ξ_νe seeds an asymmetric
+# ν_e / ν̄_e distribution, f(y) = 1/(exp(y/T ∓ ξ) + 1), which generates a
+# matter potential that drives the active↔sterile MSW resonance. ξ_μ, ξ_τ
+# are usually taken zero but are exposed for completeness. Only honored
+# when sterile_flag=True; ignored otherwise. A user-supplied f_initial
+# callable (through PRyMclass) still takes precedence over these values.
+xi_nue_init   = 0.0
+xi_numu_init  = 0.0
+xi_nutau_init = 0.0
 # Set flag to True for some new species with temperature T_NP
 NP_thermo_flag = False
 # Set the initial temperature of the NP species via relation TNP_start = xi_NP*T_start

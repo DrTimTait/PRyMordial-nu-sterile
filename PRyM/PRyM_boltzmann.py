@@ -3130,6 +3130,38 @@ class DensityMatrixSolver(object):
             if x < 500.0:
                 fd_default[i] = 1.0 / (np.exp(x) + 1.0)
 
+        # Stage C (Shi-Fuller): per-flavor asymmetric FD from ξ_α.
+        # f_ν(y)  = 1 / (exp(y/T − ξ) + 1)   (neutrino:       positive ξ ⇒ excess ν)
+        # f_ν̄(y) = 1 / (exp(y/T + ξ) + 1)   (antineutrino)
+        # Only active when sterile_flag=True. Zero ξ everywhere ⇒ fd_default.
+        def fd_xi(xi):
+            if xi == 0.0:
+                return fd_default, fd_default
+            f_nu = np.zeros(self.Ny)
+            f_nubar = np.zeros(self.Ny)
+            for i in range(self.Ny):
+                x = self.y_grid[i] / Tnu_com
+                if x - xi < 500.0:
+                    f_nu[i] = 1.0 / (np.exp(x - xi) + 1.0)
+                if x + xi < 500.0:
+                    f_nubar[i] = 1.0 / (np.exp(x + xi) + 1.0)
+            return f_nu, f_nubar
+
+        if getattr(PRyMini, 'sterile_flag', False):
+            fd_e_nu,  fd_e_nubar  = fd_xi(getattr(PRyMini, 'xi_nue_init',   0.0))
+            fd_mu_nu, fd_mu_nubar = fd_xi(getattr(PRyMini, 'xi_numu_init',  0.0))
+            fd_ta_nu, fd_ta_nubar = fd_xi(getattr(PRyMini, 'xi_nutau_init', 0.0))
+        else:
+            fd_e_nu  = fd_e_nubar  = fd_default
+            fd_mu_nu = fd_mu_nubar = fd_default
+            fd_ta_nu = fd_ta_nubar = fd_default
+
+        _fd_by_species = {
+            'nue':      fd_e_nu,  'nuebar':   fd_e_nubar,
+            'numu':     fd_mu_nu, 'numubar':  fd_mu_nubar,
+            'nutau':    fd_ta_nu, 'nutaubar': fd_ta_nubar,
+        }
+
         for species, (sector, flavor) in _species_to_slot.items():
             if f_initial is not None and species in f_initial and f_initial[species] is not None:
                 f_vals = np.asarray(f_initial[species](p_grid, Tnu), dtype=float)
@@ -3142,7 +3174,7 @@ class DensityMatrixSolver(object):
                 # Sterile starts EMPTY by default (not thermal)
                 rho_all[sector, flavor] = 0.0
             else:
-                rho_all[sector, flavor] = fd_default
+                rho_all[sector, flavor] = _fd_by_species[species]
 
         return rho_all
 
@@ -3547,15 +3579,37 @@ class DensityMatrixSolver(object):
         diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]
         V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)  # (N, N) eV
 
-        # Build H for each sector
+        # Active-flavor trace of n_ξ (zero identically in 3-flavor because
+        # ρ = ρ̄ by symmetry there, nonzero under Stage C asymmetry). The
+        # trace shifts active H_αα uniformly, which is invisible to
+        # active↔active differences but changes H_αα − H_ss and drives
+        # the Shi-Fuller MSW resonance.
+        if N >= 3:
+            trace_nxi_eV = V_nunu_eV[0, 0] + V_nunu_eV[1, 1] + V_nunu_eV[2, 2]
+        else:
+            trace_nxi_eV = 0.0
+
+        # Build H for each sector. SF-complete matter potential:
+        #   * V_CC (baryon charged-current) flips sign for ν̄.
+        #   * V_nunu (matrix from ∫y²(ρ−ρ̄)dy) flips sign for ν̄ because
+        #     ν̄ sees (ρ̄−ρ) = −(ρ−ρ̄).
+        #   * V_thermal (symmetric Notzold-Raffelt thermal term) is NOT
+        #     sign-flipped: it comes from the charge-symmetric electron
+        #     plasma, not from the asymmetry.
+        #   * For n_flavor=4, the active-trace term is added on active
+        #     diagonals only, with the same ν/ν̄ sign flip.
         H_list = [None, None]
         for s in range(2):
+            V_sign = 1.0 if s == 0 else -1.0
             Omega = self._Omega_nu if s == 0 else self._Omega_nubar
             H = np.zeros((Ny, N, N), dtype=complex)
             for k in range(N):
                 for l in range(N):
-                    H[:, k, l] = Omega[k, l] * inv_E + V_nunu_eV[k, l]
-            H[:, 0, 0] += V_thermal_eV + V_CC_eV
+                    H[:, k, l] = Omega[k, l] * inv_E + V_sign * V_nunu_eV[k, l]
+            H[:, 0, 0] += V_thermal_eV + V_sign * V_CC_eV
+            if self.n_flavor == 4:
+                for alpha in range(3):
+                    H[:, alpha, alpha] += V_sign * trace_nxi_eV
             H_list[s] = H
 
         # ================================================================

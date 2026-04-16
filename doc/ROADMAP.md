@@ -66,19 +66,58 @@ without any explicit DW block in `evolve_step_ode` — the exact unitary
 conjugation plus pure-damping collision step handles the active↔sterile
 dynamics correctly on its own.
 
-### Open follow-ups (Stage D.3 and beyond)
+**Stage D.3 (landed):** Shi-Fuller validation of the ODE driver, plus
+a ν̄ sector convention bug fix. `validation/sterile_SF_ode_demo.py` runs
+the 3×3 reference, DW baseline, and SF (ξ_νe = 1e-2, 5e-2) scenarios
+through both Strang and ODE drivers.
 
-- **D.3 — ETDRK2 corrector.** Add a predictor-corrector on top of the
+In the process, Stage D.3 uncovered a convention bug in the original
+Stage D.1 `_apply_unitary`: PRyM's `evolve_step` stores
+`rho_all[1] = ρ̄*` (complex conjugate of the antineutrino density
+matrix), as encoded by its `osc_signs = [+1, -1]` in the off-diagonal
+update. The original `_apply_unitary` naively applied U ρ U† to both
+sectors, which for sector 1 amounts to a different physical operation.
+Fix: for sector 1 the correct unitary transformation is
+`(ρ̄)*_new = U_ν̄* · (ρ̄)* · U_ν̄ᵀ`, not `U · ρ · U†`.
+
+Before the fix the ODE DW test produced a spurious ν − ν̄ asymmetry of
+magnitude |n_ξe| ~ 24 (should be ~0 for ξ=0). After the fix it drops
+to ~10⁻¹, and the Stage B ΔNeff result agrees with the Strang
+quasi-static block to within 10⁻³ (0.931 vs 0.930; previously 0.83 vs
+0.93).
+
+Under the corrected ODE driver, the SF regime exhibits genuine
+differences vs the Strang quasi-static result:
+
+| Scenario                | Strang ΔNeff | ODE ΔNeff | ΔΣρ_ss (ODE−Strang) |
+|-------------------------|-------------:|----------:|---------------------:|
+| DW (sin²=1e-3, ξ=0)     | +0.930       | +0.931    | -0.02                |
+| SF (sin²=1e-3, ξ=1e-2)  | +1.016       | +0.929    | -0.46                |
+| SF (sin²=1e-3, ξ=5e-2)  | +0.939       | +0.912    | -0.31                |
+
+The ~0.03–0.09 gap in the SF cases traces to a physics distinction:
+Stage B's quasi-static DW formula `Γ_DW = 2|H_αs|²D/(D²+ω²)` has a
+1/(D²+ω²) structure that spikes at the MSW resonance (ω → 0),
+overestimating the transfer efficiency when the resonance sweeps
+through a momentum mode. The ODE driver's exact unitary evolution does
+not suffer this overestimate, producing a somewhat smaller ΔNeff and
+retaining more of the initial asymmetry. Both are physically
+consistent; the ODE driver is more self-consistent with the stated
+QKE, while the Strang path matches literature references that use
+similar quasi-static treatments.
+
+### Open follow-ups (Stage D.4 and beyond)
+
+- **D.4 — ETDRK2 corrector.** Add a predictor-corrector on top of the
   Strang-split unitary for O(dt²) local error. Will NOT close the
-  ~4×10⁻³ Neff bias (which is a modeling choice, not splitting error)
-  but would tighten the convergence and let the default n_B suffice
-  for tighter tolerances.
-- **D.4 — Eigenbasis collision step.** Reformulate the damping and
+  modeling-choice Neff gap (already shown to be a real bias in D.2)
+  but would tighten convergence.
+- **D.5 — Eigenbasis collision step.** Reformulate the damping and
   collision gain in the instantaneous H-eigenbasis, so that H and C
   commute and no splitting is needed at all. Research-grade.
-- **D.5 — Magnus / implicit BDF.** For extreme-stiffness robustness
+- **D.6 — Magnus / implicit BDF.** For extreme-stiffness robustness
   (e.g., keV-mass sterile regimes where ω_41 dt → 10⁶).
 
 No urgency unless a concrete physics use-case demands tighter than
-~10⁻³ accuracy in a regime where the Sigl-Raffelt approximation
-breaks down. Estimated effort per item: **~2–4 days**.
+~10⁻³ accuracy in a regime where the Sigl-Raffelt/DW quasi-static
+approximation breaks down. Estimated effort per item: **~2–4 days**.

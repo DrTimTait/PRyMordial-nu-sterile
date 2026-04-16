@@ -3850,26 +3850,39 @@ class DensityMatrixSolver(object):
                 rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
 
     def _apply_unitary(self, rho_all, H_list, dt_nat):
-        """In-place ρ → U ρ U† per sector per mode, U = exp(-i H dt_nat).
+        """In-place unitary evolution of rho_all per sector per mode.
 
-        H_list : sequence of two (Ny, N, N) complex Hermitian arrays, one
-                 per sector. dt_nat is the time step in natural units (eV⁻¹).
+        PRyM's convention (baked into evolve_step's osc_signs = [+1, -1])
+        is that rho_all[0] stores ρ and rho_all[1] stores ρ̄* (complex
+        conjugate of the antineutrino density matrix, which equals ρ̄ᵀ
+        for Hermitian ρ̄). The physical QKE is
 
-        Implementation: batched Hermitian eigendecomposition per mode, then
-        U = V · diag(exp(-iλ dt)) · V†. Preserves Hermiticity via explicit
-        symmetrization at the end.
+            dρ /dt = -i [H_ν , ρ ]    ⇒  ρ  → U_ν  ρ  U_ν†
+            dρ̄/dt = -i [H_ν̄, ρ̄]    ⇒  ρ̄ → U_ν̄ ρ̄ U_ν̄†
+
+        and taking * of the antineutrino update gives the stored form:
+
+            (ρ̄)*_new = (U_ν̄ ρ̄ U_ν̄†)* = U_ν̄* · (ρ̄)* · U_ν̄ᵀ
+
+        so the unitary conjugation for sector 1 uses U* on the left and
+        Uᵀ on the right, NOT U on the left and U† on the right.
+
+        Preserves Hermiticity of the stored matrix via symmetrization.
         """
-        N = self.n_flavor
         for sector in range(2):
             H = H_list[sector]                               # (Ny, N, N)
             lam, V = np.linalg.eigh(H)                       # (Ny, N), (Ny, N, N)
             phase = np.exp(-1j * lam * dt_nat)               # (Ny, N)
-            # U[i,a,b] = Σ_k V[i,a,k] · phase[i,k] · V*[i,b,k]
+            # Physical U_ν (or U_ν̄) = V · diag(exp(-iλ dt)) · V†
             U = np.einsum('iak,ik,ibk->iab', V, phase, V.conj())
-            U_dag = U.conj().swapaxes(-1, -2)
 
             rho_mat = self._to_mat(rho_all[sector])          # (Ny, N, N)
-            rho_new = U @ rho_mat @ U_dag                    # batched matmul
+            if sector == 0:
+                # ρ_new = U · ρ · U†
+                rho_new = U @ rho_mat @ U.conj().swapaxes(-1, -2)
+            else:
+                # Stored is ρ̄*, so (ρ̄)*_new = U* · (ρ̄)* · Uᵀ
+                rho_new = U.conj() @ rho_mat @ U.swapaxes(-1, -2)
             # Numerical cleanup: force exact Hermiticity
             rho_new = 0.5 * (rho_new + rho_new.conj().swapaxes(-1, -2))
             rho_all[sector] = self._to_vec(rho_new)

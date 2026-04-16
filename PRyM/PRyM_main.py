@@ -395,7 +395,10 @@ class PRyMclass(object):
                                           for d in range(_n_diag))
                       E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
 
-                      dm_solver.evolve_step(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                      if PRyMini.qke_full_ode_flag:
+                          dm_solver.evolve_step_ode(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                      else:
+                          dm_solver.evolve_step(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
 
                       _diag_sum_post = sum(rho_curr[s, d]
                                            for s in range(2)

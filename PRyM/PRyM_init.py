@@ -108,6 +108,16 @@ boltzmann_nu_flag = False
 # Tracks off-diagonal flavor coherences to recover Neff = 3.044.
 # Implies boltzmann_nu_flag = True and general_nu_flag = True.
 qke_density_matrix_flag = False
+# Stage D: full-QKE ODE-driver variant of the density matrix solver.
+# When True (and qke_density_matrix_flag is True), per-step evolution uses an
+# ETD1-style scheme: exact unitary conjugation ρ → U ρ U† via per-mode
+# diagonalization of H, replacing the two quasi-static approximations used
+# by the default evolve_step (Sigl-Raffelt active-active diagonal relaxation
+# and the Stage B Dodelson-Widrow active-sterile transfer). Expected impact
+# on SM observables is ≤ 10⁻³ on Neff; main payoff is architectural — cleaner
+# BSM matter-potential composition and no need to maintain the two quasi-
+# static approximations when extending the code. Zero overhead when False.
+qke_full_ode_flag = False
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

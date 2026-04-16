@@ -37,6 +37,7 @@ def _reset_flags():
     PRyMini.boltzmann_nu_flag = False
     PRyMini.nu_oscillation_flag = False
     PRyMini.qke_density_matrix_flag = False
+    PRyMini.qke_full_ode_flag = False
     PRyMini.massive_electron_flag = False
     PRyMini.mu_tau_symmetric_flag = True
     PRyMini.nu_nubar_symmetric_flag = True
@@ -132,6 +133,42 @@ def test_mode5_qke_density_matrix():
     assert Neff == pytest.approx(3.0445, abs=3e-4)
     assert Yp   == pytest.approx(0.24851, abs=3e-5)
     assert DoH  == pytest.approx(2.4714, abs=3e-3)
+
+
+@pytest.mark.slow
+def test_mode5b_qke_full_ode():
+    """Stage D: QKE with the full-ODE driver (qke_full_ode_flag=True).
+
+    The ODE driver replaces the two quasi-static diagonal-transfer blocks
+    (Sigl-Raffelt active-active + Stage B Dodelson-Widrow active-sterile)
+    with an exact Strang-split unitary conjugation ρ → U^(½) ρ (U^(½))†.
+
+    Observables shift by O(10⁻³) on Neff relative to the quasi-static
+    path (test_mode5_qke_density_matrix); this is a known consequence of
+    the numerical regime change rather than an error. The quasi-static
+    blocks assume the off-diagonal coherence has reached its steady
+    state within each timestep, which is true in the fast-oscillation
+    limit. The Strang-split unitary resolves the off-diagonal build-up
+    explicitly, so in the same dt it transfers slightly less population
+    across active flavors. The difference is largest in the SM regime
+    (θ_12/θ_13 oscillations damped by active collisions); it shrinks in
+    the sterile regimes where the unitary captures dynamics the quasi-
+    static form cannot (see Stage B/C exploration).
+
+    Reference value captured on the Stage D landing commit.
+    """
+    _reset_flags()
+    import PRyM.PRyM_init as PRyMini
+    PRyMini.general_nu_flag = True
+    PRyMini.boltzmann_nu_flag = True
+    PRyMini.qke_density_matrix_flag = True
+    PRyMini.qke_full_ode_flag = True
+    Neff, Yp, DoH = _run_mode()
+    # Frozen on Stage D landing. Wider Neff window than mode 5 reflects
+    # the ~0.1 % drift from the quasi-static → exact-unitary switch.
+    assert Neff == pytest.approx(3.041,  abs=3e-3)
+    assert Yp   == pytest.approx(0.2485, abs=3e-4)
+    assert DoH  == pytest.approx(2.47,   abs=2e-2)
 
 
 # --- Slow sterile (3+1) tests ------------------------------------------

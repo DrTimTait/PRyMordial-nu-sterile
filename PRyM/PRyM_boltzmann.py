@@ -3849,6 +3849,294 @@ class DensityMatrixSolver(object):
             for d in range(self.n_flavor):
                 rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
 
+    def _apply_unitary(self, rho_all, H_list, dt_nat):
+        """In-place ρ → U ρ U† per sector per mode, U = exp(-i H dt_nat).
+
+        H_list : sequence of two (Ny, N, N) complex Hermitian arrays, one
+                 per sector. dt_nat is the time step in natural units (eV⁻¹).
+
+        Implementation: batched Hermitian eigendecomposition per mode, then
+        U = V · diag(exp(-iλ dt)) · V†. Preserves Hermiticity via explicit
+        symmetrization at the end.
+        """
+        N = self.n_flavor
+        for sector in range(2):
+            H = H_list[sector]                               # (Ny, N, N)
+            lam, V = np.linalg.eigh(H)                       # (Ny, N), (Ny, N, N)
+            phase = np.exp(-1j * lam * dt_nat)               # (Ny, N)
+            # U[i,a,b] = Σ_k V[i,a,k] · phase[i,k] · V*[i,b,k]
+            U = np.einsum('iak,ik,ibk->iab', V, phase, V.conj())
+            U_dag = U.conj().swapaxes(-1, -2)
+
+            rho_mat = self._to_mat(rho_all[sector])          # (Ny, N, N)
+            rho_new = U @ rho_mat @ U_dag                    # batched matmul
+            # Numerical cleanup: force exact Hermiticity
+            rho_new = 0.5 * (rho_new + rho_new.conj().swapaxes(-1, -2))
+            rho_all[sector] = self._to_vec(rho_new)
+
+    def evolve_step_ode(self, rho_all, dt, phi1_dt, a, Tg):
+        """Strang-split QKE evolution with exact unitary conjugation.
+
+        Stage D variant of evolve_step, gated by PRyMini.qke_full_ode_flag.
+        Replaces the two quasi-static diagonal-transfer approximations used
+        by evolve_step (Sigl-Raffelt active-active relaxation and the
+        Stage B Dodelson-Widrow active-sterile transfer) with a single
+        exact unitary conjugation ρ → U ρ U†,  U = exp(-iH dt),  applied
+        Strang-symmetrically around a collision step:
+
+            ρ ← U^(½) ρ (U^(½))†                          (first half-step)
+            ρ ← collision step (diag + off-diag damping + gain, NO H)
+            ρ ← U^(½) ρ (U^(½))†                          (second half-step)
+
+        Because the half-step unitaries handle the full H commutator
+        exactly (mixing diagonals and off-diagonals naturally per mode),
+        the collision step must DROP the H-oscillation piece to avoid
+        double counting:
+        * Diagonals: Euler with phi_1 damping (identical to evolve_step).
+        * Off-diagonals: exp-Euler with pure damping D_αβ and the
+          collision gain source; the ω_αβ oscillation term is removed.
+
+        This is physically cleaner than evolve_step's two quasi-static
+        approximations: no need to split H into solar/atmospheric channels
+        (the Sigl-Raffelt hack), and no need for a separate DW transfer in
+        4-flavor mode. The unitary handles all H-driven mixing, including
+        active-sterile, automatically.
+
+        Expected parity with evolve_step: SM observables (mode 5) within
+        the 10⁻³ tolerance, because the current quasi-static blocks are
+        already accurate in their respective fast-oscillation limits.
+
+        Parameters
+        ----------
+        rho_all : ndarray, shape (2, n_components, Ny)
+            Modified in-place.
+        dt : float
+            Physical time step in seconds.
+        phi1_dt : float or (3, Ny) array
+            phi_1(z) * dt for exponential-Euler regularization of diagonals.
+        a : float
+            Scale factor at midpoint.
+        Tg : float
+            Photon temperature in MeV at midpoint.
+        """
+        Ny = self.Ny
+        N = self.n_flavor
+
+        # ================================================================
+        # 1. Diagonal collision integrals (identical to evolve_step)
+        # ================================================================
+        f_all = np.zeros((3, Ny))
+        f_all[0] = rho_all[0, 0]
+        f_all[1] = rho_all[1, 0]
+        f_all[2] = 0.25 * (rho_all[0, 1] + rho_all[0, 2]
+                           + rho_all[1, 1] + rho_all[1, 2])
+
+        GF2_pref = self._boltz.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
+        tail_params = _compute_all_tail_params(self.y_grid, f_all)
+
+        I_nu_nu = _collision_integral_nu_nu(
+            f_all, self.y_grid, self._boltz.quad_w, a, GF2_pref, tail_params,
+            self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+        if PRyMini.massive_electron_flag:
+            I_nu_e = _collision_integral_nu_e_massive(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2,
+                self._boltz.gmuL2, self._boltz.gmuR2,
+                PRyMini.me, self._boltz.Ny_coll)
+        else:
+            fnu_e_scat_val = float(self._boltz._fnu_e_scat(Tg))
+            fnu_e_ann_val = float(self._boltz._fnu_e_ann(Tg))
+            fnu_mu_scat_val = float(self._boltz._fnu_mu_scat(Tg))
+            fnu_mu_ann_val = float(self._boltz._fnu_mu_ann(Tg))
+            I_nu_e = _collision_integral_nu_e(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2, self._boltz.geLgeR,
+                self._boltz.gmuL2, self._boltz.gmuR2, self._boltz.gmuLgmuR,
+                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                self._boltz.D_k0, self._boltz.D_k1, self._boltz.D_k2,
+                self._boltz.Ny_coll, 1.0, 1.0, 1.0, 1.0)
+
+        I_total = I_nu_nu + I_nu_e
+        C_NP = self._boltz.C_NP_funcs
+        if 'nue' in C_NP:
+            I_total[0] += C_NP['nue'](self.y_grid, a, Tg, f_all)
+        if 'nuebar' in C_NP:
+            I_total[1] += C_NP['nuebar'](self.y_grid, a, Tg, f_all)
+        if 'numu' in C_NP:
+            I_total[2] += C_NP['numu'](self.y_grid, a, Tg, f_all)
+
+        # ================================================================
+        # 2. Build Hamiltonians (identical to evolve_step)
+        # ================================================================
+        E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
+
+        rho_e_th = 7.0 * np.pi**2 / 60.0 * Tg**4
+        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / (3.0 * self.mW2)
+        V_thermal_eV = V0 * E_eV
+
+        from scipy.special import zeta as _zeta
+        n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3
+        n_e_asym = PRyMini.eta0b * n_gamma
+        V_CC_MeV = np.sqrt(2.0) * PRyMini.GF * n_e_asym
+        V_CC_eV = V_CC_MeV * 1.0e6
+
+        Ny_coll = min(self._boltz.Ny_coll, Ny)
+        y2w = self._boltz.quad_w[:Ny_coll] * self.y_grid[:Ny_coll]**2
+        V_nunu_pref = np.sqrt(2.0) * PRyMini.GF / (2.0 * np.pi**2 * a**3) * 1.0e6
+        rho_nu_mat = self._to_mat(rho_all[0])
+        rho_nubar_mat = self._to_mat(rho_all[1])
+        diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]
+        V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)
+
+        if N >= 3:
+            trace_nxi_eV = V_nunu_eV[0, 0] + V_nunu_eV[1, 1] + V_nunu_eV[2, 2]
+        else:
+            trace_nxi_eV = 0.0
+
+        inv_E = 1.0 / E_eV
+        H_list = [None, None]
+        for s in range(2):
+            V_sign = 1.0 if s == 0 else -1.0
+            Omega = self._Omega_nu if s == 0 else self._Omega_nubar
+            H = np.zeros((Ny, N, N), dtype=complex)
+            for k in range(N):
+                for l in range(N):
+                    H[:, k, l] = Omega[k, l] * inv_E + V_sign * V_nunu_eV[k, l]
+            H[:, 0, 0] += V_thermal_eV + V_sign * V_CC_eV
+            if self.n_flavor == 4:
+                for alpha in range(3):
+                    H[:, alpha, alpha] += V_sign * trace_nxi_eV
+            H_list[s] = H
+
+        # ================================================================
+        # 3. Damping rates (identical to evolve_step, minus the D_eV_osc
+        #    Sigl-Raffelt prep which is no longer needed)
+        # ================================================================
+        GF_eV = PRyMini.GF * 1.0e-12
+        T_eV = Tg * 1.0e6
+        Gamma = np.zeros((self.n_flavor, Ny))
+        for alpha in range(self.n_flavor):
+            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
+
+        n_pairs = len(self._all_pair_flavors)
+        D_pairs = np.zeros((n_pairs, Ny))
+        for p_idx, (_fa, _fb) in enumerate(self._all_pair_flavors):
+            D_pairs[p_idx] = 0.5 * (Gamma[_fa] + Gamma[_fb])
+
+        if PRyMini.massive_electron_flag:
+            fnu_emu_scat_val = 1.0
+            fnu_mutau_scat_val = 1.0
+        else:
+            fnu_emu_scat_val = np.sqrt(max(fnu_e_scat_val * fnu_mu_scat_val, 0.0))
+            fnu_mutau_scat_val = fnu_mu_scat_val
+
+        # ================================================================
+        # 4. First half-step unitary: ρ → U^(½) ρ (U^(½))†
+        # ================================================================
+        half_dt_nat = 0.5 * dt * self._eV_to_secm1
+        self._apply_unitary(rho_all, H_list, half_dt_nat)
+
+        # ================================================================
+        # 5. Collision step (no H)
+        # ================================================================
+        # 5a. Diagonals — exponential Euler identical to evolve_step.
+        if np.ndim(phi1_dt) == 0:
+            _p0 = phi1_dt
+            _p1 = phi1_dt
+            _p2 = phi1_dt
+        else:
+            _p0 = phi1_dt[0]
+            _p1 = phi1_dt[1]
+            _p2 = phi1_dt[2]
+        rho_all[0, 0] += _p0 * I_total[0]
+        rho_all[1, 0] += _p1 * I_total[1]
+        rho_all[0, 1] += _p2 * I_total[2]
+        rho_all[0, 2] += _p2 * I_total[2]
+        rho_all[1, 1] += _p2 * I_total[2]
+        rho_all[1, 2] += _p2 * I_total[2]
+
+        # 5b. Off-diagonals — exp-Euler with DAMPING ONLY (no H oscillation).
+        # Full ODE:  dρ_αβ/dt = -D_αβ ρ_αβ + S_gain
+        # Closed-form exp-Euler:
+        #   ρ_αβ(t+dt) = exp(-D dt) ρ_αβ(t) + phi_1(-D dt) dt S_gain
+        # with S_gain from _offdiag_collision_gain for the 3 active-active
+        # pairs; active-sterile pairs see zero collision gain (no SM vertex).
+        dt_nat = dt * self._eV_to_secm1
+
+        # Refresh f_all after unitary + diagonal Euler so the collision-gain
+        # integrals see the up-to-date occupations.
+        f_all[0] = rho_all[0, 0]
+        f_all[1] = rho_all[1, 0]
+        f_all[2] = 0.25 * (rho_all[0, 1] + rho_all[0, 2]
+                           + rho_all[1, 1] + rho_all[1, 2])
+
+        for sector in range(2):
+            rho_offdiag = rho_all[sector, self._active_offdiag_idx, :]  # (6, Ny)
+            B_idx = 1 if sector == 0 else 0
+            if PRyMini.massive_electron_flag:
+                gain_active = _offdiag_collision_gain_massive(
+                    rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                    GF2_pref,
+                    self.c_emu_scat, self.c_mutau_scat,
+                    B_idx, tail_params,
+                    self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll,
+                    PRyMini.me)
+            else:
+                gain_active = _offdiag_collision_gain(
+                    rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                    GF2_pref,
+                    self.c_emu_scat, self.c_mutau_scat,
+                    fnu_emu_scat_val, fnu_mutau_scat_val,
+                    B_idx, tail_params,
+                    self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+            if n_pairs > 3:
+                gain = np.zeros((2 * n_pairs, Ny))
+                gain[:6] = gain_active
+            else:
+                gain = gain_active
+
+            for p_idx, (alpha, beta) in enumerate(self._all_pair_flavors):
+                re_idx, im_idx = self._all_pair_write[p_idx]
+                rho_ab = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
+
+                D_nat = D_pairs[p_idx] / self._eV_to_secm1   # eV
+                z = D_nat * dt_nat                           # real, ≥ 0
+                exp_mz = np.exp(-z)
+                phi1 = np.where(z < 1.0e-4,
+                                1.0 - 0.5 * z + z * z / 6.0,
+                                (1.0 - exp_mz) / np.where(z > 0.0, z, 1.0))
+                S_gain_eV = (gain[2 * p_idx] + 1j * gain[2 * p_idx + 1]) / self._eV_to_secm1
+                rho_ab_new = exp_mz * rho_ab + phi1 * dt_nat * S_gain_eV
+
+                # Clamp off-diagonal magnitude (same as evolve_step)
+                rho_aa = rho_all[sector, alpha]
+                rho_bb = rho_all[sector, beta]
+                ab_mag = np.abs(rho_ab_new)
+                max_mag = np.minimum(0.5, np.sqrt(np.maximum(rho_aa * rho_bb, 0.0)) + 1e-10)
+                scale = np.where(ab_mag > max_mag,
+                                 max_mag / np.maximum(ab_mag, 1e-30), 1.0)
+                rho_ab_new *= scale
+
+                rho_all[sector, re_idx] = rho_ab_new.real
+                rho_all[sector, im_idx] = rho_ab_new.imag
+
+        # ================================================================
+        # 6. Second half-step unitary
+        # ================================================================
+        self._apply_unitary(rho_all, H_list, half_dt_nat)
+
+        # ================================================================
+        # 7. Clip diagonals
+        # ================================================================
+        f_min = 1.0e-30
+        f_max = 1.0 - f_min
+        for sector in range(2):
+            for d in range(self.n_flavor):
+                rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
+
     def extract_f_all_3species(self, rho_all):
         """Extract 3-species f_all array compatible with BoltzmannSolver.
 

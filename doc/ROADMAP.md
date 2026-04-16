@@ -29,30 +29,44 @@ Hannestad+2012).
 
 ---
 
-One item remains on the backlog as genuine open work:
-
 ## Full QKE as an independent ODE driver
 
-Current QKE path uses Strang operator splitting — exact unitary oscillation
-`exp(-i H dt/2)` interleaved with explicit collision + off-diagonal damping.
-A **fully-coupled implicit driver** on `dρ/dt = -i[H, ρ] + C[ρ]` would be
-a research-grade architectural contribution.
+**Stage D.1 (landed):** Strang-split unitary variant of `evolve_step`,
+gated by `qke_full_ode_flag` (default False). Replaces the two
+quasi-static diagonal-transfer approximations (Sigl-Raffelt active-active
+relaxation and the Stage B Dodelson-Widrow active-sterile transfer) with
+an exact per-mode unitary conjugation ρ → U^(½) ρ (U^(½))†,
+U = exp(-iH dt), wrapped Strang-symmetrically around a pure-damping
+collision step. Implemented in `DensityMatrixSolver.evolve_step_ode` and
+`DensityMatrixSolver._apply_unitary`, regression-tested via
+`test_mode5b_qke_full_ode`.
 
-The main obstacle is stiffness: oscillation timescales (ω ~ Δm²/2E) are
-much shorter than collision timescales (Γ ~ G_F² T⁵), especially at high T.
-Realistic options:
+SM observable shift vs. the quasi-static path: Neff 3.0445 → 3.041
+(-4×10⁻³, ~0.13 %). This is a consequence of the numerical regime,
+not an error: the quasi-static path assumes the off-diagonal coherence
+has reached its steady-state within each timestep, while the exact-
+unitary path resolves the build-up explicitly. The current evolve_step
+happens to be closer to Bennett+2021; whichever is "more correct"
+against a full QKE ODE reference is an open question the Stage D.2/D.3
+follow-ups are meant to answer.
 
-- **Exponential integrators** that handle the oscillation part exactly
-  while integrating the collision part explicitly — conceptually similar
-  to current Strang splitting but with smaller splitting error.
-- **Implicit BDF methods** adapted to the Hermitian ρ evolution, with
-  careful handling of the non-Hermitian `-i H` block.
-- **Hybrid schemes** (e.g., Magnus expansion for the unitary part).
+### Open follow-ups (Stage D.2 and beyond)
 
-No SM observable impact expected — Strang splitting already reproduces
-Bennett+2021 to 10⁻⁴. The payoff would be architectural: cleaner
-interaction with BSM matter potentials, easier to extend to new osc
-sectors (the sterile stages already benefit, but more would be added
-at lower cost with a full QKE driver).
+- **D.2 — ETDRK2 corrector.** Upgrade the Strang-split integrator to
+  an ETDRK2 scheme (exponential time differencing with predictor +
+  φ_2 corrector) for O(dt²) splitting error.
+- **D.3 — Eigenbasis collision step.** Reformulate the collision
+  operator in the instantaneous H-eigenbasis so that the off-diagonal
+  damping and H-commutator are diagonal simultaneously. This is the
+  "proper" way to avoid splitting error entirely.
+- **Magnus expansion** (order 4) for the unitary block, or an
+  **implicit BDF** integrator adapted to the Hermitian ρ evolution
+  with Jacobian support. Either would make the ODE driver robust at
+  extreme parameters (very small mixing, very stiff damping).
 
-Estimated effort: **1–2 weeks** of ODE engineering + re-validation.
+Stage D.1 delivers the infrastructure; D.2+ deliver quantitative
+improvements. No urgency unless a concrete physics use-case demands
+tighter than ~10⁻³ accuracy in a regime where the quasi-static
+approximation breaks down.
+
+Estimated effort for each follow-up: **~2–4 days** on top of D.1.

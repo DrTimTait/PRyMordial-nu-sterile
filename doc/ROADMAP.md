@@ -8,33 +8,30 @@ massive-electron n=6 ν-e integral, the `nlo_weak_flag` placeholder, and
 a nu-e dispatcher refactor. See the git log for details (commits
 `efe4968` through `6ea0bf4`).
 
-Two items remain on the backlog as genuine open work:
+Sterile neutrino production (the previous Item 1) was then built out in
+three stages on the sister repository
+[DrTimTait/PRyMordial-nu-sterile](https://github.com/DrTimTait/PRyMordial-nu-sterile):
 
-## 1. Sterile neutrino production via MSW resonance
+- **Stage A** (`231b525`): 4×4 density-matrix infrastructure gated by
+  `sterile_flag`. Bit-identical to the 3-flavor path when θ_14=0.
+- **Stage B** (`e04b01f`): Dodelson-Widrow production via a quasi-static
+  Sigl-Raffelt diagonal-transfer block in `evolve_step`; sterile
+  distribution plumbed through `rho_3nu` / `drho_3nu_dTg`.
+- **Stage C** (`ea04426`): Shi-Fuller MSW resonance with asymmetric initial
+  conditions (`xi_nue_init`, `xi_numu_init`, `xi_nutau_init`) and the
+  SF-complete matter potential — per-sector sign flip on V_CC and V_nunu,
+  plus the `trace(n_ξ)·I_active` contribution that shifts H_αα−H_ss for
+  active-sterile transitions.
 
-Biggest new BSM capability. Would extend the QKE density-matrix path with
-active-sterile mixing (θ_14, θ_24, θ_34 + sterile mass m_s) and add the
-corresponding Hamiltonian and (optionally) lepton-asymmetry-tracking
-infrastructure for:
+All three stages are regression-tested (modes 1, 2, 5, 6) and validated
+against expected DW / SF qualitative behavior (Dolgov+2002,
+Hannestad+2012).
 
-- **Dodelson-Widrow** (non-resonant) sterile production via frequent
-  active-active collisions mixing into a sub-leading sterile mass eigenstate.
-- **Shi-Fuller** (resonant) production via MSW level-crossing driven by a
-  non-zero primordial lepton asymmetry.
+---
 
-Opens access to a large literature of sterile-ν constraints from BBN, Neff,
-warm dark matter, and short-baseline anomalies. Implementation requires:
+One item remains on the backlog as genuine open work:
 
-- Expanding `DensityMatrixSolver`'s 3×3 ρ to 4×4 (or keeping 3×3 with an
-  auxiliary sterile equation).
-- New Hamiltonian terms with the sterile mass-squared splitting.
-- Re-using the `n_species=6` ν/ν̄-distinct collision machinery (Stage 3)
-  for Shi-Fuller lepton-asymmetry feedback.
-- Validation benchmarks against Dolgov+2002 / Hannestad+2012.
-
-Estimated effort: **1–2 weeks** of careful physics + validation work.
-
-## 2. Full QKE as an independent ODE driver
+## Full QKE as an independent ODE driver
 
 Current QKE path uses Strang operator splitting — exact unitary oscillation
 `exp(-i H dt/2)` interleaved with explicit collision + off-diagonal damping.
@@ -55,6 +52,7 @@ Realistic options:
 No SM observable impact expected — Strang splitting already reproduces
 Bennett+2021 to 10⁻⁴. The payoff would be architectural: cleaner
 interaction with BSM matter potentials, easier to extend to new osc
-sectors (items like item 1 above).
+sectors (the sterile stages already benefit, but more would be added
+at lower cost with a full QKE driver).
 
 Estimated effort: **1–2 weeks** of ODE engineering + re-validation.

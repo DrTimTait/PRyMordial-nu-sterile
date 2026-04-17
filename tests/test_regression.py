@@ -175,28 +175,21 @@ def test_mode5b_qke_full_ode():
 
 @pytest.mark.slow
 def test_mode5c_qke_ode_etdrk2():
-    """Stage D.6: ETD1-in-eigenbasis scaffold (qke_ode_etdrk2_flag=True), 3×3 SM.
+    """Stage D.7: full ETDRK2 driver (qke_ode_etdrk2_flag=True), 3×3 SM.
 
-    Smoke test for the Stage D.6 scaffold. Drives the same configuration
-    as mode 5b but routes per-step evolution through
-    evolve_step_ode_etdrk2, which applies an ETD1 predictor in the
-    H-eigenbasis plus flavor-basis exp-Euler on diagonals. (The
-    Cox-Matthews ETDRK2 corrector is disabled — see method docstring
-    and doc/ROADMAP.md for the ν-ν̄ symmetry issue that blocks it.)
+    End-to-end smoke test for the Stage D.7 ETDRK2 driver with damping-in-L.
+    Routes per-step evolution through evolve_step_ode_etdrk2, which
+    exponentiates L = -i[H, .] - D_off o . on the 9x9 vectorised superoperator
+    per mode (full predictor + corrector, ν-ν̄ symmetric).
 
-    In the 3×3 SM regime there is no MSW resonance, so ETD1 and Strang
-    agree to within the mode-5b envelope on the headline observables.
-    Point of the test:
+    In the 3×3 SM regime there is no MSW resonance, so D.7 agrees with
+    mode-5b (Strang) to 1e-3 on Neff (tightened from the D.6 3e-3 envelope
+    now that the driver is no longer first-order). Point of the test:
 
-    1. End-to-end proof the new code path runs without crashing or
+    1. End-to-end proof the D.7 code path runs without crashing or
        drifting observables by an amount that indicates a unit / sign /
-       rotation bug.
-    2. Regression guard against future refactors of the scaffold.
-
-    Reference tolerance is inherited from mode 5b. A tight Stage D.6
-    reference value is not frozen here; the full O(dt²) improvement at
-    the MSW resonance that would justify such a reference awaits D.7
-    (L with damping, full 9×9 matrix exp per mode).
+       kron-ordering bug.
+    2. Regression guard against future refactors of the driver.
     """
     _reset_flags()
     import PRyM.PRyM_init as PRyMini
@@ -206,9 +199,94 @@ def test_mode5c_qke_ode_etdrk2():
     PRyMini.qke_full_ode_flag = True
     PRyMini.qke_ode_etdrk2_flag = True
     Neff, Yp, DoH = _run_mode()
-    assert Neff == pytest.approx(3.041,  abs=3e-3)
+    assert Neff == pytest.approx(3.041,  abs=1e-3)
     assert Yp   == pytest.approx(0.2485, abs=3e-4)
     assert DoH  == pytest.approx(2.47,   abs=2e-2)
+
+
+def test_qke_etdrk2_nu_nubar_symmetry():
+    """Stage D.7: ETDRK2 with damping-in-L must preserve ν-ν̄ symmetry.
+
+    D.6's Cox-Matthews corrector breaks this invariant by ~O(dt · mixing)
+    because sector-1's stored-convention rotation (V*, V^T) composed with an
+    element-wise φ_k is not the complex conjugate of sector-0's (V, V†)·φ.
+    D.7 exponentiates the full L = -i[H, .] - D_off o . on the vectorised
+    superoperator, which does not rotate into the H-eigenbasis; with D real
+    the sector-1 damping block is identical to sector-0 and symmetry is
+    algebraic.
+
+    Setup: ν-ν̄-symmetric thermal FD state (ξ=0), 3×3 SM, eta0b=0 to force
+    V_CC=0 (and V_νν=0 trivially by symmetry). Both sectors start pointwise
+    identical; H_nu = conj(H_nubar) via _Omega_nubar = conj(_Omega_nu).
+
+    Evolve 10 ETDRK2 steps at representative Phase-B dt and assert
+    max |rho_all[0] - conj(rho_all[1])| stays below 1e-10 pointwise.
+
+    This test is fast (no full PRyMclass run; direct solver stepping) and
+    would fail outright against the D.6 full-corrector variant.
+    """
+    import numpy as np
+    import PRyM.PRyM_init as PRyMini
+    import PRyM.PRyM_boltzmann as PRyM_boltzmann
+
+    _reset_flags()
+    PRyMini.general_nu_flag = True
+    PRyMini.boltzmann_nu_flag = True
+    PRyMini.qke_density_matrix_flag = True
+    PRyMini.qke_full_ode_flag = True
+    PRyMini.qke_ode_etdrk2_flag = True
+
+    # Kill the baryonic V_CC: V_CC = sqrt(2) GF eta0b n_gamma. eta0b = 0 => V_CC = 0.
+    _eta0b_saved = PRyMini.eta0b
+    PRyMini.eta0b = 0.0
+    try:
+        solver = PRyM_boltzmann.DensityMatrixSolver()
+
+        # Symmetric thermal FD at Tnu = 2 MeV, a = 1 (representative of late
+        # Phase B). initial_conditions already makes sector 0 = sector 1 for
+        # all active flavors at ξ=0.
+        Tnu = 2.0
+        a = 1.0
+        Tg = Tnu
+        rho_all = solver.initial_conditions(Tnu, a)
+
+        # Pre-check: sectors start pointwise identical (real FD => conj symmetry trivial).
+        assert np.max(np.abs(rho_all[0] - rho_all[1])) < 1e-14, (
+            "initial_conditions did not produce a symmetric state at ξ=0")
+
+        # Round-trip assertion on the vec/matrix converters (catches any
+        # ordering bug that would otherwise silently corrupt the L step).
+        rho_mat_roundtrip = solver._to_mat(rho_all[0])
+        rho_vec_roundtrip = solver._to_vec(rho_mat_roundtrip)
+        assert np.allclose(rho_vec_roundtrip, rho_all[0], atol=1e-14), (
+            "_to_vec(_to_mat(x)) != x; vec/mat convention mismatch")
+
+        # Kernel-level symmetry pre-assert: if the collision gain itself is
+        # sector-asymmetric, the evolution can't possibly preserve symmetry
+        # and the failure would not be a D.7 L bug.
+        _, N_gain_n, _ = solver._build_L_list(rho_all, a, Tg)
+        kernel_asym = np.max(np.abs(N_gain_n[0] - np.conj(N_gain_n[1])))
+        assert kernel_asym < 1e-12, (
+            f"collision-gain kernel broke ν-ν̄ symmetry at t=0: "
+            f"max|N_gain[0] - conj(N_gain[1])| = {kernel_asym:.3e} "
+            f"(not a D.7 L bug; investigate _assemble_collision_N)")
+
+        # Evolve. dt typical of Phase B at n_B=2400, Tg~2 MeV: dt ~ 4e-4 s.
+        dt = 4.0e-4
+        phi1_dt = dt  # scalar -> all three diag channels use the same factor.
+        for _ in range(10):
+            solver.evolve_step_ode_etdrk2(rho_all, dt, phi1_dt, a, Tg)
+
+        # The stored convention is rho_bar* = conj(rho_bar_phys), so for a
+        # physically-symmetric state (rho = rho_bar_phys) the stored values
+        # are conjugates; at ξ=0 thermal-FD both are real, so both sectors
+        # should stay pointwise equal modulo O(1e-10) numerical noise.
+        resid = np.max(np.abs(rho_all[0] - np.conj(rho_all[1])))
+        assert resid < 1e-10, (
+            f"D.7 broke ν-ν̄ symmetry: max|rho[0] - conj(rho[1])| = "
+            f"{resid:.3e} after 10 steps (target < 1e-10)")
+    finally:
+        PRyMini.eta0b = _eta0b_saved
 
 
 # --- Slow sterile (3+1) tests ------------------------------------------

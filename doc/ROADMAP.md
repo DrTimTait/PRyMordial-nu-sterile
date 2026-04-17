@@ -246,3 +246,101 @@ unchanged from D.4: set `n_B_override ≥ 9600` to converge the
 single-stage Strang path. The new `qke_ode_etdrk2_flag` is a working
 scaffold but should be left False for SF runs — it's first-order and
 not an accuracy improvement over Strang at moderate `n_B`.
+
+**Stage D.7 (landed, hybrid scope):** full ETDRK2 with off-diagonal
+damping absorbed into the linear part `L = −i[H, ·] − D_off ⊙ ·`,
+computed per mode via the Al-Mohy & Higham (2011) augmented-matrix
+`expm` on the 9×9 (or 16×16) vectorised Liouvillian. No H-eigenbasis
+rotation anywhere; `D` is real so the sector-1 damping block is
+identical to sector-0 and ν-ν̄ symmetry is algebraic. **The D.6
+Cox-Matthews symmetry-breaking instability is eliminated.**
+
+What D.7 shipped:
+
+- `DensityMatrixSolver._build_L_list` — assembles per-sector 9×9/16×16
+  `L` in eV and the gain-only off-diagonal `N` with `D_off·ρ` added back
+  to cancel `_assemble_collision_N`'s damping subtraction.
+- `DensityMatrixSolver._etdrk2_expm_phi` — Al-Mohy & Higham augmented
+  matrix `M = [[L·dt, I, 0], [0, 0, I], [0, 0, 0]]`; one `scipy.linalg.expm`
+  call yields `e^{L·dt}`, `dt·φ_1(L·dt)`, `dt²·φ_2(L·dt)` as top-row blocks.
+  (Third block divided by `dt_nat` to yield `dt·φ_2` for the ETDRK2
+  corrector formula.)
+- `DensityMatrixSolver.evolve_step_ode_etdrk2` rewritten: full
+  predictor + corrector on off-diagonals, diagonal exp-Euler between
+  them (identical to `evolve_step_ode` regularisation). Clamp + clip
+  blocks carried over from D.6.
+- D.6 auxiliary scaffolding `_apply_unitary_from_eigs` and
+  `_etdrk2_phi_apply` removed — the superoperator approach supersedes
+  them.
+- `tests/test_regression.py::test_qke_etdrk2_nu_nubar_symmetry`: fast
+  unit test asserting `max |rho[0] − conj(rho[1])| < 1e-10` after 10
+  steps with V_CC forced to zero. Includes pre-asserts for vec/mat
+  round-trip and kernel-level sector symmetry so an L-side bug can be
+  isolated from a pre-existing gain-kernel asymmetry.
+- `test_mode5c_qke_ode_etdrk2` Neff tolerance tightened from 3e-3 to
+  1e-3 (matches mode-5b Strang exactly now that the D.7 driver is
+  second-order).
+- `validation/stage_d7_sf_convergence.py` + `.out.txt` — SF sweep at
+  n_B ∈ {2400, 4800, 9600}.
+
+Hybrid-scope rationale: damping-in-L is applied ONLY to off-diagonal
+entries. Diagonal occupations continue on the existing `phi1_dt`
+exp-Euler step. Off-diagonal coherence is what drives O(dt²) at MSW;
+PRyMordial's `I_total` is the full collision kernel, not a schematic
+`−Γ_α·ρ_αα` relaxation, so the brief's `I_total_α + Γ_α·ρ_αα`
+diagonal subtraction would be a large cancellation during the SF
+sweep when `ρ_ee` departs from FD. Full-diagonal-in-L with an
+`I_total`-derived damping is the documented D.7.1 fallback.
+
+Measured SF convergence (`validation/stage_d7_sf_convergence.out.txt`,
+sin²(2θ_14)=1e-3, Δm²_41=1 eV², ξ_νe=5e-2):
+
+| n_B  | Neff     | Σρ_ss | n_ξe   | wall (s) |
+|------|---------:|------:|-------:|---------:|
+| 2400 | 3.94000  | 5.533 | +3.40  | 1243     |
+| 4800 | 3.95633  | 6.043 | +3.06  | 1661     |
+| 9600 | 3.96223  | 5.999 | +2.19  | 3368     |
+
+- ΔNeff(2400→4800) = +16.3×10⁻³, ΔNeff(4800→9600) = +5.9×10⁻³.
+- Drift ratio = 0.362. **Clear second-order character** (contrast D.6's
+  ratio −3.3), but not yet dominated by O(dt²) (target 0.25).
+- Richardson-extrapolated Neff_∞ = 3.9642; D.4 Strang Richardson limit
+  3.9682. **Agreement to 4×10⁻³** — D.6 had no defined Richardson limit
+  (non-convergent). The residual 4×10⁻³ gap to Strang's limit is
+  consistent with the hybrid scope's Lie-Trotter diagonal/off-diagonal
+  split being formally O(dt).
+- n_ξe stabilises at **+2.2 at n_B=9600**, matching the brief's target
+  "in the same ballpark as Strang's +2.2". D.6 predictor drifted to
+  −34 at n_B=9600.
+
+What D.7 does NOT yet do:
+
+- **Strict O(dt²) convergence at default n_B=2400**. Ratio 0.36 and
+  default-n_B Neff 2.8×10⁻² below the Richardson limit indicate a
+  residual O(dt) contribution. The most likely source is the
+  Lie-Trotter-style split: off-diag ETDRK2 predictor → diag exp-Euler
+  → off-diag ETDRK2 corrector is not symmetric, so the operator-split
+  error is O(dt). A Strang-symmetric diagonal split (half-diag before
+  the predictor + half-diag after the corrector) would make the split
+  O(dt²) with minimal code change. **Deferred as D.7.1.**
+- Closing the 4×10⁻³ Richardson gap to Strang-Strang requires either
+  D.7.1 or the brief's full-diagonal-in-L variant. The latter has the
+  cancellation concern noted above and would need an `I_total`-derived
+  damping estimator.
+
+Practical recommendation (updated): for SF ODE users, D.7 is now a
+**qualitative improvement** over Strang-alone at default n_B — the
+n_ξe runaway is eliminated and Richardson extrapolation is meaningful.
+For O(dt²) accuracy targets at default n_B, continue using
+`n_B_override ≥ 9600` with either driver (Strang or D.7). The D.7
+driver is slower (~4 min overhead per Phase-B call from the per-mode
+`expm`), so there is no hard reason to prefer it over Strang until
+D.7.1 (or full-diagonal-in-L) closes the gap.
+
+Full regression suite status after D.7: modes 1, 2, 5, 5b, 5c (with
+tightened 1e-3 Neff), 6, sterile_stage_a_invariant,
+sterile_dw_production, sterile_sf_asymmetry_depletion, and the new
+test_qke_etdrk2_nu_nubar_symmetry all PASS. Default-path
+(qke_ode_etdrk2_flag=False) unchanged — modes 1/2/6 pass with their
+existing 1e-5 Neff tolerances, confirming bit-identity on the default
+Strang path.

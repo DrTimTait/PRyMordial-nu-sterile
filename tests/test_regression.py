@@ -38,6 +38,7 @@ def _reset_flags():
     PRyMini.nu_oscillation_flag = False
     PRyMini.qke_density_matrix_flag = False
     PRyMini.qke_full_ode_flag = False
+    PRyMini.qke_ode_etdrk2_flag = False
     PRyMini.n_B_override = None
     PRyMini.massive_electron_flag = False
     PRyMini.mu_tau_symmetric_flag = True
@@ -167,6 +168,44 @@ def test_mode5b_qke_full_ode():
     Neff, Yp, DoH = _run_mode()
     # Frozen on Stage D landing. Wider Neff window than mode 5 reflects
     # the ~0.1 % drift from the quasi-static → exact-unitary switch.
+    assert Neff == pytest.approx(3.041,  abs=3e-3)
+    assert Yp   == pytest.approx(0.2485, abs=3e-4)
+    assert DoH  == pytest.approx(2.47,   abs=2e-2)
+
+
+@pytest.mark.slow
+def test_mode5c_qke_ode_etdrk2():
+    """Stage D.6: ETD1-in-eigenbasis scaffold (qke_ode_etdrk2_flag=True), 3×3 SM.
+
+    Smoke test for the Stage D.6 scaffold. Drives the same configuration
+    as mode 5b but routes per-step evolution through
+    evolve_step_ode_etdrk2, which applies an ETD1 predictor in the
+    H-eigenbasis plus flavor-basis exp-Euler on diagonals. (The
+    Cox-Matthews ETDRK2 corrector is disabled — see method docstring
+    and doc/ROADMAP.md for the ν-ν̄ symmetry issue that blocks it.)
+
+    In the 3×3 SM regime there is no MSW resonance, so ETD1 and Strang
+    agree to within the mode-5b envelope on the headline observables.
+    Point of the test:
+
+    1. End-to-end proof the new code path runs without crashing or
+       drifting observables by an amount that indicates a unit / sign /
+       rotation bug.
+    2. Regression guard against future refactors of the scaffold.
+
+    Reference tolerance is inherited from mode 5b. A tight Stage D.6
+    reference value is not frozen here; the full O(dt²) improvement at
+    the MSW resonance that would justify such a reference awaits D.7
+    (L with damping, full 9×9 matrix exp per mode).
+    """
+    _reset_flags()
+    import PRyM.PRyM_init as PRyMini
+    PRyMini.general_nu_flag = True
+    PRyMini.boltzmann_nu_flag = True
+    PRyMini.qke_density_matrix_flag = True
+    PRyMini.qke_full_ode_flag = True
+    PRyMini.qke_ode_etdrk2_flag = True
+    Neff, Yp, DoH = _run_mode()
     assert Neff == pytest.approx(3.041,  abs=3e-3)
     assert Yp   == pytest.approx(0.2485, abs=3e-4)
     assert DoH  == pytest.approx(2.47,   abs=2e-2)

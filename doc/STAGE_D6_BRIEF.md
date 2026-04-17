@@ -1,5 +1,21 @@
 # Stage D.6 brief: ETDRK2 with eigenbasis collision
 
+**STATUS (2026-04-16):** Scaffold landed. `qke_ode_etdrk2_flag` flag
+wired in. 3×3 smoke test green. The naive ETDRK2 (full N, flavor-basis
+collision) blew up on SF stiffness. An IMEX variant (exp-Euler diag +
+ETDRK2 off-diag) ran stably but the Cox-Matthews corrector breaks ν-ν̄
+symmetry analytically (see `doc/ROADMAP.md` for the rotation-mismatch
+proof and measured magnitudes). Shipped as **first-order
+predictor-only**: `dt · φ_1(L dt) · N_off` in eigenbasis plus flavor-
+basis exp-Euler on diagonals. SF validation deferred — the true fix is
+D.7 (L including damping, full 9×9 matrix exp per mode).
+
+The text below was the pre-implementation brief. Reading order has
+changed: start with the D.6 section of `doc/ROADMAP.md`, then this
+brief if you want the original framing.
+
+---
+
 This is a single-file handoff for a fresh context window picking up the
 Stage D ODE-driver work on `PRyMordial-nu-sterile`. Read this first.
 By the end of it you should know: what's been built, why the obvious

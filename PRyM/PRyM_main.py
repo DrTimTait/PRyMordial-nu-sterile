@@ -398,7 +398,10 @@ class PRyMclass(object):
                       E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
 
                       if PRyMini.qke_full_ode_flag:
-                          dm_solver.evolve_step_ode(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                          if PRyMini.qke_ode_etdrk2_flag:
+                              dm_solver.evolve_step_ode_etdrk2(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                          else:
+                              dm_solver.evolve_step_ode(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
                       else:
                           dm_solver.evolve_step(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
 

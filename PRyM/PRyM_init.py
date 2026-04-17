@@ -124,6 +124,15 @@ qke_density_matrix_flag = False
 # BSM matter-potential composition and no need to maintain the two quasi-
 # static approximations when extending the code. Zero overhead when False.
 qke_full_ode_flag = False
+# Stage D.6: ETDRK2 entry point for the full-QKE ODE driver. When True (and
+# qke_full_ode_flag is also True), per-step evolution uses ETDRK2 with the
+# collision operator rotated into the instantaneous H-eigenbasis. The
+# eigenbasis transform gives each eigenpair (k, l) its own phi_1 / phi_2
+# factor, so MSW turning points (where the in-medium mixing angle sweeps
+# through pi/4 faster than dt) are handled without the O(dt) degradation
+# the flavor-basis Strang split exhibits (Stage D.4 finding). Default
+# False; zero impact on all existing code paths.
+qke_ode_etdrk2_flag = False
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

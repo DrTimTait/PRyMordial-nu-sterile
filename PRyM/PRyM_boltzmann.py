@@ -4150,6 +4150,458 @@ class DensityMatrixSolver(object):
             for d in range(self.n_flavor):
                 rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
 
+    # --------------------------------------------------------------------
+    # Stage D.6: ETDRK2 scaffold (qke_ode_etdrk2_flag)
+    # --------------------------------------------------------------------
+    # These helpers are used ONLY by evolve_step_ode_etdrk2 below. The
+    # existing evolve_step and evolve_step_ode are untouched by design:
+    # every D.6 capability is additive, and default runs are bit-identical.
+
+    def _build_H_list(self, rho_all, a, Tg):
+        """Assemble the per-sector Hamiltonian H in eV, shape (Ny, N, N) each.
+
+        Block is duplicated from evolve_step_ode lines 3984-4024 so that the
+        ODE driver can remain byte-for-byte unchanged. If you modify one,
+        mirror the change in the other (and ideally fold them back together
+        once Stage D.6 is validated).
+        """
+        from scipy.special import zeta as _zeta
+
+        Ny = self.Ny
+        N = self.n_flavor
+        E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
+
+        rho_e_th = 7.0 * np.pi**2 / 60.0 * Tg**4
+        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / (3.0 * self.mW2)
+        V_thermal_eV = V0 * E_eV
+
+        n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3
+        n_e_asym = PRyMini.eta0b * n_gamma
+        V_CC_MeV = np.sqrt(2.0) * PRyMini.GF * n_e_asym
+        V_CC_eV = V_CC_MeV * 1.0e6
+
+        Ny_coll = min(self._boltz.Ny_coll, Ny)
+        y2w = self._boltz.quad_w[:Ny_coll] * self.y_grid[:Ny_coll]**2
+        V_nunu_pref = np.sqrt(2.0) * PRyMini.GF / (2.0 * np.pi**2 * a**3) * 1.0e6
+        rho_nu_mat = self._to_mat(rho_all[0])
+        rho_nubar_mat = self._to_mat(rho_all[1])
+        diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]
+        V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)
+
+        if N >= 3:
+            trace_nxi_eV = V_nunu_eV[0, 0] + V_nunu_eV[1, 1] + V_nunu_eV[2, 2]
+        else:
+            trace_nxi_eV = 0.0
+
+        inv_E = 1.0 / E_eV
+        H_list = [None, None]
+        for s in range(2):
+            V_sign = 1.0 if s == 0 else -1.0
+            Omega = self._Omega_nu if s == 0 else self._Omega_nubar
+            H = np.zeros((Ny, N, N), dtype=complex)
+            for k in range(N):
+                for l in range(N):
+                    H[:, k, l] = Omega[k, l] * inv_E + V_sign * V_nunu_eV[k, l]
+            H[:, 0, 0] += V_thermal_eV + V_sign * V_CC_eV
+            if self.n_flavor == 4:
+                for alpha in range(3):
+                    H[:, alpha, alpha] += V_sign * trace_nxi_eV
+            H_list[s] = H
+        return H_list
+
+    def _apply_unitary_from_eigs(self, rho_all, lam_list, V_list, dt_nat):
+        """In-place unitary evolution using precomputed eigenpairs.
+
+        Mirrors _apply_unitary exactly but skips the internal eigh so the
+        ETDRK2 path can reuse the (lam, V) it already needs for the
+        eigenbasis phi transforms. The nu-bar convention (sector 1 uses
+        U* on the left and U^T on the right because rho_all[1] stores rho-bar*)
+        is preserved identically to _apply_unitary.
+        """
+        for sector in range(2):
+            lam = lam_list[sector]
+            V = V_list[sector]
+            phase = np.exp(-1j * lam * dt_nat)
+            U = np.einsum('iak,ik,ibk->iab', V, phase, V.conj())
+            rho_mat = self._to_mat(rho_all[sector])
+            if sector == 0:
+                rho_new = U @ rho_mat @ U.conj().swapaxes(-1, -2)
+            else:
+                rho_new = U.conj() @ rho_mat @ U.swapaxes(-1, -2)
+            rho_new = 0.5 * (rho_new + rho_new.conj().swapaxes(-1, -2))
+            rho_all[sector] = self._to_vec(rho_new)
+
+    def _assemble_collision_N(self, rho_all, a, Tg):
+        """Return (dro/dt)_collision as per-sector Hermitian (Ny, N, N) matrices.
+
+        Output convention matches the natural-units choice _apply_unitary uses
+        for H: matrix entries are in eV = (SI rate in s^-1) / _eV_to_secm1.
+        Then dt_nat [1/eV] * N [eV] is dimensionless, ready to add to rho.
+
+        Components
+        ----------
+        * Diagonals from I_total[0..2] = (I_nu_e + I_nu_nu)_[nue, nuebar, numu_eff]
+          plus any C_NP new-physics additions. Sector 0 row 0 gets I_total[0];
+          sector 1 row 0 gets I_total[1]; all four mu/tau diagonals get
+          I_total[2] (the mu-tau symmetric channel).
+          Sterile (row 3, 4-flavor) is zero: no SM vertex.
+        * Off-diagonals for the 3 active-active pairs: gain from
+          _offdiag_collision_gain[_massive] minus damping D_ab * rho_ab.
+          Sector 0 uses rho_nubar as the "B" occupation (B_idx=1); sector 1
+          uses rho_nu (B_idx=0), matching evolve_step_ode.
+        * Off-diagonals for the 3 active-sterile pairs (4-flavor only):
+          damping only, zero collision gain. (Sterile has no SM vertex but
+          active decoherence still suppresses coherence.)
+
+        Notes
+        -----
+        - Does not mutate rho_all.
+        - Duplicates a fair amount of kernel plumbing from evolve_step_ode
+          (lines 3941-4046 and 4088-4106). Factoring both call sites through
+          this helper is a follow-up janitorial task.
+        """
+        Ny = self.Ny
+        N = self.n_flavor
+
+        # 1. Diagonal collision integrals
+        f_all = np.zeros((3, Ny))
+        f_all[0] = rho_all[0, 0]
+        f_all[1] = rho_all[1, 0]
+        f_all[2] = 0.25 * (rho_all[0, 1] + rho_all[0, 2]
+                           + rho_all[1, 1] + rho_all[1, 2])
+
+        GF2_pref = self._boltz.GF2_prefactor * PRyMini.MeV_to_secm1 * PRyMini.coll_scale
+        tail_params = _compute_all_tail_params(self.y_grid, f_all)
+
+        I_nu_nu = _collision_integral_nu_nu(
+            f_all, self.y_grid, self._boltz.quad_w, a, GF2_pref, tail_params,
+            self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+        if PRyMini.massive_electron_flag:
+            I_nu_e = _collision_integral_nu_e_massive(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2,
+                self._boltz.gmuL2, self._boltz.gmuR2,
+                PRyMini.me, self._boltz.Ny_coll)
+            fnu_emu_scat_val = 1.0
+            fnu_mutau_scat_val = 1.0
+        else:
+            fnu_e_scat_val = float(self._boltz._fnu_e_scat(Tg))
+            fnu_e_ann_val = float(self._boltz._fnu_e_ann(Tg))
+            fnu_mu_scat_val = float(self._boltz._fnu_mu_scat(Tg))
+            fnu_mu_ann_val = float(self._boltz._fnu_mu_ann(Tg))
+            I_nu_e = _collision_integral_nu_e(
+                f_all, self.y_grid, self._boltz.quad_w, a, Tg, GF2_pref,
+                self._boltz.geL2, self._boltz.geR2, self._boltz.geLgeR,
+                self._boltz.gmuL2, self._boltz.gmuR2, self._boltz.gmuLgmuR,
+                PRyMini.me, fnu_e_scat_val, fnu_e_ann_val,
+                fnu_mu_scat_val, fnu_mu_ann_val, tail_params,
+                self._boltz.D_k0, self._boltz.D_k1, self._boltz.D_k2,
+                self._boltz.Ny_coll, 1.0, 1.0, 1.0, 1.0)
+            fnu_emu_scat_val = np.sqrt(max(fnu_e_scat_val * fnu_mu_scat_val, 0.0))
+            fnu_mutau_scat_val = fnu_mu_scat_val
+
+        I_total = I_nu_nu + I_nu_e
+        C_NP = self._boltz.C_NP_funcs
+        if 'nue' in C_NP:
+            I_total[0] += C_NP['nue'](self.y_grid, a, Tg, f_all)
+        if 'nuebar' in C_NP:
+            I_total[1] += C_NP['nuebar'](self.y_grid, a, Tg, f_all)
+        if 'numu' in C_NP:
+            I_total[2] += C_NP['numu'](self.y_grid, a, Tg, f_all)
+
+        # 2. Damping rates (1/s)
+        GF_eV = PRyMini.GF * 1.0e-12
+        T_eV = Tg * 1.0e6
+        E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
+        Gamma = np.zeros((self.n_flavor, Ny))
+        for alpha in range(self.n_flavor):
+            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
+
+        n_pairs = len(self._all_pair_flavors)
+        D_pairs = np.zeros((n_pairs, Ny))
+        for p_idx, (_fa, _fb) in enumerate(self._all_pair_flavors):
+            D_pairs[p_idx] = 0.5 * (Gamma[_fa] + Gamma[_fb])
+
+        # 3. Per-sector assembly
+        N_list = [np.zeros((Ny, N, N), dtype=complex) for _ in range(2)]
+        inv_rate = 1.0 / self._eV_to_secm1
+
+        for sector in range(2):
+            # Diagonals (1/s -> eV via inv_rate)
+            diag_idx = 0 if sector == 0 else 1
+            N_list[sector][:, 0, 0] = I_total[diag_idx] * inv_rate
+            N_list[sector][:, 1, 1] = I_total[2] * inv_rate
+            N_list[sector][:, 2, 2] = I_total[2] * inv_rate
+            # Sterile (index 3) stays zero.
+
+            # Active-active off-diagonal gain
+            rho_offdiag = rho_all[sector, self._active_offdiag_idx, :]  # (6, Ny)
+            B_idx = 1 if sector == 0 else 0
+            if PRyMini.massive_electron_flag:
+                gain_active = _offdiag_collision_gain_massive(
+                    rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                    GF2_pref,
+                    self.c_emu_scat, self.c_mutau_scat,
+                    B_idx, tail_params,
+                    self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll,
+                    PRyMini.me)
+            else:
+                gain_active = _offdiag_collision_gain(
+                    rho_offdiag, f_all, self.y_grid, self._boltz.quad_w, a, Tg,
+                    GF2_pref,
+                    self.c_emu_scat, self.c_mutau_scat,
+                    fnu_emu_scat_val, fnu_mutau_scat_val,
+                    B_idx, tail_params,
+                    self._boltz.D_k0, self._boltz.D_k2, self._boltz.Ny_coll)
+
+            # Pack gain + damping into the Hermitian matrix
+            for p_idx, (alpha, beta) in enumerate(self._all_pair_flavors):
+                re_idx, im_idx = self._all_pair_write[p_idx]
+                rho_ab_stored = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
+
+                if p_idx < 3:
+                    S_gain_si = (gain_active[2 * p_idx]
+                                 + 1j * gain_active[2 * p_idx + 1])
+                else:
+                    S_gain_si = 0.0  # active-sterile pairs: no SM gain
+
+                rhs_si = -D_pairs[p_idx] * rho_ab_stored + S_gain_si   # 1/s
+                rhs_eV = rhs_si * inv_rate                              # eV
+
+                N_list[sector][:, alpha, beta] = rhs_eV
+                N_list[sector][:, beta, alpha] = np.conj(rhs_eV)
+
+        return N_list, I_total
+
+    def _etdrk2_phi_apply(self, A_mat, lam, V, sector, dt_nat, which):
+        """Return dt * phi_k(L dt) [A] in the flavor basis, shape (Ny, N, N).
+
+        Implements the heart of ETDRK2: rotate A into the H-eigenbasis
+        (sector-aware for the nu-bar storage convention), apply the
+        element-wise phi_k factor per eigenpair (k, l), rotate back.
+
+        Parameters
+        ----------
+        A_mat : (Ny, N, N) complex
+            Hermitian operator in the flavor basis (e.g. collision RHS).
+        lam, V : outputs of np.linalg.eigh(H_list[sector]).
+            lam shape (Ny, N); V shape (Ny, N, N). Eigenvectors are columns.
+        sector : 0 or 1.
+            Sector 1 rotates via V* (rho-bar storage convention) and uses
+            the sign-flipped eigenvalue difference, because the generator
+            acting on the stored rho-bar* is -H_nubar*.
+        dt_nat : float
+            Time step in inverse-eV units (= dt_seconds * _eV_to_secm1).
+        which : 1 or 2
+            phi_1(z) = (e^z - 1)/z,   series:  1 + z/2 + z^2/6 + ...
+            phi_2(z) = (e^z - 1 - z)/z^2,  series: 1/2 + z/6 + z^2/24 + ...
+
+        Notes
+        -----
+        * |z| < 1e-4: use Taylor series to avoid cancellation.
+        * k = l: phi_1 = 1 exactly, phi_2 = 1/2 exactly (series picks this up).
+        """
+        # Sign flip for sector 1 (stored variable eigenvalues = -lambda_nubar).
+        sign = 1.0 if sector == 0 else -1.0
+        omega = sign * (lam[:, :, None] - lam[:, None, :])   # (Ny, N, N), real
+        z = -1j * omega * dt_nat                              # (Ny, N, N), complex
+
+        abs_z = np.abs(z)
+        small = abs_z < 1e-4
+        z_safe = np.where(small, 1.0 + 0j, z)                 # guard against z=0 divide
+
+        if which == 1:
+            phi_closed = (np.exp(z_safe) - 1.0) / z_safe
+            phi_series = 1.0 + z / 2.0 + z * z / 6.0 + z * z * z / 24.0
+        elif which == 2:
+            phi_closed = (np.exp(z_safe) - 1.0 - z_safe) / (z_safe * z_safe)
+            phi_series = 0.5 + z / 6.0 + z * z / 24.0 + z * z * z / 120.0
+        else:
+            raise ValueError(f"which must be 1 or 2, got {which}")
+
+        F = dt_nat * np.where(small, phi_series, phi_closed)  # (Ny, N, N) complex
+
+        # Rotate A into eigenbasis
+        if sector == 0:
+            # tilde{A} = V^dagger A V
+            A_tilde = np.einsum('iak,iab,ibl->ikl', V.conj(), A_mat, V)
+        else:
+            # tilde{A} = V^T A V^*  (stored rho-bar* convention)
+            A_tilde = np.einsum('iak,iab,ibl->ikl', V, A_mat, V.conj())
+
+        A_tilde_out = F * A_tilde
+
+        # Rotate back
+        if sector == 0:
+            A_out = np.einsum('iak,ikl,ibl->iab', V, A_tilde_out, V.conj())
+        else:
+            A_out = np.einsum('iak,ikl,ibl->iab', V.conj(), A_tilde_out, V)
+
+        # Enforce Hermiticity (numerical cleanup)
+        A_out = 0.5 * (A_out + A_out.conj().swapaxes(-1, -2))
+        return A_out
+
+    def evolve_step_ode_etdrk2(self, rho_all, dt, phi1_dt, a, Tg):
+        """Stage D.6 scaffold: ETD1 in eigenbasis + exp-Euler on diagonals.
+
+        Gated by PRyMini.qke_ode_etdrk2_flag (inside qke_full_ode_flag).
+        This is a SCOPED-DOWN version of the Stage D.6 ETDRK2-in-eigenbasis
+        target: the predictor-only scheme runs to completion and preserves
+        nu-nubar symmetry, but the Cox-Matthews corrector that would
+        restore O(dt^2) at the MSW resonance is disabled here because it
+        exhibits a symmetry-breaking instability when applied to the
+        current nonlinear-N formulation (see "Why no corrector" below).
+
+        Structure (per time step, given rho_n)
+        --------------------------------------
+        1. Build H(rho_n), eigendecompose per sector: eigh(H_list[s])
+           -> (lam_s, V_s).
+        2. N_n := _assemble_collision_N(rho_n) -- collision RHS as a
+           per-sector Hermitian (Ny, N, N) matrix in the flavor basis
+           (diagonals from I_total; off-diagonals: -D_αβ ρ_αβ + gain).
+        3. Apply the full-step unitary ρ_all <- e^{L dt} ρ_all where
+           L = -i[H, ·]. Uses _apply_unitary_from_eigs (same nu-bar
+           storage convention as _apply_unitary).
+        4. ETD1 predictor on the flavor-basis OFF-diagonals of N:
+               rho_mat += dt * phi_1(L dt) * N_n_off
+           in the H-eigenbasis (per-eigenpair phi_1 factor via
+           _etdrk2_phi_apply). This is the stage-D.6 payload: at the
+           MSW resonance, each (k, l) eigenpair gets its own phi_1
+           scaled by omega_kl, which is what the flavor-basis Strang
+           split cannot do. Stripping flavor-basis diagonals from N
+           before applying phi_1 prevents the diagonal stiffness that
+           killed the first (no-IMEX) ETDRK2 attempt (Σρ_ss -> 82 in 4s).
+        5. Flavor-basis exp-Euler on diagonals (same block as
+           evolve_step_ode lines 4058-4071): rho_αα += phi1_dt * I_total.
+           The phi1_dt regularisation from PRyM_main already handles
+           stiffness at large Γ_α dt.
+        6. Off-diagonal clamp + diagonal clip (same as evolve_step_ode).
+
+        Why no corrector
+        ----------------
+        Cox-Matthews ETDRK2 would add:
+            rho_{n+1} = rho* + dt * phi_2(L dt) * (N(rho*) - N(rho_n))
+
+        Tried two variants; BOTH broke nu-nubar symmetry. Observed in
+        the sterile DW scenario (sin²(2θ)=0.1, xi=0):
+
+          - Strang (reference):     n_xi_e = -8.5e-2
+          - Corrector on full N:    n_xi_e = -1.9     (22x spurious drift)
+          - Corrector off-diag only: n_xi_e = -2.0    (same class of bug)
+          - Predictor only (this):   n_xi_e = -1.2e-1 (near Strang)
+
+        Root cause (proved analytically): for a nu-nubar-symmetric state
+        (ρ_phys = ρ̄_phys), sector-1 stored convention ρ̄* couples to
+        sector 0 via (V*, V^T) rotations in _etdrk2_phi_apply. The phi
+        factor F_kl and its conjugate enter at the two sectors, and
+        after rotating back,
+            A_0_out = V · F · Ã · V†
+            A_1_out = V* · conj(F) · Ã · V^T
+        which are not complex conjugates of each other for generic
+        (non-real) V. The predictor avoids this because phi_1 * N_n
+        contributes once per sector from rho_n (exact symmetry there),
+        but the corrector adds phi_2 * (N_star - N_n) which accumulates
+        the asymmetry over 2400+ Phase B steps.
+
+        The clean fix (deferred, Stage D.7 territory): redefine L to
+        include the flavor-basis damping operator D_αβ. L is then not
+        diagonalisable in the H-eigenbasis alone; the proper approach
+        is an explicit 9x9 (or 16x16) matrix exponential / phi_k
+        construction per mode, which is a ~1-week refactor.
+
+        phi1_dt : (3, Ny) array from PRyM_main — phi_1(Γ_α dt) * dt for
+            the three diagonal flavor labels (nue, nuebar, numu_sym).
+        """
+        Ny = self.Ny
+        N = self.n_flavor
+
+        # 1. Build H(rho_n) and eigendecompose per sector.
+        H_list_n = self._build_H_list(rho_all, a, Tg)
+        lam_list = [None, None]
+        V_list = [None, None]
+        for s in range(2):
+            lam_list[s], V_list[s] = np.linalg.eigh(H_list_n[s])
+
+        # 2. Compute full N(rho_n) and I_total at rho_n.
+        N_n, I_total_n = self._assemble_collision_N(rho_all, a, Tg)
+
+        # 2b. Strip diagonals from N_n — the ETDRK2 phi applies ONLY to the
+        #     off-diagonal part of the collision. Diagonals are integrated
+        #     via exp-Euler on I_total (step 4).
+        N_n_off = [arr.copy() for arr in N_n]
+        for s in range(2):
+            for k in range(N):
+                N_n_off[s][:, k, k] = 0.0
+
+        dt_nat = dt * self._eV_to_secm1
+
+        # 3. Predictor, off-diagonal piece: rho_all <- e^{L dt} rho_n
+        #    then add dt * phi_1(L dt) * N_n_off.
+        self._apply_unitary_from_eigs(rho_all, lam_list, V_list, dt_nat)
+        for s in range(2):
+            rho_mat = self._to_mat(rho_all[s])
+            phi1_N = self._etdrk2_phi_apply(
+                N_n_off[s], lam_list[s], V_list[s], s, dt_nat, which=1)
+            rho_mat = rho_mat + phi1_N
+            rho_mat = 0.5 * (rho_mat + rho_mat.conj().swapaxes(-1, -2))
+            rho_all[s] = self._to_vec(rho_mat)
+
+        # 4. Predictor, diagonal piece: exp-Euler with phi1_dt (same as
+        #    evolve_step_ode lines 4058-4071). This adds
+        #        rho_αα += phi_1(Γ_α dt) * dt * I_total_α_n
+        #    to each diagonal, regularising the stiff active-active rate.
+        if np.ndim(phi1_dt) == 0:
+            _p0 = phi1_dt
+            _p1 = phi1_dt
+            _p2 = phi1_dt
+        else:
+            _p0 = phi1_dt[0]
+            _p1 = phi1_dt[1]
+            _p2 = phi1_dt[2]
+        rho_all[0, 0] += _p0 * I_total_n[0]
+        rho_all[1, 0] += _p1 * I_total_n[1]
+        rho_all[0, 1] += _p2 * I_total_n[2]
+        rho_all[0, 2] += _p2 * I_total_n[2]
+        rho_all[1, 1] += _p2 * I_total_n[2]
+        rho_all[1, 2] += _p2 * I_total_n[2]
+        # rho_all now holds rho_star.
+
+        # 5. (Would-be corrector stage — DISABLED.)
+        # The Cox-Matthews ETDRK2 corrector
+        #     rho_all += dt * phi_2(L dt) * (N_off(rho_star) - N_off(rho_n))
+        # breaks nu-nubar symmetry in this formulation (see method
+        # docstring). The predictor alone is first-order accurate and
+        # symmetry-preserving; second-order restoration at the MSW
+        # resonance requires putting the flavor-basis damping into L
+        # (Stage D.7).
+
+        # 6. Clamp off-diagonal magnitudes, mirroring evolve_step_ode.
+        for sector in range(2):
+            for p_idx, (alpha, beta) in enumerate(self._all_pair_flavors):
+                re_idx, im_idx = self._all_pair_write[p_idx]
+                rho_ab = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
+                rho_aa = rho_all[sector, alpha]
+                rho_bb = rho_all[sector, beta]
+                ab_mag = np.abs(rho_ab)
+                max_mag = np.minimum(
+                    0.5,
+                    np.sqrt(np.maximum(rho_aa * rho_bb, 0.0)) + 1e-10)
+                scale = np.where(
+                    ab_mag > max_mag,
+                    max_mag / np.maximum(ab_mag, 1e-30),
+                    1.0)
+                rho_ab = rho_ab * scale
+                rho_all[sector, re_idx] = rho_ab.real
+                rho_all[sector, im_idx] = rho_ab.imag
+
+        # 7. Clip diagonals to [f_min, f_max].
+        f_min = 1.0e-30
+        f_max = 1.0 - f_min
+        for sector in range(2):
+            for d in range(self.n_flavor):
+                rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
+
     def extract_f_all_3species(self, rho_all):
         """Extract 3-species f_all array compatible with BoltzmannSolver.
 

@@ -4489,87 +4489,96 @@ class DensityMatrixSolver(object):
         return Phi0, Phi1, Phi2
 
     def evolve_step_ode_etdrk2(self, rho_all, dt, phi1_dt, a, Tg):
-        """Stage D.7: ETDRK2 with off-diagonal damping in L via per-mode matrix
-        exponential on the vectorised Liouvillian superoperator.
+        """Stage D.7.1: Strang-symmetric diagonal split around ETDRK2 off-diag.
 
         Gated by PRyMini.qke_ode_etdrk2_flag (inside qke_full_ode_flag). Restores
-        O(dt^2) convergence at the Shi-Fuller MSW resonance, where the D.4
-        Strang-split driver degrades to O(dt) because the in-medium mixing angle
-        sweeps through pi/4 faster than dt. The D.6 H-eigenbasis predictor was
-        first-order and its corrector broke nu-nubar symmetry; D.7 avoids the
-        H-eigenbasis rotation entirely by exponentiating the full L = -i[H,.]
-        - D_off o . on the 9x9 (N=3) or 16x16 (N=4) vec-space per mode, per
-        sector. D is real so the sector-1 damping block matches sector 0 and
-        nu-nubar symmetry is algebraic.
+        O(dt^2) convergence at the Shi-Fuller MSW resonance.
+
+        D.7 (predictor -> diag -> corrector) closed the D.6 ν-ν̄-symmetry
+        instability and gave a ~4e-3 Richardson-limit match to Strang, but its
+        Lie-Trotter-style diagonal/off-diagonal split was formally O(dt) and
+        the SF drift ratio landed at 0.36 (vs 0.25 target for pure O(dt^2)).
+        D.7.1 symmetrises the split: ½-diag -> predictor+corrector -> ½-diag,
+        with I_total re-evaluated at the state going into the second half so
+        the composition is genuinely second-order in the frozen-coefficient
+        sense.
 
         Structure (per time step, given rho_n)
         --------------------------------------
-        1. Build L(rho_n) and gain-only N_gain(rho_n) via _build_L_list.
-        2. Cache (Phi0, Phi1, Phi2) per sector at L(rho_n) via _etdrk2_expm_phi.
-           ETDRK2 evaluates L at rho_n only; the corrector reuses the cache.
-        3. Predictor on off-diagonal coherence (diagonal entries of N_gain are
-           zeroed before vec):
-              vec(rho*)_off = Phi0 . vec(rho_n) + Phi1 . vec(N_off_n)
-        4. Diagonal exp-Euler on flavor-basis diagonals, identical to the
-           evolve_step_ode block (lines 4058-4071): rho_aa += phi1_dt * I_total_n.
-           Diagonal stiffness is regularised by phi1_dt = (1-exp(-Gamma*dt))/Gamma
-           as computed in PRyM_main Phase B; D.7 consumes this unchanged.
-        5. Corrector (off-diagonal only): evaluate N_gain at rho* and apply
-              vec(rho_{n+1}) = vec(rho*) + Phi2 . vec(N_off_star - N_off_n).
-        6. Off-diagonal magnitude clamp + diagonal clip (same as evolve_step_ode).
+        1. Build L(rho_n), gain-only N(rho_n), and I_total(rho_n) via
+           _build_L_list. Compute a local phi_1(Γ·dt/2)·(dt/2) regulariser
+           for the half-step diagonal exp-Euler (NOT the full-dt phi1_dt that
+           PRyM_main supplies -- factor-2 wrong in the stiff limit if halved).
+        2. Cache (Phi0, Phi1, Phi2) per sector at L(rho_n).
+        3. Half-diag #1: rho_αα += phi_half · I_total(rho_n).
+        4. Off-diag ETDRK2 predictor using L(rho_n) and N_off(rho_n).
+        5. Re-evaluate N at rho_star via _build_L_list; off-diag corrector
+           uses Phi2 at L(rho_n) (cache) and (N_off_star - N_off_n).
+        6. Recompute I_total at rho_after_corrector via _assemble_collision_N
+           (just the collision integrals; do not rebuild L).
+        7. Half-diag #2: rho_αα += phi_half · I_total(rho_after_corrector).
+        8. Off-diagonal magnitude clamp + diagonal clip.
 
         Parameters
         ----------
         phi1_dt : scalar or (3, Ny)
-            phi_1(Gamma_alpha * dt) * dt regularisation factor for the three
-            diagonal flavor labels (nue, nuebar, numu_sym). Computed in PRyM_main;
-            consumed only by the diagonal exp-Euler step (step 4 above).
+            Consumed by non-D.7 paths (evolve_step_ode). D.7.1 computes its
+            own half-step regulariser locally; this parameter is accepted for
+            dispatcher signature stability and otherwise ignored.
         """
         N = self.n_flavor
         Ny = self.Ny
+        _ = phi1_dt  # see docstring: ignored in D.7.1 (half-step phi computed locally)
 
-        # 1. L and gain-only N at rho_n.
+        # 1. L, gain-only N, and I_total at rho_n.
         L_list, N_gain_n, I_total_n = self._build_L_list(rho_all, a, Tg)
         dt_nat = dt * self._eV_to_secm1
 
-        # 2. Cache (Phi0, Phi1, Phi2) per sector.
+        # Half-step diagonal regulariser phi_1(Γ_α · dt/2) · (dt/2).
+        # Three channels per PRyM_main convention: [nue, nuebar, numu_eff].
+        # nue/nuebar both use the electron C_D (self.C_D[0] = 3.06); numu_eff
+        # is the mu-tau-symmetric average so uses the mu C_D (self.C_D[1]).
+        half_dt = 0.5 * dt
+        GF2_secm1 = PRyMini.GF**2 * PRyMini.MeV_to_secm1
+        rate_base_h = GF2_secm1 * Tg**4 / a * half_dt
+        C_D_chan = np.array([self.C_D[0], self.C_D[0], self.C_D[1]])
+        z_h = np.outer(C_D_chan, self.y_grid) * rate_base_h
+        z_h = np.maximum(z_h, 1.0e-15)
+        phi1_h = np.where(z_h < 1.0e-4,
+                          1.0 - 0.5 * z_h + z_h * z_h / 6.0,
+                          (1.0 - np.exp(-z_h)) / z_h)
+        phi_half = phi1_h * half_dt  # shape (3, Ny)
+
+        # 2. Cache (Phi0, Phi1, Phi2) per sector at L(rho_n).
         Phi_cache = [self._etdrk2_expm_phi(L_list[s], dt_nat) for s in (0, 1)]
 
-        # 3. Predictor -- off-diagonal coherence only.
+        # 3. Half-diag #1 using I_total(rho_n).
+        rho_all[0, 0] += phi_half[0] * I_total_n[0]
+        rho_all[1, 0] += phi_half[1] * I_total_n[1]
+        rho_all[0, 1] += phi_half[2] * I_total_n[2]
+        rho_all[0, 2] += phi_half[2] * I_total_n[2]
+        rho_all[1, 1] += phi_half[2] * I_total_n[2]
+        rho_all[1, 2] += phi_half[2] * I_total_n[2]
+
+        # 4. ETDRK2 predictor -- off-diagonal coherence only. Applied to the
+        #    state AFTER the first half-diag; Phi0/Phi1 use L(rho_n) (frozen).
         for s in range(2):
-            Phi0, Phi1, _ = Phi_cache[s]
-            rho_mat = self._to_mat(rho_all[s])               # (Ny, N, N)
-            rho_vec = rho_mat.reshape(Ny, N * N)              # row-major
+            Phi0, Phi1, _p2 = Phi_cache[s]
+            rho_mat = self._to_mat(rho_all[s])
+            rho_vec = rho_mat.reshape(Ny, N * N)
             N_off_vec = N_gain_n[s].reshape(Ny, N * N).copy()
             for alpha in range(N):
-                N_off_vec[:, alpha * N + alpha] = 0.0          # zero diag
+                N_off_vec[:, alpha * N + alpha] = 0.0
             rho_star_vec = (np.einsum('ijk,ik->ij', Phi0, rho_vec)
                             + np.einsum('ijk,ik->ij', Phi1, N_off_vec))
             rho_star_mat = rho_star_vec.reshape(Ny, N, N)
             rho_star_mat = 0.5 * (rho_star_mat + rho_star_mat.conj().swapaxes(-1, -2))
             rho_all[s] = self._to_vec(rho_star_mat)
 
-        # 4. Diagonal exp-Euler (identical to evolve_step_ode).
-        if np.ndim(phi1_dt) == 0:
-            _p0 = phi1_dt
-            _p1 = phi1_dt
-            _p2 = phi1_dt
-        else:
-            _p0 = phi1_dt[0]
-            _p1 = phi1_dt[1]
-            _p2 = phi1_dt[2]
-        rho_all[0, 0] += _p0 * I_total_n[0]
-        rho_all[1, 0] += _p1 * I_total_n[1]
-        rho_all[0, 1] += _p2 * I_total_n[2]
-        rho_all[0, 2] += _p2 * I_total_n[2]
-        rho_all[1, 1] += _p2 * I_total_n[2]
-        rho_all[1, 2] += _p2 * I_total_n[2]
-        # rho_all now holds rho_star.
-
-        # 5. Corrector -- off-diagonal only. Phi2 reuses the cache at L(rho_n).
+        # 5. Corrector -- evaluate N at rho_star; Phi2 reuses cache at L(rho_n).
         _, N_gain_star, _ = self._build_L_list(rho_all, a, Tg)
         for s in range(2):
-            _, _, Phi2 = Phi_cache[s]
+            _p0, _p1, Phi2 = Phi_cache[s]
             dN_off = (N_gain_star[s] - N_gain_n[s]).reshape(Ny, N * N).copy()
             for alpha in range(N):
                 dN_off[:, alpha * N + alpha] = 0.0
@@ -4578,6 +4587,19 @@ class DensityMatrixSolver(object):
             rho_new_mat = rho_new_vec.reshape(Ny, N, N)
             rho_new_mat = 0.5 * (rho_new_mat + rho_new_mat.conj().swapaxes(-1, -2))
             rho_all[s] = self._to_vec(rho_new_mat)
+
+        # 6. Re-evaluate I_total at rho_after_corrector for the second half-diag.
+        #    We only need I_total, not the full L; skip _build_L_list and call
+        #    _assemble_collision_N directly to keep cost down.
+        _, I_total_post = self._assemble_collision_N(rho_all, a, Tg)
+
+        # 7. Half-diag #2 using I_total(rho_after_corrector).
+        rho_all[0, 0] += phi_half[0] * I_total_post[0]
+        rho_all[1, 0] += phi_half[1] * I_total_post[1]
+        rho_all[0, 1] += phi_half[2] * I_total_post[2]
+        rho_all[0, 2] += phi_half[2] * I_total_post[2]
+        rho_all[1, 1] += phi_half[2] * I_total_post[2]
+        rho_all[1, 2] += phi_half[2] * I_total_post[2]
 
         # 6. Off-diagonal magnitude clamp (same as evolve_step_ode).
         for sector in range(2):

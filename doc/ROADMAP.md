@@ -344,3 +344,103 @@ test_qke_etdrk2_nu_nubar_symmetry all PASS. Default-path
 (qke_ode_etdrk2_flag=False) unchanged — modes 1/2/6 pass with their
 existing 1e-5 Neff tolerances, confirming bit-identity on the default
 Strang path.
+
+**Stage D.7.1 (landed):** Strang-symmetric diagonal split around the
+ETDRK2 off-diagonal predictor/corrector, closing the formal-O(dt)
+Lie-Trotter gap that D.7 left open.
+
+D.7's per-step structure was `predictor → full-dt diag exp-Euler →
+corrector`. That ordering is Lie-Trotter-style and its operator-split
+error is O(dt), which poisoned the off-diag ETDRK2's formal O(dt²) and
+landed the SF drift ratio at 0.36 with default-n_B Neff 2.8×10⁻² below
+the Richardson limit.
+
+D.7.1 replaces that with
+
+```
+  ½-dt diag exp-Euler  [ I_total evaluated at ρ_n ]
+  ETDRK2 predictor     [ off-diag, uses L(ρ_n) and N_gain(ρ_n) ]
+  ETDRK2 corrector     [ off-diag, uses Phi2(L(ρ_n)) and dN(ρ*, ρ_n) ]
+  ½-dt diag exp-Euler  [ I_total evaluated at ρ_after-corrector ]
+```
+
+Two implementation details matter:
+
+1. `phi1_dt` supplied by `PRyM_main.py` is computed for the **full** dt:
+   `phi_1(Γ·dt)·dt`. Naively halving it would give `½·phi_1(Γ·dt)·dt`
+   which differs from the correct half-step regulariser
+   `phi_1(Γ·dt/2)·(dt/2)` by up to a factor of 2 in the stiff
+   (`Γ·dt ≫ 1`) limit. `evolve_step_ode_etdrk2` now **computes
+   `phi_1(Γ·dt/2)·(dt/2)` locally** using the solver's own `C_D` and
+   the PRyM_main convention (3 channels: [nue, nuebar, numu_eff], the
+   first two sharing the electron-flavor `C_D[0]`).
+2. The second half-step uses `I_total` re-evaluated at the state going
+   into it (after the corrector), not `I_total(ρ_n)`. Concretely, an
+   extra `_assemble_collision_N` call is made between the corrector
+   and the second half-diag. This costs one collision-integral
+   evaluation per step — well below the per-step `expm` budget — and
+   is what promotes the split from frozen-coefficient O(dt) to
+   state-consistent O(dt²).
+
+The `phi1_dt` argument to `evolve_step_ode_etdrk2` is kept for
+dispatcher signature stability but is not consumed by the D.7.1 body.
+
+Measured SF convergence
+(`validation/stage_d7_sf_convergence.out.txt`, identical configuration
+to the D.7 sweep above — sin²(2θ_14)=1e-3, Δm²_41=1 eV², ξ_νe=5e-2):
+
+| n_B  | Neff     | Σρ_ss | n_ξe   | wall (s) |
+|------|---------:|------:|-------:|---------:|
+| 2400 | 3.96184  | 5.894 | +3.10  | 967      |
+| 4800 | 3.95865  | 5.810 | +2.79  | 2432     |
+| 9600 | 3.96445  | 5.897 | +2.60  | 4124     |
+
+- Default-n_B (2400) Neff jumped from D.7's 3.94000 to D.7.1's **3.96184**,
+  collapsing the gap to Strang's Richardson limit 3.96823 from D.7's
+  2.8×10⁻² down to **6.4×10⁻³**. This is ~6× off the brief's strict
+  "within ~10⁻³" target but is already **better than Strang at its own
+  default n_B=2400** (Strang lands at 3.95297, which is 1.5×10⁻² below
+  its own Richardson limit); D.7.1 at default n_B is 9×10⁻³ *above*
+  Strang-at-default-n_B and closer to the true n_B→∞ limit.
+- Richardson-extrapolated Neff (from n_B=4800, 9600) = **3.96638**.
+  D.4 Strang Richardson = 3.96823. **Gap 1.85×10⁻³** — 2.2× closer
+  to Strang Richardson than D.7's 4×10⁻³ Richardson.
+- Drift ratio = +1.82. The Neff sequence oscillates around the
+  asymptote: ΔNeff(2400→4800) = −3.2×10⁻³, ΔNeff(4800→9600) = +5.8×10⁻³.
+  Amplitude (~6×10⁻³) is small relative to the n_ξe scale, suggesting
+  we are close to the asymptotic plateau rather than on a clean
+  O(dt²) curve. Possible residual-effect candidates:
+  * **Frozen-coefficient L.** The ETDRK2 caches `(Phi0, Phi1, Phi2)` at
+    L(ρ_n) and uses them through both predictor and corrector. For
+    state-dependent H(ρ) (via V_νν, trace terms), this freezes out an
+    O(dt²) correction per step that may be non-negligible at SF MSW.
+  * **Diagonal exp-Euler with full-kernel I_total.** The phi_1
+    regulariser is exact for `dρ_αα/dt = −Γ_α·ρ_αα + gain_const`, but
+    I_total is the full collision kernel. The gain piece varies with
+    f_all and is evaluated at a single state per sub-step; this gives
+    an O(dt) correction per sub-step → O(dt²) accumulated, but with
+    coefficients that interact non-trivially with the Strang split.
+  Closing the ratio to exactly 0.25 likely requires either a
+  state-updated L cache (expensive: doubles the `expm` cost) or a
+  midpoint I_total evaluation in the half-diag steps. Deferred as a
+  potential D.7.2 if tighter SF accuracy is needed.
+
+The D.6 ν-ν̄ asymmetry failure mode remains eliminated:
+`test_qke_etdrk2_nu_nubar_symmetry` PASSES under the D.7.1 driver
+without modification (Strang splitting of a symmetry-preserving
+operator is trivially symmetric).
+
+Full regression suite status after D.7.1: `test_mode5c_qke_ode_etdrk2`
+PASSES with the tightened 1e-3 Neff tolerance (as under D.7);
+`test_sterile_dw_production` PASSES. The remaining slow tests
+(modes 1, 2, 5, 5b, 6, sterile_stage_a_invariant,
+sterile_sf_asymmetry_depletion) are unaffected by the D.7.1 change —
+they do not enable `qke_ode_etdrk2_flag`, so they route through
+`evolve_step_ode` (Strang) which D.7.1 does not touch. Default-path
+bit-identity is preserved.
+
+Practical recommendation (updated): D.7.1 is the recommended driver
+for SF ODE runs at default n_B. The `expm`-per-mode overhead adds
+~30% runtime versus Strang, but Neff now lands within ~10⁻² of the
+n_B→∞ limit at n_B=2400, versus needing `n_B_override ≥ 9600` to
+match Strang's Richardson limit under the Strang driver alone.

@@ -1,0 +1,9 @@
+================================================================================
+Diagnostic: STRANG path (qke_full_ode_flag=False)
+PMNS off, sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2
+Hannestad target: ~0.04
+D.7.1 PMNS-off gave 0.29
+================================================================================
+
+Neff = 3.64311   Delta Neff = +0.6024   Sum_rho_ss = 4.166   (128 s)
+Hannestad ~0.04

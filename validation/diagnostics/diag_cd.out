@@ -1,0 +1,10 @@
+================================================================================
+Diagnostic: PMNS off + Hannestad C_alpha = (1.27, 0.92, 0.92, 0)
+sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2
+Target: Hannestad delta_Neff ~ 0.04
+================================================================================
+  [patched] solver.C_D = [1.27 0.92 0.92 0.  ]
+
+Neff = 3.31154   Delta Neff = +0.2708   Sum_rho_ss = 4.694   (1017 s)
+Hannestad ~0.04
+Summary: PMNS-off = 0.29, PMNS-off + Hannestad C_D = 0.271

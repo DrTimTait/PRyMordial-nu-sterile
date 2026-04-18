@@ -1,0 +1,9 @@
+================================================================================
+Diagnostic: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, ALL OTHER angles = 0
+Expected: Hannestad ~4% thermalisation (delta_Neff ~ 0.04)
+If our code gives >> 0.04, the PMNS leak is not the culprit.
+================================================================================
+
+Neff = 3.33284   Yp = 0.25631   D/H = 2.6701   Sum_rho_ss = 4.263   (1029 s)
+Delta Neff (vs 3x3 reference 3.04070) = +0.2921
+Hannestad expectation: ~0.04

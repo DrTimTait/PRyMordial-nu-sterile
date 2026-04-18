@@ -3556,10 +3556,18 @@ class DensityMatrixSolver(object):
         E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
         inv_E = 1.0 / E_eV
 
-        # Thermal matter potential (Notzold-Raffelt)
+        # Thermal matter potential (Notzold-Raffelt 1988). Two pieces from forward
+        # scattering on the CP-symmetric e+/e- plasma:
+        #   * V_thermal_eV  (CC, via W exchange; only ν_e)                1/m_W^2
+        #   * V_NC_eV       (NC, via Z exchange; flavor-universal active) 1/m_Z^2
+        # Same sign for ν and ν̄ (CP-even). Adding V_NC·I_3 to the active block is
+        # a global phase for 3-flavor SM (observable-neutral), but in 3+1 sterile
+        # it creates the active-sterile gap that suppresses in-medium mixing at
+        # small θ_{14,24,34} -- the canonical V_z that enters the DW formula.
         rho_e_th = 7.0 * np.pi**2 / 60.0 * Tg**4
-        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / (3.0 * self.mW2)
-        V_thermal_eV = V0 * E_eV
+        V_pref = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / 3.0
+        V_thermal_eV = V_pref / self.mW2 * E_eV
+        V_NC_eV = V_pref / (PRyMini.mZ**2) * E_eV
 
         # CC matter potential: V_CC = sqrt(2) GF (n_e- - n_e+)
         # Charge neutrality: n_e- - n_e+ = n_p ~ eta_b * n_gamma
@@ -3608,6 +3616,13 @@ class DensityMatrixSolver(object):
                 for l in range(N):
                     H[:, k, l] = Omega[k, l] * inv_E + V_sign * V_nunu_eV[k, l]
             H[:, 0, 0] += V_thermal_eV + V_sign * V_CC_eV
+            # NC thermal piece on all 3 active diagonals. In 3-flavor mode this
+            # is V_NC · I_3 on the active block (global phase, no observable).
+            # In 4-flavor mode it creates the active-sterile gap.
+            if self.n_flavor >= 3:
+                H[:, 0, 0] += V_NC_eV
+                H[:, 1, 1] += V_NC_eV
+                H[:, 2, 2] += V_NC_eV
             if self.n_flavor == 4:
                 for alpha in range(3):
                     H[:, alpha, alpha] += V_sign * trace_nxi_eV
@@ -3986,9 +4001,12 @@ class DensityMatrixSolver(object):
         # ================================================================
         E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
 
+        # Notzold-Raffelt thermal self-energy: CC (1/m_W^2, ν_e only) and NC
+        # (1/m_Z^2, all active). See evolve_step for extended rationale.
         rho_e_th = 7.0 * np.pi**2 / 60.0 * Tg**4
-        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / (3.0 * self.mW2)
-        V_thermal_eV = V0 * E_eV
+        V_pref = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / 3.0
+        V_thermal_eV = V_pref / self.mW2 * E_eV
+        V_NC_eV = V_pref / (PRyMini.mZ**2) * E_eV
 
         from scipy.special import zeta as _zeta
         n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3
@@ -4019,6 +4037,12 @@ class DensityMatrixSolver(object):
                 for l in range(N):
                     H[:, k, l] = Omega[k, l] * inv_E + V_sign * V_nunu_eV[k, l]
             H[:, 0, 0] += V_thermal_eV + V_sign * V_CC_eV
+            # NC thermal on all active diagonals (observable-neutral in 3-flavor,
+            # lifts active-sterile gap in 4-flavor). See evolve_step for detail.
+            if self.n_flavor >= 3:
+                H[:, 0, 0] += V_NC_eV
+                H[:, 1, 1] += V_NC_eV
+                H[:, 2, 2] += V_NC_eV
             if self.n_flavor == 4:
                 for alpha in range(3):
                     H[:, alpha, alpha] += V_sign * trace_nxi_eV
@@ -4188,9 +4212,12 @@ class DensityMatrixSolver(object):
         N = self.n_flavor
         E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
 
+        # Notzold-Raffelt thermal self-energy: CC (1/m_W^2, ν_e only) and NC
+        # (1/m_Z^2, all active). See evolve_step for extended rationale.
         rho_e_th = 7.0 * np.pi**2 / 60.0 * Tg**4
-        V0 = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / (3.0 * self.mW2)
-        V_thermal_eV = V0 * E_eV
+        V_pref = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / 3.0
+        V_thermal_eV = V_pref / self.mW2 * E_eV
+        V_NC_eV = V_pref / (PRyMini.mZ**2) * E_eV
 
         n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3
         n_e_asym = PRyMini.eta0b * n_gamma
@@ -4220,6 +4247,14 @@ class DensityMatrixSolver(object):
                 for l in range(N):
                     H[:, k, l] = Omega[k, l] * inv_E + V_sign * V_nunu_eV[k, l]
             H[:, 0, 0] += V_thermal_eV + V_sign * V_CC_eV
+            # NC thermal on all active diagonals. Observable-neutral in 3-flavor
+            # (V_NC · I_3 is a global phase on the active block); in 4-flavor
+            # this lifts the active-sterile energy gap -- the canonical V_z that
+            # controls in-medium mixing suppression at small θ_{14,24,34}.
+            if self.n_flavor >= 3:
+                H[:, 0, 0] += V_NC_eV
+                H[:, 1, 1] += V_NC_eV
+                H[:, 2, 2] += V_NC_eV
             if self.n_flavor == 4:
                 for alpha in range(3):
                     H[:, alpha, alpha] += V_sign * trace_nxi_eV

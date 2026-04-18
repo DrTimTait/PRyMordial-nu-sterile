@@ -1,0 +1,28 @@
+========================================================================================
+Sterile DW literature comparison: Hannestad, Tamborra, Tram 2012
+arXiv:1204.5861  Fig. 2 top panel (fixed δm² = 0.93 eV², L=0)
+D.7.1 ODE driver, θ_24 mixing (ν_μ-ν_s; matches Hannestad's default)
+========================================================================================
+  3×3 QKE reference (no sterile)                   Neff=3.04070  Yp=0.24846  D/H=2.4690  Σρ_ss=-0.000  (870s)
+
+  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=3.99406  Yp=0.26039  D/H=2.7873  Σρ_ss=5.657  (1180s)
+  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=4.00367  Yp=0.26034  D/H=2.7832  Σρ_ss=5.910  (951s)
+  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=3.89332  Yp=0.26038  D/H=2.7849  Σρ_ss=4.918  (920s)
+
+----------------------------------------------------------------------------------------
+Point                               sin²2θ     δm²  δNeff (H+2012)    δNeff (ours)    Δ (abs)      Δ/H
+----------------------------------------------------------------------------------------
+A  full thermalisation            1.00e-01   0.930           1.000           0.953     -0.047    -4.7%
+B  partial thermalisation         2.26e-03   0.930           0.500           0.963     +0.463   +92.6%
+C  minimal thermalisation         1.00e-04   0.930           0.040           0.853     +0.813  +2031.5%
+
+Baseline: 3×3 reference Neff = 3.04070
+
+Interpretation guide:
+  - Agreement at 10-20% relative (|Δ/H| < 0.2) is the validation target;
+    Hannestad's own numerical conventions differ from PRyMordial at that
+    level, so tighter is a pleasant surprise.
+  - Absolute difference |Δ| > 0.1 on the fully-thermalised point (A) would
+    suggest a thermodynamics-baseline bug, not a sterile-production one.
+  - The low-thermalisation point (C) has small absolute values so relative
+    differences are easier to inflate; report |Δ (abs)| too.

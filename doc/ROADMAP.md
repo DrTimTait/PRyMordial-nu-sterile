@@ -422,8 +422,33 @@ to the D.7 sweep above — sin²(2θ_14)=1e-3, Δm²_41=1 eV², ξ_νe=5e-2):
     coefficients that interact non-trivially with the Strang split.
   Closing the ratio to exactly 0.25 likely requires either a
   state-updated L cache (expensive: doubles the `expm` cost) or a
-  midpoint I_total evaluation in the half-diag steps. Deferred as a
-  potential D.7.2 if tighter SF accuracy is needed.
+  midpoint I_total evaluation in the half-diag steps.
+
+**Attempted D.7.2 (state-space midpoint-L, discarded):** A session
+tried building `L_mid` at `ρ_mid = ½·(ρ_n + ρ_*_tentative)` where
+`ρ_*_tentative` is a full-dt ETD predictor at `L(ρ_n)`, then using
+`L_mid` for the real predictor and corrector. **Made SF accuracy
+worse** — default-n_B Neff moved from 3.96184 (D.7.1) to 3.95571
+(gap to Strang Richardson 1.3×10⁻² vs D.7.1's 6.4×10⁻³), and `n_ξe`
+drifted from +3.10 to +4.01 at n_B=2400.
+
+Root cause of the failure: for stiff-oscillatory L with `|L·dt_nat|
+~ 10⁴`, the ETD predictor `e^{L·dt}·ρ_n` rotates off-diagonal
+components by huge phases — `ρ_*_tentative` has off-diagonal content
+that looks like noise relative to `ρ_n`. The state-space average
+`(ρ_n + ρ_*_tentative)/2` has DILUTED off-diagonal amplitude rather
+than approximating `ρ(t_n + dt/2)`. `V_νν(ρ_mid)` is therefore
+mis-estimated and `L_mid` is worse than `L(ρ_n)` as a representative
+linear operator.
+
+The principled fix requires a separate half-dt ETD predictor
+(`e^{L·dt/2}·ρ_n + dt/2·φ_1(L·dt/2)·N_n`) to obtain a genuine
+time-midpoint estimate. That is another `expm` call per step at
+`L·dt_nat/2` — on top of the `expm` at `L·dt_nat`, so ~3× D.7.1
+runtime with uncertain payoff. Deferred indefinitely; the residual
+6.4×10⁻³ gap at default n_B is below the BBN-observable sensitivity
+floor (Yp and D/H shift by &lt;10⁻⁴ from this level of Neff
+uncertainty), so tightening further is not physics-motivated.
 
 The D.6 ν-ν̄ asymmetry failure mode remains eliminated:
 `test_qke_etdrk2_nu_nubar_symmetry` PASSES under the D.7.1 driver

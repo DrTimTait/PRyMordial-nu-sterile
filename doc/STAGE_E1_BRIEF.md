@@ -252,6 +252,35 @@ show exact agreement between PRyMordial's `L`-expm and the analytic
 damped Rabi — but with a DIFFERENT ρ_ss value reflecting the new
 D_μs coefficient.
 
+## Sterile-mass convention
+
+PRyMordial treats `Dm2_41` as a free parameter set via
+`PRyMini.Dm2_41`. Each reference paper uses its own benchmark:
+
+| Reference | Benchmark Dm² | Figures | Notes |
+|---|---:|---|---|
+| Mirizzi+2012 Eq. 9 | 0.89 eV² | Fig. 2 | momentum-averaged QKE |
+| Hannestad+2012 Fig. 2 | 0.93 eV² | sin²(2θ) sweep | full density-matrix QKE |
+| Gariazzo+2019 Fig. 3 | 1.29 eV² | \|U_α4\|² sweep | full 4×4 QKE w/ FortEPiaNO |
+| PRyMordial existing tests | 1.0 eV² | test_sterile_dw_production | ours |
+
+**CRITICAL**: for each acceptance test below, set `PRyMini.Dm2_41`
+equal to the specific reference's value — do NOT carry over the
+0.93 used in the current `validation/sterile_DW_literature.py`.
+The DW rate scales roughly as `Δm² × f(T_max/T_decoup)`, so a
+factor-1.4 `Δm²` mismatch injects ~40% systematic. Use per-benchmark
+matched `Dm²_41`:
+
+  - Hannestad Point A/B/C benchmarks: `Dm2_41 = 0.93` (keep).
+  - Gariazzo benchmark: `Dm2_41 = 1.29` (fix from our current 0.93).
+  - Mirizzi benchmark: `Dm2_41 = 0.89`.
+
+Similarly, Gariazzo's `|U_α4|² = 10⁻⁴` corresponds to
+`sin²(2θ_α4) = 4·|U_α4|²·(1 − |U_α4|²) ≈ 4×10⁻⁴`, not `10⁻⁴`.
+Convert carefully. Our previous "Gariazzo comparison" informally
+conflated `|U|²` with `sin²(2θ)` — at the factor-4 level this
+matters a lot.
+
 ## Validation targets (in order)
 
 1. **Import & fast tests** — `pytest tests/test_regression.py -m
@@ -281,9 +310,15 @@ D_μs coefficient.
    ~0.02-0.04 extrapolated).
 6. **Full DW literature comparison** —
    `python validation/sterile_DW_literature.py`. Target for all
-   three benchmarks (A, B, C): relative agreement < 30% vs
-   Hannestad's values. Point A (full therm.) should stay at ~1.0,
-   Point C (sin²(2θ)=1e-4) should drop below ~0.2.
+   three Hannestad benchmarks (A, B, C): relative agreement < 30%
+   vs Hannestad's values. Point A (full therm.) should stay at
+   ~1.0, Point C (sin²(2θ)=1e-4) should drop below ~0.2. Keep
+   `Dm2_41 = 0.93` for this comparison — that matches Hannestad
+   Fig. 2.
+7. **Gariazzo cross-check** — at their benchmark `Dm2_41 = 1.29`,
+   run `|U_μ4|² = 10⁻⁴` (i.e. `sin²(2θ_24) = 4·(1-10⁻⁴)·10⁻⁴ ≈
+   4×10⁻⁴`). Target: ΔNeff ≈ 0.09 (matching Gariazzo Fig. 3 violet
+   curve). If we land in [0.05, 0.2], the fix is working.
 
 ## What NOT to touch
 

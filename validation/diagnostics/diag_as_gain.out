@@ -1,0 +1,35 @@
+========================================================================================
+Stage E.2(a) diagnostic: active-sterile gain asymmetry (hypothesis A)
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi damping.
+Hannestad target: dNeff ~ 0.04.  PMNS-on baseline (E.1): dNeff ~ 0.858.
+PMNS-off prior run (separately recorded): all 3 variants = 0.2928 (null)
+because active-active coherences are identically zero without PMNS driving.
+========================================================================================
+  3x3 reference (no sterile)                         Neff=3.04069  Yp=0.24847  D/H=2.4725  sum_rho_ss=-0.000  (725s)
+
+--- Variant (i) baseline: no patch -------------------------------------
+  (i) baseline                                       Neff=3.89870  Yp=0.26037  D/H=2.7848  sum_rho_ss=4.963  (940s)
+     dNeff = +0.8580
+
+--- Variant (ii) zero all off-diagonal gain (Gariazzo A.16 uniform) ---
+  (ii) zero_all_gain                                 Neff=3.88592  Yp=0.26036  D/H=2.7817  sum_rho_ss=5.084  (871s)
+     dNeff = +0.8452
+
+--- Variant (iii) symmetric active-sterile gain (pair q <- pair q) ---
+  (iii) sym_as_gain                                  Neff=3.88308  Yp=0.26035  D/H=2.7831  sum_rho_ss=5.014  (1030s)
+     dNeff = +0.8424
+
+========================================================================================
+variant                             dNeff   sum_rho_ss      vs Hannestad 0.04
+----------------------------------------------------------------------------------------
+(i) baseline                      +0.8580        4.963           OVERPRODUCED
+(ii) zero_all_gain                +0.8452        5.084           OVERPRODUCED
+(iii) sym_as_gain                 +0.8424        5.014           OVERPRODUCED
+========================================================================================
+
+Decision:
+  - If (ii) < 0.1 and (i) ~ 0.29: active-active gain is the culprit.
+    Fix via new qke_offdiag_gain_mode flag ('damping_only').
+  - If (iii) < 0.1 and (ii) does not drop: need matched active-sterile
+    gain; defer to Stage E.2(a-ii) for physics-motivated coupling.
+  - If neither drops: hypothesis A falsified; hand off to B (window).

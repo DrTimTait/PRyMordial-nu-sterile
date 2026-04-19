@@ -1,0 +1,10 @@
+========================================================================================
+Stage E.2(b) sanity control: T_start = 60 MeV, T_boltz_start = 5 MeV (default)
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi.
+Expected: dNeff ~ 0.845 (matching default-window PMNS-on baseline).
+========================================================================================
+  Phase-A-extended run   Neff=3.89207  Yp=0.26037  D/H=2.7844  sum_rho_ss=5.014  (933s)
+     dNeff = +0.8514
+
+  Baseline (default window, from diag_as_gain.py variant (i)): dNeff = +0.8453
+  Delta from baseline: +0.0061

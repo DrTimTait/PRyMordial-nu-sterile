@@ -1,0 +1,33 @@
+========================================================================================
+Stage E.2(a) diagnostic: active-sterile gain asymmetry (hypothesis A)
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS off, Mirizzi damping.
+Hannestad target: dNeff ~ 0.04.  PMNS-off baseline (E.1): dNeff ~ 0.29.
+========================================================================================
+  3x3 reference (no sterile)                         Neff=3.03992  Yp=0.24845  D/H=2.4704  sum_rho_ss=0.000  (1933s)
+
+--- Variant (i) baseline: no patch -------------------------------------
+  (i) baseline                                       Neff=3.33270  Yp=0.25628  D/H=2.6711  sum_rho_ss=4.136  (1024s)
+     dNeff = +0.2928
+
+--- Variant (ii) zero all off-diagonal gain (Gariazzo A.16 uniform) ---
+  (ii) zero_all_gain                                 Neff=3.33270  Yp=0.25628  D/H=2.6711  sum_rho_ss=4.136  (951s)
+     dNeff = +0.2928
+
+--- Variant (iii) symmetric active-sterile gain (pair q <- pair q) ---
+  (iii) sym_as_gain                                  Neff=3.33270  Yp=0.25628  D/H=2.6711  sum_rho_ss=4.136  (1017s)
+     dNeff = +0.2928
+
+========================================================================================
+variant                             dNeff   sum_rho_ss      vs Hannestad 0.04
+----------------------------------------------------------------------------------------
+(i) baseline                      +0.2928        4.136                   <0.3
+(ii) zero_all_gain                +0.2928        4.136                   <0.3
+(iii) sym_as_gain                 +0.2928        4.136                   <0.3
+========================================================================================
+
+Decision:
+  - If (ii) < 0.1 and (i) ~ 0.29: active-active gain is the culprit.
+    Fix via new qke_offdiag_gain_mode flag ('damping_only').
+  - If (iii) < 0.1 and (ii) does not drop: need matched active-sterile
+    gain; defer to Stage E.2(a-ii) for physics-motivated coupling.
+  - If neither drops: hypothesis A falsified; hand off to B (window).

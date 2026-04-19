@@ -526,22 +526,72 @@ at Mirizzi-as-default and the Gariazzo form is left as a stub
 (`NotImplementedError`) behind the `"gariazzo"` flag value until
 Stage E.2 opens.
 
-**Stage E.2 (open):** deeper bug hunt for the small-mixing DW
-over-production. Three candidates flagged by
-[validation/diagnostics/README.md](../validation/diagnostics/README.md):
-1. **Collision-kernel active-sterile coupling.** We use
-   `S_gain_si = 0` for active-sterile pairs in
-   `_assemble_collision_N` (brief's own description, line 4397),
-   but Gariazzo-style formulations feed the full diagonal collision
-   integral through. Worth checking whether the missing gain term
-   matters in the weak-damping regime.
-2. **y-integration measure** in the diagonal exp-Euler step.
-3. **Evolution window** — Hannestad integrates 60 → 1 MeV, we
-   integrate further through BBN. After `T=1 MeV` the sterile is
-   decoupled and comoving occupation is preserved, so this should
-   only contribute an O(10⁻³) systematic, but worth ruling out.
+**Stage E.2 (partially landed — hypothesis A falsified, hypothesis B
+unresolved):** deeper bug hunt for the small-mixing DW over-production.
+Three candidates flagged by
+[validation/diagnostics/README.md](../validation/diagnostics/README.md);
+E.2's first sprint tested the two highest-likelihood.
+
+**E.2(a) — hypothesis A (active-sterile gain asymmetry): FALSIFIED.**
+`validation/diagnostics/diag_as_gain.py` patches three variants of
+`_offdiag_collision_gain` at Hannestad Point C (sin²2θ_24=1e-4,
+Δm²_41=0.93, PMNS on, 4-flavor, Mirizzi damping):
+  (i) baseline, (ii) zero all off-diagonal gain, (iii) symmetric
+  active-sterile gain (pair q ← pair q).
+
+| Variant | ΔNeff | sum ρ_ss |
+|---|---:|---:|
+| (i) baseline | +0.8580 | 4.96 |
+| (ii) zero all gain | +0.8452 | 5.08 |
+| (iii) sym active-sterile gain | +0.8424 | 5.01 |
+
+All three agree within ~2%, and variants (ii) and (iii) move in the
+*wrong* direction (ρ_ss slightly rises). The `S_gain_si = 0.0`
+active-sterile branch at `PRyM_boltzmann.py:4473` is not load-bearing.
+
+A prior PMNS-off run
+(`validation/diagnostics/diag_as_gain_pmns_off.out`) gave all three
+variants at ΔNeff = +0.2928 identically — expected, because
+active-active coherences have no Hamiltonian driving without PMNS
+and `_offdiag_collision_gain` is linear in the coherence input. The
+PMNS-off null does NOT rule out A; it's physically unobservable
+there. The PMNS-on run is the real test, and it falsifies.
+
+**E.2(b) — hypothesis B (QKE evolution-window mismatch): UNRESOLVED.**
+`validation/diagnostics/diag_qke_window.py` varies `T_boltz_start`
+at Point C (PMNS on, Mirizzi):
+
+| T_boltz_start | Neff | ΔNeff | sum ρ_ss |
+|---:|---:|---:|---:|
+| 5 MeV (default) | 3.886 | +0.8453 | 5.08 |
+| 30 MeV | 3.090 | +0.0496 | 26.17 |
+| 60 MeV | 13.66 | +10.62 | 35.81 |
+
+The 30 MeV run lands at ΔNeff=0.05, suspiciously close to
+Hannestad's 0.04 — but its `sum ρ_ss = 26` is internally
+inconsistent with that Neff (thermal sterile would give ΔNeff ~ 0.5).
+The 60 MeV run gives Neff = 13.66, unphysical for 3+1.
+The Phase B Froustey formalism and/or the ETDRK2 step-size policy
+appears to break at T ≫ 5 MeV.
+
+A sanity control (`validation/diagnostics/diag_phaseA_only.py`)
+pushes `T_start = 60 MeV` but keeps `T_boltz_start = 5 MeV`
+(Phase A extended, Phase B default): ΔNeff = +0.8514, matching the
+default-window baseline to 0.7%. This confirms the dramatic shifts
+above are Phase-B-QKE effects, not Phase-A artefacts.
+
+**B conclusion.** Window extension moves ΔNeff in the right
+direction, but the numerics at T > 5 MeV are unreliable, so we
+cannot commit a fix. A proper test of B requires stabilising
+Phase B's Froustey entropy equation and the ETDRK2 step-size
+policy at high T — a dedicated engineering task parked for a
+future sprint.
+
+**Open: hypothesis C (y-grid discretisation).** The third
+candidate from `doc/STAGE_E2_BRIEF.md`; not tested in this sprint.
+Lowest likelihood per the brief.
 
 The new `validation/sterile_DW_gariazzo.py` script is parked for
-reuse in Stage E.2 acceptance testing. `validation/sterile_DW_literature.py`
+reuse in post-E.2 acceptance testing. `validation/sterile_DW_literature.py`
 is unchanged (Dm²=0.93 is Hannestad-specific) and continues to
 serve as the regression target.

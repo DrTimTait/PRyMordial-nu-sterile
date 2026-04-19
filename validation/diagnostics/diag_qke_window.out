@@ -1,0 +1,29 @@
+========================================================================================
+Stage E.2(b) diagnostic: QKE evolution-window extension (hypothesis B)
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi damping.
+Hannestad target: dNeff ~ 0.04.  PMNS-on T_boltz_start=5 baseline: dNeff ~ 0.858.
+========================================================================================
+  3x3 reference (no sterile, window=5 MeV)           Neff=3.04071  Yp=0.24847  D/H=2.4691  sum_rho_ss=-0.000  (694s)
+
+  (T_boltz_start =    5 MeV)                         Neff=3.88605  Yp=0.26034  D/H=2.7818  sum_rho_ss=5.078  (914s)
+     dNeff = +0.8453
+
+  (T_boltz_start =   30 MeV)                         Neff=3.09033  Yp=0.24930  D/H=2.4908  sum_rho_ss=26.169  (982s)
+     dNeff = +0.0496
+
+  (T_boltz_start =   60 MeV)                         Neff=13.66350  Yp=0.25187  D/H=2.5580  sum_rho_ss=35.808  (1048s)
+     dNeff = +10.6228
+
+========================================================================================
+   T_boltz_start (MeV)       Neff      dNeff   sum_rho_ss
+----------------------------------------------------------------------------------------
+                     5    3.88605    +0.8453        5.078
+                    30    3.09033    +0.0496       26.169
+                    60   13.66350   +10.6228       35.808
+========================================================================================
+
+Decision:
+  - dNeff drops substantially with extended window  -> hypothesis B
+    partially confirmed. Land fix as new PRyMini.T_qke_start flag.
+  - dNeff essentially flat across 5 / 30 / 60 MeV   -> hypothesis B
+    falsified. Hand off to hypothesis C (y-grid) or deeper dive.

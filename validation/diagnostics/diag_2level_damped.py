@@ -13,6 +13,7 @@ PRyMini.theta_12 = 0.0; PRyMini.theta_13 = 0.0; PRyMini.theta_23 = 0.0
 PRyMini.theta_14 = 0.0; PRyMini.theta_34 = 0.0; PRyMini.delta_CP = 0.0; PRyMini.delta_14 = 0.0
 PRyMini.theta_24 = np.arcsin(np.sqrt(1e-4))/2.0
 PRyMini.eta0b = 0.0
+PRyMini.qke_damping_formula = "mirizzi"  # Stage E.1 pair-specific damping
 
 import PRyM.PRyM_boltzmann as PRyMboltz
 solver = PRyMboltz.DensityMatrixSolver()
@@ -27,12 +28,12 @@ H_aa = H[1, 1]
 H_ss = H[3, 3]
 H_as = H[1, 3]
 
-# D_pair from PRyMordial's convention 0.5*(Γ_μ + Γ_s) = 0.5*Γ_μ (Γ_s=0)
-GF_eV = PRyMini.GF * 1.0e-12
+# D_pair extracted from the shared helper so any formula change in
+# PRyMordial auto-propagates to this analytic reference.
 T_eV = 10.0 * 1.0e6
 E_eV = 10.5 * 1.0e6
-Gamma_mu = solver.C_D[1] * GF_eV**2 * T_eV**4 * E_eV   # eV
-D_pair = 0.5 * Gamma_mu  # eV
+D_off = solver._compute_D_pair_matrix(T_eV, np.array([E_eV]), units="eV")
+D_pair = D_off[1, 3, 0]  # (μ, s) pair, single momentum mode, eV
 
 print(f"H_aa-H_ss = {(H_aa-H_ss).real:.3e} eV,  H_as = {H_as:.3e} eV,  D_pair = {D_pair:.3e} eV")
 print(f"|H_diff|·dt_nat = {abs(H_aa-H_ss).real*6.077e11:.3e}")

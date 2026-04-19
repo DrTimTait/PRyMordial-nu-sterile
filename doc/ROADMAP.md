@@ -469,3 +469,79 @@ for SF ODE runs at default n_B. The `expm`-per-mode overhead adds
 ~30% runtime versus Strang, but Neff now lands within ~10⁻² of the
 n_B→∞ limit at n_B=2400, versus needing `n_B_override ≥ 9600` to
 match Strang's Richardson limit under the Strang driver alone.
+
+---
+
+## Stage E: literature validation and physics corrections
+
+**Stage E.1 (landed):** pair-specific off-diagonal damping formula
+via new `DensityMatrixSolver._compute_D_pair_matrix` helper, selected
+by `PRyMini.qke_damping_formula ∈ {"symmetric", "mirizzi", "gariazzo"}`
+(default now `"mirizzi"`). The shared helper is called from all four
+live damping sites — `_build_L_list`, `_assemble_collision_N`,
+`evolve_step_ode`, and `evolve_step` — so the formula is consistent
+across every QKE driver (D.7.1 ETDRK2, pre-D.7.1 ODE, and Strang).
+The dead `collision_step` method retains its inline symmetric form.
+
+The Mirizzi form (Mirizzi+2012 Eq. 28, coefficients from their
+Eq. 29 citing Hannestad) is `D_αβ = 0.5·G_F²·T⁴·E · [(g_α^s − g_β^s)²
++ (g_α^a + g_β^a)²]` with `g^s = √C_D`, `g^a = √C_A`, and the new
+`C_A = [0.50, 0.28, 0.28, 0.0]` annihilation coefficients. For
+active-sterile pairs this gives `D_μs = 1.25·base` vs the legacy
+symmetric `0.5·Γ_μ = 1.11·base` — a 12.6% increase that is the
+physically correct Lindblad structure but quantitatively small in
+the saturated-damping regime of our benchmarks.
+
+**Validation ladder:**
+
+| Sub-step | Target | Result |
+|---|---|---|
+| diag_2level_damped.py | L-expm ≡ analytic damped Rabi | ρ_ss = 1.580e-4 both (4 sig figs) ✓ |
+| fast tests (mode1/2/6 + ν-ν̄ symmetry) | all green | 4/4 ✓ |
+| mode5c + sterile_dw_production | all green | 2/2 ✓ |
+| stage_a_invariant + sf_asymmetry_depletion | all green | 2/2 ✓ |
+
+**Literature-comparison outcomes (Hannestad+2012 Fig. 2, Δm²=0.93 eV²):**
+
+| Point | sin²2θ | H+2012 δNeff | Ours (Mirizzi) | Δ/H |
+|---|---:|---:|---:|---:|
+| A full therm. | 1e-1 | 1.00 | 0.955 | −4.5% ✓ |
+| B partial | 2.26e-3 | 0.50 | 0.970 | +94% ✗ |
+| C minimal | 1e-4 | 0.04 | 0.858 | +2045% ✗ |
+
+**Gariazzo+2019 Fig. 3 benchmark** (Δm²=1.29, |U_μ4|²=1e-4,
+i.e. sin²2θ≈4e-4): their δNeff ≈ 0.09 vs ours 0.923 → +925%.
+
+**Diagnosis.** Mirizzi's correction to the damping *coefficients* has
+essentially no effect at small mixing (C goes from 0.85 → 0.858),
+confirming that the literature gap is **not** a damping-prefactor
+problem. Gariazzo+2019 App. A.17-A.20 (paper verified, Eq. A.16)
+uses a quite different coefficient structure (`D_μs/D_μτ = 4.23` vs
+Mirizzi's 2.23 vs our legacy 0.50), but the physics says a larger D
+in the Sigl-Raffelt weak-damping regime (`|H_diff|·dt ~ 2.6e4`,
+`D·dt ~ 11`) gives linearly *more* DW rate, yet Gariazzo's code
+reports ~10× *less* thermalization than ours. This is structurally
+inconsistent with a damping-coefficient fix, so Stage E.1 stops
+at Mirizzi-as-default and the Gariazzo form is left as a stub
+(`NotImplementedError`) behind the `"gariazzo"` flag value until
+Stage E.2 opens.
+
+**Stage E.2 (open):** deeper bug hunt for the small-mixing DW
+over-production. Three candidates flagged by
+[validation/diagnostics/README.md](../validation/diagnostics/README.md):
+1. **Collision-kernel active-sterile coupling.** We use
+   `S_gain_si = 0` for active-sterile pairs in
+   `_assemble_collision_N` (brief's own description, line 4397),
+   but Gariazzo-style formulations feed the full diagonal collision
+   integral through. Worth checking whether the missing gain term
+   matters in the weak-damping regime.
+2. **y-integration measure** in the diagonal exp-Euler step.
+3. **Evolution window** — Hannestad integrates 60 → 1 MeV, we
+   integrate further through BBN. After `T=1 MeV` the sterile is
+   decoupled and comoving occupation is preserved, so this should
+   only contribute an O(10⁻³) systematic, but worth ruling out.
+
+The new `validation/sterile_DW_gariazzo.py` script is parked for
+reuse in Stage E.2 acceptance testing. `validation/sterile_DW_literature.py`
+is unchanged (Dm²=0.93 is Hannestad-specific) and continues to
+serve as the regression target.

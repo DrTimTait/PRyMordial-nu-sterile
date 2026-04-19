@@ -133,6 +133,15 @@ qke_full_ode_flag = False
 # the flavor-basis Strang split exhibits (Stage D.4 finding). Default
 # False; zero impact on all existing code paths.
 qke_ode_etdrk2_flag = False
+# Stage E.1: off-diagonal pair damping formula.
+#   "symmetric": legacy D_{alpha,beta} = 0.5 * (Gamma_alpha + Gamma_beta).
+#     Physically wrong for active-sterile pairs (gives D_{alpha,s} = 0.5*Gamma_alpha
+#     because C_D[sterile]=0); kept for reproducing pre-E.1 results.
+#   "mirizzi":   Mirizzi+2012 Eq. 28, pair-specific,
+#     D_{alpha,beta} = 0.5*G_F^2*T^4*E*[(g_alpha^s - g_beta^s)^2 + (g_alpha^a + g_beta^a)^2]
+#     with g^s = sqrt(C_D), g^a = sqrt(C_A).
+#   "gariazzo":  Gariazzo+2019 App. A.17-A.20, sin^2(theta_W)-specific (fallback form).
+qke_damping_formula = "mirizzi"
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

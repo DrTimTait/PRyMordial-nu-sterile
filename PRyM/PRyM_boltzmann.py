@@ -2983,6 +2983,14 @@ class DensityMatrixSolver(object):
         else:
             self.C_D = np.array([3.06, 2.22, 2.22])
 
+        # Annihilation coefficients (g_alpha^a)^2 from Mirizzi+2012 Eq. 29
+        # (Hannestad ref. [33]). Used with C_D = (g_alpha^s)^2 by the Mirizzi
+        # pair-specific damping formula, PRyMini.qke_damping_formula = "mirizzi".
+        if self.n_flavor == 4:
+            self.C_A = np.array([0.50, 0.28, 0.28, 0.0])
+        else:
+            self.C_A = np.array([0.50, 0.28, 0.28])
+
         # Off-diagonal ν-e scattering couplings (for collision gain terms).
         geL = PRyMini.geL
         gmuL = PRyMini.gmuL
@@ -3277,6 +3285,81 @@ class DensityMatrixSolver(object):
 
             # Store back as vec9
             rho_all[sector] = self._to_vec(rho_new)
+
+    def _compute_D_pair_matrix(self, T_eV, E_eV, units="eV"):
+        """Off-diagonal pair damping D[alpha, beta, :] for alpha != beta.
+
+        Selected by PRyMini.qke_damping_formula:
+          - "symmetric" (legacy): D_ab = 0.5 * (Gamma_a + Gamma_b)
+                where Gamma_a = C_D[a] * GF^2 * T^4 * E.
+          - "mirizzi" (Mirizzi+2012 Eq. 28, Hannestad-style coefs):
+                D_ab = 0.5 * GF^2 * T^4 * E
+                       * [(g_a^s - g_b^s)^2 + (g_a^a + g_b^a)^2]
+                with g^s = sqrt(C_D), g^a = sqrt(C_A). Gives active-sterile
+                damping ~2.3x active-active damping; used to fix the
+                small-mixing DW overproduction relative to Hannestad+2012.
+          - "gariazzo" (Gariazzo+2019 App. A.17-A.20): NotImplementedError
+                until Step 8 of Stage E.1 (dimensional calibration).
+
+        Parameters
+        ----------
+        T_eV : float
+            Photon temperature in eV.
+        E_eV : ndarray, shape (Ny,)
+            Per-mode physical energy in eV.
+        units : {"eV", "si"}
+            Output units: "eV" (natural, for L assembly) or "si" (1/s,
+            for collision-RHS assembly).
+
+        Returns
+        -------
+        D_off : ndarray, shape (N, N, Ny)
+            Diagonal entries D[a, a] are zero; off-diagonals hold the
+            pair damping rate in the requested units.
+        """
+        N = self.n_flavor
+        Ny = E_eV.shape[0]
+        prefac = PRyMini.GF * 1.0e-12  # GF in eV^-2
+        base = (prefac**2) * (T_eV**4) * E_eV  # (Ny,) eV, common factor
+
+        formula = getattr(PRyMini, "qke_damping_formula", "symmetric")
+        D_off = np.zeros((N, N, Ny))
+
+        if formula == "symmetric":
+            Gamma = np.zeros((N, Ny))
+            for alpha in range(N):
+                Gamma[alpha] = self.C_D[alpha] * base
+            for alpha in range(N):
+                for beta in range(N):
+                    if alpha != beta:
+                        D_off[alpha, beta] = 0.5 * (Gamma[alpha] + Gamma[beta])
+        elif formula == "mirizzi":
+            g_s = np.sqrt(self.C_D)  # (g_alpha^s), shape (N,)
+            g_a = np.sqrt(self.C_A)  # (g_alpha^a), shape (N,)
+            for alpha in range(N):
+                for beta in range(N):
+                    if alpha == beta:
+                        continue
+                    scat = (g_s[alpha] - g_s[beta])**2
+                    anni = (g_a[alpha] + g_a[beta])**2
+                    D_off[alpha, beta] = 0.5 * (scat + anni) * base
+        elif formula == "gariazzo":
+            raise NotImplementedError(
+                "Gariazzo damping form requires dimensional calibration "
+                "(Stage E.1 Step 8). Use 'mirizzi' or 'symmetric'."
+            )
+        else:
+            raise ValueError(
+                f"Unknown qke_damping_formula={formula!r}; "
+                "expected one of {'symmetric', 'mirizzi', 'gariazzo'}."
+            )
+
+        if units == "si":
+            D_off *= self._eV_to_secm1
+        elif units != "eV":
+            raise ValueError(f"units must be 'eV' or 'si', got {units!r}")
+
+        return D_off
 
     def collision_step(self, rho_all, phi1_dt, dt, a, Tg):
         """Apply collision integrals to the density matrix.
@@ -3637,19 +3720,15 @@ class DensityMatrixSolver(object):
         # integral would underestimate damping near equilibrium.
         GF_eV = PRyMini.GF * 1.0e-12
         T_eV = Tg * 1.0e6
-        # Per-flavor collision damping rate Γ_α. Sterile has Γ_s = 0
-        # (C_D[3] = 0 in n_flavor=4).
-        Gamma = np.zeros((self.n_flavor, Ny))
-        for alpha in range(self.n_flavor):
-            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
-
-        # D_αβ = ½(Γ_α + Γ_β) in 1/s, for each off-diagonal pair
+        # Off-diagonal pair damping D_αβ in 1/s via shared helper. Formula
+        # selected by PRyMini.qke_damping_formula (legacy symmetric default).
         # NOTE: do NOT name the loop variable `a` here — that would shadow
         # the scale factor `a` used by the oscillation-relaxation block below.
+        D_off_si = self._compute_D_pair_matrix(T_eV, E_eV, units="si")
         n_pairs = len(self._all_pair_flavors)
         D_pairs = np.zeros((n_pairs, Ny))
         for p_idx, (_fa, _fb) in enumerate(self._all_pair_flavors):
-            D_pairs[p_idx] = 0.5 * (Gamma[_fa] + Gamma[_fb])
+            D_pairs[p_idx] = D_off_si[_fa, _fb]
 
         # Finite-mass correction for off-diagonal ν-e scattering
         if PRyMini.massive_electron_flag:
@@ -4050,18 +4129,17 @@ class DensityMatrixSolver(object):
 
         # ================================================================
         # 3. Damping rates (identical to evolve_step, minus the D_eV_osc
-        #    Sigl-Raffelt prep which is no longer needed)
+        #    Sigl-Raffelt prep which is no longer needed). Off-diagonal
+        #    pair damping via shared helper; PRyMini.qke_damping_formula
+        #    selects symmetric (legacy) / mirizzi / gariazzo.
         # ================================================================
         GF_eV = PRyMini.GF * 1.0e-12
         T_eV = Tg * 1.0e6
-        Gamma = np.zeros((self.n_flavor, Ny))
-        for alpha in range(self.n_flavor):
-            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
-
+        D_off_si = self._compute_D_pair_matrix(T_eV, E_eV, units="si")
         n_pairs = len(self._all_pair_flavors)
         D_pairs = np.zeros((n_pairs, Ny))
         for p_idx, (_fa, _fb) in enumerate(self._all_pair_flavors):
-            D_pairs[p_idx] = 0.5 * (Gamma[_fa] + Gamma[_fb])
+            D_pairs[p_idx] = D_off_si[_fa, _fb]
 
         if PRyMini.massive_electron_flag:
             fnu_emu_scat_val = 1.0
@@ -4340,18 +4418,16 @@ class DensityMatrixSolver(object):
         if 'numu' in C_NP:
             I_total[2] += C_NP['numu'](self.y_grid, a, Tg, f_all)
 
-        # 2. Damping rates (1/s)
+        # 2. Damping rates (1/s) via shared helper; PRyMini.qke_damping_formula
+        #    selects symmetric (legacy) / mirizzi / gariazzo.
         GF_eV = PRyMini.GF * 1.0e-12
         T_eV = Tg * 1.0e6
         E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
-        Gamma = np.zeros((self.n_flavor, Ny))
-        for alpha in range(self.n_flavor):
-            Gamma[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV * self._eV_to_secm1
-
+        D_off_si = self._compute_D_pair_matrix(T_eV, E_eV, units="si")
         n_pairs = len(self._all_pair_flavors)
         D_pairs = np.zeros((n_pairs, Ny))
         for p_idx, (_fa, _fb) in enumerate(self._all_pair_flavors):
-            D_pairs[p_idx] = 0.5 * (Gamma[_fa] + Gamma[_fb])
+            D_pairs[p_idx] = D_off_si[_fa, _fb]
 
         # 3. Per-sector assembly
         N_list = [np.zeros((Ny, N, N), dtype=complex) for _ in range(2)]
@@ -4432,21 +4508,15 @@ class DensityMatrixSolver(object):
 
         H_list = self._build_H_list(rho_all, a, Tg)
 
-        # Gamma_alpha per mode, in eV (mirrors the _assemble_collision_N formula
-        # but drops the _eV_to_secm1 factor that converts 1/eV to 1/s).
-        GF_eV = PRyMini.GF * 1.0e-12
+        # Off-diagonal pair damping in eV via shared helper; mirrors the
+        # _assemble_collision_N formula but drops the _eV_to_secm1 factor
+        # that converts 1/eV to 1/s. PRyMini.qke_damping_formula selects
+        # symmetric (legacy) / mirizzi / gariazzo. Both halves of the D.7.1
+        # cancellation (-D·ρ in _assemble_collision_N, +D·ρ add-back here)
+        # must use the same formula — the shared helper guarantees this.
         T_eV = Tg * 1.0e6
         E_eV = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
-        Gamma_eV = np.zeros((N, Ny))
-        for alpha in range(N):
-            Gamma_eV[alpha] = self.C_D[alpha] * GF_eV**2 * T_eV**4 * E_eV
-
-        # Off-diagonal pair damping only. D_off_eV[alpha, beta, :] for alpha != beta.
-        D_off_eV = np.zeros((N, N, Ny))
-        for alpha in range(N):
-            for beta in range(N):
-                if alpha != beta:
-                    D_off_eV[alpha, beta] = 0.5 * (Gamma_eV[alpha] + Gamma_eV[beta])
+        D_off_eV = self._compute_D_pair_matrix(T_eV, E_eV, units="eV")
 
         # Build L[s, i] in the row-major vec(rho) space.
         I_N = np.eye(N, dtype=complex)

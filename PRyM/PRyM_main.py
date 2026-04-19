@@ -47,6 +47,8 @@ class PRyMclass(object):
             # User can force recomputation by setting compute_nTOp_flag=True explicitly.
             if not PRyMini.NP_nTOp_flag:
                 PRyMini.compute_nTOp_flag = False
+        # Validate the (post-cascade) flag configuration. See doc/FLAG_AUDIT.md.
+        PRyMini.validate_configuration()
         # Loading general neutrino distribution functions (if general_nu_flag is True)
         if(PRyMini.general_nu_flag):
             if my_f_nue is not None:

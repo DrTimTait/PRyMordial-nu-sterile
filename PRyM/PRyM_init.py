@@ -599,3 +599,142 @@ ppndp_T9,ppndp_median,ppndp_expsigma = np.loadtxt(dir_other_rates+"ppndp.txt",un
 # Li7t -> aann
 alpha_Li7taann,beta_Li7taann,gamma_Li7taann = 1.2153497*10**-19,-3.,-102.86767
 Li7taann_T9,Li7taann_median,Li7taann_expsigma = np.loadtxt(dir_other_rates+"Li7taann.txt",unpack = True)
+
+#########################
+# Configuration validator #
+#########################
+# Called once from PRyMclass.__init__ to catch mis-configurations early.
+# See doc/FLAG_AUDIT.md for the rationale; the guards here target the
+# failure modes enumerated there.
+
+_QKE_DAMPING_FORMULAS = ("symmetric", "mirizzi", "gariazzo")
+_NU_OSCILLATION_METHODS = ("collision_mixing", "relaxation")
+
+
+def validate_configuration():
+    """Validate PRyMini flag combinations and warn on silent-null configs.
+
+    Raises ValueError on string-typed flags with disallowed values (typos
+    caught at construction rather than deep in the call stack). Emits
+    warnings via `print` on combinations that parse legally but produce
+    silently nonsensical or mis-scaled results. PRyMclass.__init__ also
+    performs its own auto-enable cascade for the qke / boltzmann /
+    general_nu chain; this function is complementary, covering the checks
+    that auto-enable can't express.
+    """
+    import warnings as _warnings
+
+    # 1. String-typed flags: reject typos immediately.
+    if qke_damping_formula not in _QKE_DAMPING_FORMULAS:
+        raise ValueError(
+            f"PRyMini.qke_damping_formula = {qke_damping_formula!r} is not "
+            f"a recognised value. Allowed: {_QKE_DAMPING_FORMULAS}."
+        )
+    if nu_oscillation_method not in _NU_OSCILLATION_METHODS:
+        raise ValueError(
+            f"PRyMini.nu_oscillation_method = {nu_oscillation_method!r} is not "
+            f"a recognised value. Allowed: {_NU_OSCILLATION_METHODS}."
+        )
+
+    # 2. QKE driver chain: warn on upstream-disabled configs. Auto-enable
+    #    already covers qke_density_matrix_flag -> boltzmann_nu_flag, but
+    #    the Stage D ETD1 / ETDRK2 flags are not in that cascade.
+    if qke_ode_etdrk2_flag and not qke_full_ode_flag:
+        _warnings.warn(
+            "PRyMini.qke_ode_etdrk2_flag=True requires qke_full_ode_flag=True; "
+            "the ETDRK2 path will be inactive. Set both or neither.",
+            stacklevel=2,
+        )
+    if qke_full_ode_flag and not qke_density_matrix_flag:
+        _warnings.warn(
+            "PRyMini.qke_full_ode_flag=True requires qke_density_matrix_flag=True; "
+            "the Stage D ODE driver will be inactive. Set both or neither.",
+            stacklevel=2,
+        )
+
+    # 3. Silently-ignored knobs: warn when user-set but the gating flag is off.
+    if not sterile_flag:
+        for name, val in (("xi_nue_init", xi_nue_init),
+                          ("xi_numu_init", xi_numu_init),
+                          ("xi_nutau_init", xi_nutau_init)):
+            if val != 0.0:
+                _warnings.warn(
+                    f"PRyMini.{name} = {val} is non-zero but sterile_flag=False; "
+                    "the value is ignored. Set sterile_flag=True to seed an "
+                    "active-sector lepton asymmetry.",
+                    stacklevel=2,
+                )
+    if not nlo_weak_flag and nlo_weak_rate_scale != 1.003:
+        _warnings.warn(
+            f"PRyMini.nlo_weak_rate_scale = {nlo_weak_rate_scale} but "
+            "nlo_weak_flag=False; the value is ignored. Set nlo_weak_flag=True "
+            "to activate the scaled nu-e rates.",
+            stacklevel=2,
+        )
+
+    # 4. Sterile-on but no active-sterile mixing: ρ_ss will remain at zero,
+    #    so Neff is bit-identical to sterile_flag=False.
+    if sterile_flag and (theta_14 == 0.0 and theta_24 == 0.0 and theta_34 == 0.0
+                         and xi_nue_init == 0.0 and xi_numu_init == 0.0
+                         and xi_nutau_init == 0.0):
+        _warnings.warn(
+            "PRyMini.sterile_flag=True but all active-sterile mixing angles "
+            "(theta_14, theta_24, theta_34) and all xi_* are zero; the sterile "
+            "sector is fully decoupled and rho_ss will stay at zero. "
+            "Set at least one non-zero theta_α4 to enable Dodelson-Widrow, or "
+            "set xi_nue_init to drive Shi-Fuller.",
+            stacklevel=2,
+        )
+
+    # 5. Verbose-mode physics-config summary. Catches Category-3 silent-nulls
+    #    by making the effective-physics config explicit at run start.
+    if verbose_flag:
+        _print_physics_config_summary()
+
+
+def _print_physics_config_summary():
+    """Print the active physics configuration at PRyMclass construction."""
+    lines = ["PRyMini effective configuration:"]
+
+    # Evolution driver
+    if qke_density_matrix_flag:
+        if qke_ode_etdrk2_flag and qke_full_ode_flag:
+            driver = "QKE density-matrix, Stage D.7 ETDRK2 driver"
+        elif qke_full_ode_flag:
+            driver = "QKE density-matrix, Stage D ODE driver"
+        else:
+            driver = "QKE density-matrix, Strang/Sigl-Raffelt driver"
+    elif boltzmann_nu_flag:
+        driver = "diagonal Boltzmann (general_nu)"
+    else:
+        driver = "thermal (analytic, no general_nu)"
+    lines.append(f"  driver: {driver}")
+
+    # PMNS status
+    pmns_off = (theta_12 == 0.0 and theta_13 == 0.0 and theta_23 == 0.0)
+    lines.append(f"  PMNS active-active mixing: {'OFF' if pmns_off else 'ON (PDG defaults or user-set)'}")
+
+    # Sterile status
+    if sterile_flag:
+        mixing_on = (theta_14 != 0.0 or theta_24 != 0.0 or theta_34 != 0.0)
+        lines.append(
+            f"  sterile (3+1): ON, Dm2_41={Dm2_41}, mixing {'ON' if mixing_on else 'OFF'}"
+        )
+    else:
+        lines.append("  sterile (3+1): OFF")
+
+    # Damping formula / oscillation method
+    lines.append(f"  qke_damping_formula: {qke_damping_formula!r}")
+    lines.append(f"  nu_oscillation_method: {nu_oscillation_method!r}")
+
+    # Temperature windows
+    T_boltz_start_val = T_boltz_start
+    T_boltz_end_val = T_boltz_end
+    lines.append(
+        f"  T_start = {T_start / MeV_to_Kelvin:.1f} MeV, "
+        f"T_boltz_start = {T_boltz_start_val} MeV, "
+        f"T_boltz_end = {T_boltz_end_val} MeV"
+    )
+
+    for line in lines:
+        print(line)

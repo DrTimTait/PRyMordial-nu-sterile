@@ -20,7 +20,8 @@
       "Bash(awk 'NR==7 {print \"first data:\", $0} END {print \"last:\", $0}' PRyMrates/thermo/QED_P_int.txt)",
       "Bash(awk 'NR==7 {print \"first T:\", $1} NR==10007 {print \"last T:\", $1}' PRyMrates/thermo/QED_P_int.txt)",
       "Bash(tee validation/diagnostics/diag_2level_high_T.out)",
-      "Bash(tee validation/diagnostics/diag_2level_damped.out)"
+      "Bash(tee validation/diagnostics/diag_2level_damped.out)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

@@ -1,0 +1,31 @@
+================================================================================================
+Stage E.2 sprint-3: y-grid Ny convergence (hypothesis C)
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi, window=5 MeV.
+Sprint-2 Ny=100 baseline: Neff=3.88605, dNeff=+0.8453, sum_rho_ss=5.08.
+================================================================================================
+
+-- 3x3 references (no sterile) --
+  3x3 reference, Ny=100                              Neff=3.04069  Yp=0.24847  D/H=2.4725  sum_rho_ss=-0.000  (665s)
+  3x3 reference, Ny=200                              Neff=3.04048  Yp=0.24846  D/H=2.4706  sum_rho_ss=-0.001  (3365s)
+
+-- Hannestad Point C --
+  Point C, Ny=50                                     Neff=3.90904  Yp=0.26042  D/H=2.7876  sum_rho_ss=2.624  (362s)
+     dNeff = +0.8683  (3x3 ref at Ny=100: 3.04069)
+
+  Point C, Ny=100                                    Neff=3.89870  Yp=0.26037  D/H=2.7848  sum_rho_ss=4.963  (1016s)
+     dNeff = +0.8580  (3x3 ref at Ny=100: 3.04069)
+
+  Point C, Ny=200                                    Neff=3.89523  Yp=0.26038  D/H=2.7876  sum_rho_ss=9.751  (3961s)
+     dNeff = +0.8547  (3x3 ref at Ny=200: 3.04048)
+
+================================================================================================
+    Ny       Neff      dNeff     sum_rho_ss   ref_Ny   runtime(s)
+------------------------------------------------------------------------------------------------
+    50    3.90904    +0.8683          2.624      100          362
+   100    3.89870    +0.8580          4.963      100         1016
+   200    3.89523    +0.8547          9.751      200         3961
+================================================================================================
+
+Decision:
+  - dNeff stable within 1e-2 across 50/100/200 -> hypothesis C ruled out.
+  - monotone drift > 5e-2 in dNeff             -> C real; consider log-y / GL grid.

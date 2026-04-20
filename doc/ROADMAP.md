@@ -658,11 +658,55 @@ but the shift is not monotone, so the dominant small-mixing DW
 overproduction bug is not simply a missing high-T window. The
 engineering fixes (auto-scaled n_B, zero-above-40-MeV QED clamp)
 are worth keeping regardless. Hypothesis B is effectively
-**closed**; hypothesis C (y-grid discretisation) is now the most
-likely remaining structural candidate.
+**closed**; hypothesis C (y-grid discretisation) tested below.
 
-**Open: hypothesis C (y-grid discretisation).** The third
-candidate from `doc/STAGE_E2_BRIEF.md`; not tested in this sprint.
+**E.2 sprint 3 — hypothesis C (y-grid discretisation): FALSIFIED.**
+`validation/diagnostics/diag_ny_convergence.py` runs Point C at
+`Ny_boltz ∈ {50, 100, 200}` (default 5-MeV window, PMNS on, Mirizzi).
+Matched-Ny 3x3 references used for ΔNeff (Ny=50/100 use the Ny=100
+reference, Ny=200 uses the Ny=200 reference — the 3x3 Neff shifts by
+only 2e-4 across 100↔200, so reference drift is a non-issue).
+
+| Ny | Neff | ΔNeff | sum ρ_ss | runtime |
+|---:|---:|---:|---:|---:|
+| 50 | 3.90904 | +0.8683 | 2.624 | 6 min |
+| 100 | 3.89870 | +0.8580 | 4.963 | 17 min |
+| 200 | 3.89523 | +0.8547 | 9.751 | 66 min |
+
+ΔNeff drifts monotonically 0.8683 → 0.8580 → 0.8547. Total drift
+Ny=50→200 is +0.014, just above the brief's 1e-2 rule-out threshold
+but clearly converging (deceleration ratio 0.3 between successive
+steps; Richardson asymptote ≈ 0.852). **Even at Ny→∞, ΔNeff
+stays at ~0.85** — nowhere near the Hannestad+2012 target of 0.04.
+The y-grid discretisation is NOT the cause of the 10× small-mixing
+DW overproduction. Ny=400 not tested (O(Ny³) cost prohibitive); the
+trend is decisive without it.
+
+Note: `sum_rho_ss` doubles with each Ny doubling (2.6 → 5.0 → 9.8).
+That's a diagnostic-script artefact — `rho[:, 3, :].sum()` is an
+un-normalised grid-point sum, so O(Ny)-scaling is expected and not
+a physics signal. Neff is computed correctly via the integral
+normalisation inside PRyMclass, which is the quantity that matters.
+
+**Open: all three E.2 brief-named structural candidates now
+falsified or non-causal.** The 10× small-mixing DW overproduction
+is elsewhere. Next structural candidates (from the sprint-2
+"post-fix opportunities" list):
+
+1. **Gariazzo damping form** — `qke_damping_formula = "gariazzo"`
+   is stubbed with `NotImplementedError`. Their sin²(θ_W)-specific
+   fallback Eq. A.17-A.20 is structurally different from Mirizzi
+   Eq. 28 and may be the difference.
+2. **FortEPiaNO cross-check** —
+   `https://bitbucket.org/ahep_cosmo/fortepiano_public`. Option (c)
+   from the original E.2 brief, ~8+ hours. Compare their
+   `collision_terms.f90` (or equivalent) directly against
+   PRyMordial's `_assemble_collision_N`, identify the discrepancy
+   line-by-line. The most expensive but most definitive next step.
+3. **Shi-Fuller literature (Saviano+2013)** — same QKE framework,
+   different physics focus. A clean cross-check on a related
+   problem may expose whatever asymmetric-treatment bug is driving
+   the DW gap.
 
 The new `validation/sterile_DW_gariazzo.py` script is parked for
 reuse in post-E.2 acceptance testing. `validation/sterile_DW_literature.py`

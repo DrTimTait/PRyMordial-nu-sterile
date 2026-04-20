@@ -142,6 +142,12 @@ qke_ode_etdrk2_flag = False
 #     with g^s = sqrt(C_D), g^a = sqrt(C_A).
 #   "gariazzo":  Gariazzo+2019 App. A.17-A.20, sin^2(theta_W)-specific (fallback form).
 qke_damping_formula = "mirizzi"
+# Stage E.2 sprint 4: global multiplier on the pair-damping rate D_{a,b}.
+# Default 1.0 (no effect). Non-unit values multiply every off-diagonal
+# damping entry returned by DensityMatrixSolver._compute_D_pair_matrix.
+# Intended only as a diagnostic knob for sensitivity tests against
+# FortEPiaNO-scale references; do NOT set != 1.0 in production runs.
+qke_damping_scale = 1.0
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

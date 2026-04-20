@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 .pytest_cache/
 .hypothesis/
+# External reference implementations cloned for cross-validation (Stage E.2
+# sprint 4 onwards). Kept out-of-tree to avoid committing upstream code.
+References/external/

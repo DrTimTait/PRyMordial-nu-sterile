@@ -1,0 +1,28 @@
+================================================================================================
+Stage E.2 sprint-4: damping-magnitude sensitivity (PRyMini.qke_damping_scale)
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi, window=5 MeV.
+Sprint-2 baseline (scale=1.0): Neff=3.88605, dNeff=+0.8453, sum_rho_ss=5.08.
+================================================================================================
+  3x3 reference (no sterile, scale=1.0)                        Neff=3.04069  Yp=0.24847  D/H=2.4725  sum_rho_ss=-0.000  (685s)
+
+  Point C, qke_damping_scale = 0.3                             Neff=3.86804  Yp=0.26008  D/H=2.7771  sum_rho_ss=5.182  (939s)
+     dNeff = +0.8273
+
+  Point C, qke_damping_scale = 1.0                             Neff=3.89870  Yp=0.26037  D/H=2.7848  sum_rho_ss=4.963  (917s)
+     dNeff = +0.8580
+
+  Point C, qke_damping_scale = 3.0                             Neff=3.89937  Yp=0.26039  D/H=2.7809  sum_rho_ss=4.978  (1012s)
+     dNeff = +0.8587
+
+================================================================================================
+   scale       Neff      dNeff     sum_rho_ss   runtime(s)
+------------------------------------------------------------------------------------------------
+    0.30    3.86804    +0.8273          5.182          939
+    1.00    3.89870    +0.8580          4.963          917
+    3.00    3.89937    +0.8587          4.978         1012
+================================================================================================
+
+Regime diagnosis:
+  - dNeff linear in scale (0.3x -> 0.3x dNeff)  -> damping-dominated, D magnitude matters.
+  - dNeff constant across scales                -> NOT damping-dominated. Bug elsewhere.
+  - partial trend                              -> mixed regime.

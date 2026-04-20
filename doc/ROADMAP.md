@@ -690,23 +690,73 @@ normalisation inside PRyMclass, which is the quantity that matters.
 
 **Open: all three E.2 brief-named structural candidates now
 falsified or non-causal.** The 10× small-mixing DW overproduction
-is elsewhere. Next structural candidates (from the sprint-2
-"post-fix opportunities" list):
+is elsewhere.
 
-1. **Gariazzo damping form** — `qke_damping_formula = "gariazzo"`
-   is stubbed with `NotImplementedError`. Their sin²(θ_W)-specific
-   fallback Eq. A.17-A.20 is structurally different from Mirizzi
-   Eq. 28 and may be the difference.
-2. **FortEPiaNO cross-check** —
-   `https://bitbucket.org/ahep_cosmo/fortepiano_public`. Option (c)
-   from the original E.2 brief, ~8+ hours. Compare their
-   `collision_terms.f90` (or equivalent) directly against
-   PRyMordial's `_assemble_collision_N`, identify the discrepancy
-   line-by-line. The most expensive but most definitive next step.
-3. **Shi-Fuller literature (Saviano+2013)** — same QKE framework,
-   different physics focus. A clean cross-check on a related
-   problem may expose whatever asymmetric-treatment bug is driving
-   the DW gap.
+**E.2 sprint 4 — damping-magnitude sensitivity: ruled out.**
+FortEPiaNO was cloned to `References/external/` (gitignored) and
+an Explore-agent surveyed its collision-term and QKE structure.
+Three differences vs PRyMordial surfaced: (i) FortEPiaNO has no
+`V_NC` on active diagonals (matter.f90 comment literally
+`!missing: term for NC!`), (ii) damping absolute normalisation
+differs by ~2.6× (PRyMordial Mirizzi > FortEPiaNO McKellar for
+active-sterile), (iii) FortEPiaNO uses a single-solver LSODA while
+PRyMordial does Strang-symmetric ETDRK2 splitting.
+
+To test whether damping magnitude is the bug, a `qke_damping_scale`
+diagnostic knob was added to `DensityMatrixSolver._compute_D_pair_matrix`
+(default 1.0 = no-op, preserving regression tests bit-identically).
+`validation/diagnostics/diag_damping_scale.py` swept scale ∈
+{0.3, 1.0, 3.0} at Point C:
+
+| scale | Neff | ΔNeff | sum ρ_ss | runtime |
+|---:|---:|---:|---:|---:|
+| 0.3 | 3.86804 | +0.8273 | 5.18 | 16 min |
+| 1.0 | 3.89870 | +0.8580 | 4.96 | 15 min |
+| 3.0 | 3.89937 | +0.8587 | 4.98 | 17 min |
+
+**ΔNeff varies by only 4% across a 10× damping sweep.** The
+classical Dodelson-Widrow regime is linear in damping (0.3× ⇒
+0.3× ΔNeff); we see essentially no response. PRyMordial is in a
+**fully-saturated regime** where ρ_ss reaches near-thermal
+regardless of D magnitude. Damping coefficient form (Mirizzi vs
+FortEPiaNO McKellar vs Bennett+2020) cannot close the 20× gap.
+
+Initial-conditions comparison (sprint-4, no commit): both codes
+start from empty sterile and thermal actives. FortEPiaNO evolves
+the *deviation* `ρ_dev = ρ_full/f_eq − δ`, PRyMordial evolves
+`ρ_full`. These are mathematically equivalent. Physical ICs match.
+No IC-layer bug identified, but two IC-adjacent audits are parked:
+(a) Phase A's perfect-thermal assumption at T_boltz_start vs the
+active-depletion FortEPiaNO tracks across 60→5 MeV, and (b)
+whether any `_build_L_list` / `_assemble_collision_N` term fires
+specifically because ρ_ss=0 (empty-sterile edge case).
+
+**Next structural candidates**, ranked post-sprint-4:
+
+1. **Effective-mixing amplification (Hamiltonian issue)**. The
+   saturation pattern is consistent with sin²2θ_m → 1 in-medium,
+   regardless of the bare sin²2θ=1e-4. PRyMordial's `V_NC` on
+   active diagonals (without the matching sterile entry) creates
+   an active-sterile matter gap. Is the sign / scope / magnitude
+   correct? Line-by-line audit of `_build_H_list` against the
+   Notzold-Raffelt and Sigl-Raffelt conventions.
+2. **Strang-split time evolution**. ρ_ss is populated *only*
+   through the off-diagonal ETDRK2 commutator; diagonal collisions
+   never touch it. Controlled test: drop into the D.7 predictor
+   path (no Strang split, single-phase off-diag ETDRK2) at Point C
+   and compare.
+3. **Representation-factor leak**. FortEPiaNO's
+   `nuDensMatVecFD(i,j)` for off-diagonals divides by f_eq(y).
+   PRyMordial's ρ_full(α,β) carries the f_eq(y) shape in. If
+   PRyMordial's L-builder accidentally applies damping to ρ/f_eq
+   somewhere, we'd see a y-shape mismatch that could amplify
+   coherence. Grep `_build_L_list` for any `f_eq` or
+   `np.maximum(f, ...)` multiplier.
+4. **Gariazzo damping form** (from original sprint-2 post-fix list):
+   `qke_damping_formula = "gariazzo"` still stubbed. Lower priority
+   after sprint-4 shows damping form doesn't matter.
+5. **Shi-Fuller literature (Saviano+2013)**: cross-check on related
+   physics; may expose the same structural bug indirectly.
 
 The new `validation/sterile_DW_gariazzo.py` script is parked for
 reuse in post-E.2 acceptance testing. `validation/sterile_DW_literature.py`

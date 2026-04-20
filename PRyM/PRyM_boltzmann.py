@@ -3359,6 +3359,11 @@ class DensityMatrixSolver(object):
         elif units != "eV":
             raise ValueError(f"units must be 'eV' or 'si', got {units!r}")
 
+        # Stage E.2 sprint 4 diagnostic knob: global D scaling.
+        _damp_scale = getattr(PRyMini, "qke_damping_scale", 1.0)
+        if _damp_scale != 1.0:
+            D_off = D_off * _damp_scale
+
         return D_off
 
     def collision_step(self, rho_all, phi1_dt, dt, a, Tg):

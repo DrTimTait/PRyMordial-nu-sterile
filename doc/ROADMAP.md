@@ -580,16 +580,89 @@ pushes `T_start = 60 MeV` but keeps `T_boltz_start = 5 MeV`
 default-window baseline to 0.7%. This confirms the dramatic shifts
 above are Phase-B-QKE effects, not Phase-A artefacts.
 
-**B conclusion.** Window extension moves ΔNeff in the right
-direction, but the numerics at T > 5 MeV are unreliable, so we
-cannot commit a fix. A proper test of B requires stabilising
-Phase B's Froustey entropy equation and the ETDRK2 step-size
-policy at high T — a dedicated engineering task parked for a
-future sprint.
+**B conclusion (sprint 1).** Window extension moves ΔNeff in the
+right direction, but the numerics at T > 5 MeV are unreliable, so we
+could not commit a fix. A proper test of B requires stabilising
+Phase B's Froustey entropy equation and the ETDRK2 step-size policy
+at high T — addressed in sprint 2 below.
+
+**E.2 sprint 2 — Phase B stabilisation at extended windows: LANDED.**
+Three suspects from `doc/STAGE_E2_SPRINT2_BRIEF.md` were
+investigated and two of three mitigations landed as code changes.
+
+**Suspect 1 (n_B T-range-blind): partially confirmed, mitigated.**
+`validation/diagnostics/diag_nB_convergence.py` scanned
+`n_B ∈ {2000, 5000, 10000}` at T_boltz_start = 30 MeV (Point C):
+
+| n_B | Neff | ΔNeff | sum ρ_ss | runtime |
+|---:|---:|---:|---:|---:|
+| 2000 | 3.11177 | +0.1019 | 25.829 | 13 min |
+| 5000 | 3.04367 | +0.0338 | 26.976 | 34 min |
+| 10000 | 3.08632 | +0.0764 | 27.405 | 66 min |
+
+`sum ρ_ss` converges monotonically (Δ: +1.15 → +0.43), asymptote
+~27.6. Neff is noisier at the ±0.05 level; step count isn't the
+sole driver. Sprint 1's n_B=2000 was clearly too coarse at 30 MeV
+(~6% error in sum ρ_ss, and most damaging at the 60 MeV catastrophe
+below). Fix landed in `PRyM.PRyM_init.validate_configuration`: when
+`qke_full_ode_flag=True` and `n_B_override is None`,
+`n_B_override = int(2000 · max(1, decades/3)^4)`, calibrated so that
+at T_boltz_start=30 MeV it lands `n_B ~ 5031` (sum ρ_ss stabilised),
+at 60 MeV `n_B ~ 6836`, and at the default 5 MeV window yields
+exactly 2000 (regression tests bit-identical).
+
+**Suspect 2 (QED extrapolation above 40 MeV): confirmed by
+inspection, mitigated.**
+`PRyMrates/thermo/QED_P_int.txt` + siblings all cap at T = 40 MeV;
+baseline `interp1d`s used `fill_value="extrapolate"`, so at T = 60
+MeV the corrections are linearly extrapolated (see
+`validation/diagnostics/diag_thermo_ranges.py`). The O(e^4) tables
+already clamped to zero via `fill_value=0.0`. Fix landed in
+`PRyM.PRyM_thermo`: baseline `PofT`, `dPdT`, `d2PdT2` now
+zero-clamp above `_T_QED_TABLE_TOP = 40 MeV` (matching the e⁴
+precedent), with a validator warning when
+`T_boltz_start > 40 MeV and qke_full_ode_flag=True`. Fractional
+effect on `spl` at 60 MeV: +0.18% (safely dominated by
+`drho_g_dT + drho_e_dT` in the Phase A denominator). Below 40 MeV
+behaviour is bit-identical.
+
+**Suspect 3 (ETDRK2 expm at |L·dt| ≫ 1): ruled out.**
+`validation/diagnostics/diag_2level_high_T.py` built the full 4×4 L
+at T=60 MeV for the first Phase B step and compared
+`_etdrk2_expm_phi`'s Phi0 against `scipy.linalg.expm(L·dt)` directly.
+At `||L·dt||_inf = 2.65e4` the Al-Mohy augmented-matrix construction
+matches to `3.4e-21` relative, with finite Phi1/Phi2 and no
+NaN/Inf. The expm driver is not the bug.
+
+**Post-fix window scan (`diag_qke_window.py`, Point C).**
+
+| T_boltz_start | Neff (sprint 1) | Neff (sprint 2) | ΔNeff (s2) | sum ρ_ss (s2) |
+|---:|---:|---:|---:|---:|
+| 5 MeV | 3.886 | 3.886 | +0.845 | 5.08 |
+| 30 MeV | 3.090 | 3.156 | +0.116 | 26.8 |
+| 60 MeV | **13.66** | **3.795** | +0.754 | 35.9 |
+
+Sprint 2's **60 MeV value is physical**; sprint 1's was not. All
+three runs are now internally runnable without spurious Neff
+blowups. However, ΔNeff across the three windows is
+**non-monotone** (0.85 → 0.12 → 0.75) — so hypothesis B is **not a
+clean window-mismatch story**. Sprint 1's "suspiciously close to
+Hannestad 0.04" ΔNeff=0.0496 at 30 MeV was partly a methodology
+artefact (3x3 reference at window=5 MeV produces `Neff=3.04071`
+while at window=30 MeV it is `Neff=3.00991` — the matched-window
+ΔNeff is 0.15, not 0.05).
+
+**B conclusion (post-sprint 2).** Window extension does alter
+ΔNeff substantially, so the 5-MeV default window is not neutral —
+but the shift is not monotone, so the dominant small-mixing DW
+overproduction bug is not simply a missing high-T window. The
+engineering fixes (auto-scaled n_B, zero-above-40-MeV QED clamp)
+are worth keeping regardless. Hypothesis B is effectively
+**closed**; hypothesis C (y-grid discretisation) is now the most
+likely remaining structural candidate.
 
 **Open: hypothesis C (y-grid discretisation).** The third
 candidate from `doc/STAGE_E2_BRIEF.md`; not tested in this sprint.
-Lowest likelihood per the brief.
 
 The new `validation/sterile_DW_gariazzo.py` script is parked for
 reuse in post-E.2 acceptance testing. `validation/sterile_DW_literature.py`

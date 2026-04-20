@@ -1,0 +1,21 @@
+H_aa-H_ss = -4.364e-08 eV,  H_as = 2.214e-10+0.000e+00j eV,  D_pair = 1.786e-11 eV
+|H_diff|·dt_nat = 2.652e+04
+|H_off|·dt_nat  = 1.346e+02
+D_pair·dt_nat   = 1.085e+01
+
+Initial rho_μμ = 2.592e-01  (from PRyMordial FD)
+
+Analytical 2-level WITH damping, one step:
+  ρ_μμ new = 2.591e-01
+  ρ_ss new = 1.580e-04  (from 0)
+  ρ_μs new = -1.314e-03+5.468e-07j
+
+PRyMordial 4x4 L-expm one step:
+  ρ_μμ new (diag 1) = 2.591e-01
+  ρ_ss new (diag 3) = 1.580e-04
+  ρ_μs new          = -1.314e-03+5.468e-07j
+
+Comparison of ρ_ss growth:
+  Analytical 2-level (damped): 1.580e-04
+  PRyMordial 4x4:              1.580e-04
+  Ratio (PRyMordial / 2-level): 1.000

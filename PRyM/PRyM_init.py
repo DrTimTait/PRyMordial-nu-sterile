@@ -621,8 +621,16 @@ def validate_configuration():
     performs its own auto-enable cascade for the qke / boltzmann /
     general_nu chain; this function is complementary, covering the checks
     that auto-enable can't express.
+
+    Also mutates `n_B_override` when the user leaves it at None and the
+    Phase B temperature window is wider than the default (Stage E.2
+    sprint 2). This is the one path in this function that modifies
+    module state; the alternative (silently running Phase B with a
+    too-coarse step grid at T >> 5 MeV) produced the internally
+    inconsistent results documented in doc/STAGE_E2_SPRINT2_BRIEF.md.
     """
     import warnings as _warnings
+    global n_B_override  # auto-scaled below when window extends beyond default
 
     # 1. String-typed flags: reject typos immediately.
     if qke_damping_formula not in _QKE_DAMPING_FORMULAS:
@@ -686,7 +694,54 @@ def validate_configuration():
             stacklevel=2,
         )
 
-    # 5. Verbose-mode physics-config summary. Catches Category-3 silent-nulls
+    # 5. QKE Phase B step-count auto-scale. The default n_B = max(2000, 2*
+    #    n_sampling) at PRyM_main.py:317 is calibrated for T_boltz_start =
+    #    5 MeV, T_boltz_end = 0.005 MeV (3.0 decades in T). Extending the
+    #    window to higher T_boltz_start requires more steps to resolve the
+    #    collision damping that dominates at high T; without scaling, Stage
+    #    E.2 sprint 1 observed dNeff=0.05 with sum_rho_ss=26.17 at
+    #    T_boltz_start=30 MeV (internally inconsistent) and Neff=13.66 at
+    #    60 MeV (unphysical). The exponent-4 heuristic below was pinned
+    #    from a sprint-2 n_B-convergence scan
+    #    (validation/diagnostics/diag_nB_convergence.py) where sum_rho_ss
+    #    stabilised around n_B ~ 5000 at T_boltz_start = 30 MeV. At the
+    #    default window the scale factor is exactly 1.0, so regression-test
+    #    results are bit-identical.
+    if qke_full_ode_flag and n_B_override is None \
+            and T_boltz_start > 0.0 and T_boltz_end > 0.0 \
+            and T_boltz_start > T_boltz_end:
+        decades = np.log10(T_boltz_start / T_boltz_end)
+        decades_default = 3.0   # log10(5.0 / 0.005)
+        scale = max(1.0, decades / decades_default)
+        if scale > 1.0:
+            n_B_override = int(2000 * scale**4)
+            print(
+                f"PRyMini.validate_configuration: T window "
+                f"[{T_boltz_start}, {T_boltz_end}] MeV spans {decades:.2f} "
+                f"decades (default {decades_default:.1f}); auto-scaling "
+                f"n_B_override = {n_B_override} to preserve Phase B "
+                "resolution. Set n_B_override explicitly to opt out."
+            )
+
+    # 6. QED correction tables top out at T = 40 MeV. Above that top the
+    #    baseline interpolators zero-clamp rather than linear-extrapolate
+    #    (PRyM_thermo.py, _T_QED_TABLE_TOP). That is numerically safe but
+    #    drops the O(alpha/pi) ~ 0.2% QED correction to the plasma
+    #    pressure at T > 40 MeV. Warn so users running extended windows
+    #    know to regenerate the tables (PRyMrates/thermo/QED_P_int.txt and
+    #    siblings, NUDEC_BSM v2) if that precision matters.
+    if qke_full_ode_flag and T_boltz_start > 40.0:
+        _warnings.warn(
+            f"PRyMini.T_boltz_start = {T_boltz_start} MeV exceeds the top "
+            "of the baseline QED correction tables (40 MeV). Above 40 MeV "
+            "the O(e^2)+O(e^3) plasma corrections zero-clamp in PRyM_thermo; "
+            "fractional effect on Neff is O(alpha/pi) ~ 0.2%. Regenerate "
+            "PRyMrates/thermo/QED_P_int.txt and siblings via NUDEC_BSM v2 "
+            "to extend coverage if needed.",
+            stacklevel=2,
+        )
+
+    # 7. Verbose-mode physics-config summary. Catches Category-3 silent-nulls
     #    by making the effective-physics config explicit at run start.
     if verbose_flag:
         _print_physics_config_summary()

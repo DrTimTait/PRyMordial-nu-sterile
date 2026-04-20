@@ -14,7 +14,13 @@
       "Bash(PYTHON_JULIAPKG_EXE=/usr/local/bin/julia python -c \"\nimport os\nos.environ['PYTHON_JULIAPKG_EXE'] = '/usr/local/bin/julia'\nimport juliapkg\nprint\\('project:', juliapkg.project\\(\\)\\)\nprint\\('executable:', juliapkg.executable\\(\\)\\)\n\" 2>&1)",
       "Bash(gh auth:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(awk 'NR==7 {print \"first data:\", $0} END {print \"last:\", $0}' PRyMrates/thermo/QED_P_int.txt)",
+      "Bash(awk 'NR==7 {print \"first T:\", $1} NR==10007 {print \"last T:\", $1}' PRyMrates/thermo/QED_P_int.txt)",
+      "Bash(tee validation/diagnostics/diag_2level_high_T.out)",
+      "Bash(tee validation/diagnostics/diag_2level_damped.out)"
     ]
   }
 }

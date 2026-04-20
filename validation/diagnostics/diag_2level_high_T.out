@@ -1,0 +1,46 @@
+========================================================================================
+Stage E.2 sprint-2 (scope b): 2-level damped expm at T=60 MeV (Suspect 3)
+========================================================================================
+
+T                   = 60.0 MeV
+Phase B window      = 60 MeV -> 0.005 MeV (4.09 decades in a)
+n_B                 = 2000
+d ln a / step       = 4.7062e-03
+Hubble(60 MeV)      = 2.438e+03  s^-1
+dt (first step)     = 1.930e-06  s  = 2.932e+09  1/eV
+
+Chosen mode: y_idx=50, y=50.500, E=3.03e+09 eV
+
+L shape         = (16, 16)  (N^2 = 16, so N = 4)
+||L||_inf       = 9.039e-06 eV
+||L*dt||_inf    = 2.650e+04
+
+Phi0 comparison (augmented vs direct expm):
+  max |Phi0_aug|        = 1.000e+00
+  max |Phi0_direct|     = 1.000e+00
+  max elementwise diff  = 3.447e-21
+  relative              = 3.447e-21
+
+Phi1, Phi2 finite-value check:
+  max |Phi1|            = 1.000e+00
+  max |Phi2|            = 1.705e-10
+  any NaN in Phi1/Phi2  = False
+  any Inf in Phi1/Phi2  = False
+
+L*dt eigenvalues (first 8):
+  lambda_0*dt = -4.647e+02 + +2.650e+04j, |...| = 2.650e+04
+  lambda_1*dt = -2.083e+02 + +1.484e+04j, |...| = 1.484e+04
+  lambda_2*dt = -3.263e+02 + +1.166e+04j, |...| = 1.167e+04
+  lambda_3*dt = -1.748e-07 + -9.624e-23j, |...| = 1.748e-07
+  lambda_4*dt = -3.263e+02 + -1.166e+04j, |...| = 1.167e+04
+  lambda_5*dt = -4.647e+02 + -2.650e+04j, |...| = 2.650e+04
+  lambda_6*dt = -2.083e+02 + -1.484e+04j, |...| = 1.484e+04
+  lambda_7*dt = -1.588e-22 + -1.667e-22j, |...| = 2.302e-22
+
+========================================================================================
+Suspect 3 decision:
+  Phi0_aug ~= Phi0_direct (rel < 1e-12)  AND Phi1/Phi2 finite
+    -> augmented expm is innocent; Suspect 3 ruled out.
+  Otherwise: augmented construction degrades at |L*dt| >> 1;
+    need a reformulation (scaling-and-squaring patch).
+========================================================================================

@@ -1,0 +1,29 @@
+================================================================================================
+Stage E.2 sprint-2 (scope a): n_B convergence at T_boltz_start = 30 MeV
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi damping.
+Sprint-1 baseline (n_B = 2000): dNeff = +0.0496, sum_rho_ss = 26.17.
+================================================================================================
+  3x3 reference (no sterile, window=30 MeV, n_B default) Neff=3.00991  Yp=0.24812  D/H=2.4616  sum_rho_ss=0.000  (828s)
+
+  (T_boltz_start=30 MeV, n_B_override=2000)          Neff=3.11177  Yp=0.24930  D/H=2.4910  sum_rho_ss=25.829  (763s)
+     dNeff = +0.1019
+
+  (T_boltz_start=30 MeV, n_B_override=5000)          Neff=3.04367  Yp=0.24937  D/H=2.4921  sum_rho_ss=26.976  (2053s)
+     dNeff = +0.0338
+
+  (T_boltz_start=30 MeV, n_B_override=10000)         Neff=3.08632  Yp=0.24943  D/H=2.4948  sum_rho_ss=27.405  (3972s)
+     dNeff = +0.0764
+
+================================================================================================
+     n_B       Neff      dNeff     sum_rho_ss   runtime(s)
+------------------------------------------------------------------------------------------------
+    2000    3.11177    +0.1019         25.829          763
+    5000    3.04367    +0.0338         26.976         2053
+   10000    3.08632    +0.0764         27.405         3972
+================================================================================================
+
+Decision:
+  - dNeff monotone + sum_rho_ss consistent -> Suspect 1 confirmed.
+    Pin scale_k for validator auto-scale from the converged n_B.
+  - dNeff unstable / non-monotone           -> Suspect 1 falsified.
+    Escalate to Suspect 3 (ETDRK2 at large |L*dt|) via diag_2level_high_T.

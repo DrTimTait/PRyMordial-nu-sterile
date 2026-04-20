@@ -3,23 +3,27 @@ Stage E.2(b) diagnostic: QKE evolution-window extension (hypothesis B)
 Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi damping.
 Hannestad target: dNeff ~ 0.04.  PMNS-on T_boltz_start=5 baseline: dNeff ~ 0.858.
 ========================================================================================
-  3x3 reference (no sterile, window=5 MeV)           Neff=3.04071  Yp=0.24847  D/H=2.4691  sum_rho_ss=-0.000  (694s)
+  3x3 reference (no sterile, window=5 MeV)           Neff=3.04071  Yp=0.24847  D/H=2.4691  sum_rho_ss=-0.000  (765s)
 
-  (T_boltz_start =    5 MeV)                         Neff=3.88605  Yp=0.26034  D/H=2.7818  sum_rho_ss=5.078  (914s)
+  (T_boltz_start =    5 MeV)                         Neff=3.88605  Yp=0.26034  D/H=2.7818  sum_rho_ss=5.078  (962s)
      dNeff = +0.8453
 
-  (T_boltz_start =   30 MeV)                         Neff=3.09033  Yp=0.24930  D/H=2.4908  sum_rho_ss=26.169  (982s)
-     dNeff = +0.0496
+PRyMini.validate_configuration: T window [30.0, 0.005] MeV spans 3.78 decades (default 3.0); auto-scaling n_B_override = 5031 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  (T_boltz_start =   30 MeV)                         Neff=3.15643  Yp=0.24937  D/H=2.4900  sum_rho_ss=26.835  (2034s)
+     dNeff = +0.1157
 
-  (T_boltz_start =   60 MeV)                         Neff=13.66350  Yp=0.25187  D/H=2.5580  sum_rho_ss=35.808  (1048s)
-     dNeff = +10.6228
+PRyMini.validate_configuration: T window [60.0, 0.005] MeV spans 4.08 decades (default 3.0); auto-scaling n_B_override = 6836 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  (T_boltz_start =   60 MeV)                         Neff=3.79465  Yp=0.25158  D/H=2.5454  sum_rho_ss=35.916  (2780s)
+/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_main.py:51: UserWarning: PRyMini.T_boltz_start = 60.0 MeV exceeds the top of the baseline QED correction tables (40 MeV). Above 40 MeV the O(e^2)+O(e^3) plasma corrections zero-clamp in PRyM_thermo; fractional effect on Neff is O(alpha/pi) ~ 0.2%. Regenerate PRyMrates/thermo/QED_P_int.txt and siblings via NUDEC_BSM v2 to extend coverage if needed.
+  PRyMini.validate_configuration()
+     dNeff = +0.7539
 
 ========================================================================================
    T_boltz_start (MeV)       Neff      dNeff   sum_rho_ss
 ----------------------------------------------------------------------------------------
                      5    3.88605    +0.8453        5.078
-                    30    3.09033    +0.0496       26.169
-                    60   13.66350   +10.6228       35.808
+                    30    3.15643    +0.1157       26.835
+                    60    3.79465    +0.7539       35.916
 ========================================================================================
 
 Decision:

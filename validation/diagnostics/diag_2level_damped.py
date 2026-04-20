@@ -1,7 +1,7 @@
 """Analytical 2-level Rabi+damping, match the L from PRyMordial exactly."""
 import os, sys, numpy as np
 from scipy.linalg import expm
-_WT = "/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/trusting-pike-2de6ff"
+_WT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _WT); os.chdir(_WT)
 import PRyM.PRyM_init as PRyMini
 PRyMini.smallnet_flag = True; PRyMini.julia_flag = False; PRyMini.numba_flag = True

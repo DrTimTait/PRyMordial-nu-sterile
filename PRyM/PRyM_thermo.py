@@ -36,6 +36,12 @@ fnu_mu_ann = interp1d(fnu_mu_ann_tab[:,0],fnu_mu_ann_tab[:,1], bounds_error=Fals
 # Euler-Heisenberg piece at T << table_min diverges relative to rho_gamma
 # and destabilizes the ODE integration; clamping to zero is physically safe
 # since the O(e^4) contribution to observables is negligible at T << 5 keV).
+# The baseline tables span T in [5 keV, 40 MeV]; above the table top the
+# public PofT / dPdT / d2PdT2 wrappers zero-clamp to avoid the linear
+# extrapolation artefact that drives Phase B's entropy equation into
+# nonsense when T_boltz_start is pushed above 40 MeV (Stage E.2 sprint 2).
+# Below 5 keV the interp1d extrapolation is retained (Phase C handoff).
+_T_QED_TABLE_TOP = 40.0  # MeV, top of the baseline QED correction tables
 P_QED_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_P_int.txt")
 _PofT_base = interp1d(P_QED_tab[:,0], P_QED_tab[:,1]+P_QED_tab[:,2],
                       bounds_error=False, fill_value="extrapolate", kind='linear')
@@ -56,13 +62,28 @@ if PRyMini.two_loop_QED_flag:
     _d2PdT2_e4_tab = np.loadtxt(my_dir+"/PRyMrates/thermo/"+"QED_d2P_intdT2_e4.txt")
     _d2PdT2_e4 = interp1d(_d2PdT2_e4_tab[:,0], _d2PdT2_e4_tab[:,1],
                           bounds_error=False, fill_value=0.0, kind='linear')
-    def PofT(T):   return _PofT_base(T)   + _PofT_e4(T)
-    def dPdT(T):   return _dPdT_base(T)   + _dPdT_e4(T)
-    def d2PdT2(T): return _d2PdT2_base(T) + _d2PdT2_e4(T)
+    def PofT(T):
+        T_arr = np.asarray(T)
+        return np.where(T_arr > _T_QED_TABLE_TOP, 0.0,
+                        _PofT_base(T_arr) + _PofT_e4(T_arr))
+    def dPdT(T):
+        T_arr = np.asarray(T)
+        return np.where(T_arr > _T_QED_TABLE_TOP, 0.0,
+                        _dPdT_base(T_arr) + _dPdT_e4(T_arr))
+    def d2PdT2(T):
+        T_arr = np.asarray(T)
+        return np.where(T_arr > _T_QED_TABLE_TOP, 0.0,
+                        _d2PdT2_base(T_arr) + _d2PdT2_e4(T_arr))
 else:
-    PofT   = _PofT_base
-    dPdT   = _dPdT_base
-    d2PdT2 = _d2PdT2_base
+    def PofT(T):
+        T_arr = np.asarray(T)
+        return np.where(T_arr > _T_QED_TABLE_TOP, 0.0, _PofT_base(T_arr))
+    def dPdT(T):
+        T_arr = np.asarray(T)
+        return np.where(T_arr > _T_QED_TABLE_TOP, 0.0, _dPdT_base(T_arr))
+    def d2PdT2(T):
+        T_arr = np.asarray(T)
+        return np.where(T_arr > _T_QED_TABLE_TOP, 0.0, _d2PdT2_base(T_arr))
 
 ##################
 # Photon species #

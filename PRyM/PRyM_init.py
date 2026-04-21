@@ -148,6 +148,29 @@ qke_damping_formula = "mirizzi"
 # Intended only as a diagnostic knob for sensitivity tests against
 # FortEPiaNO-scale references; do NOT set != 1.0 in production runs.
 qke_damping_scale = 1.0
+# Stage E.2 sprint 5: Hamiltonian-potential diagnostic knobs. Each
+# multiplies the respective potential wherever it is ADDED to H in
+# _build_H_list (and the two adjacent in-place H-builders). Default 1.0
+# preserves all existing behaviour. Non-unit values (and especially 0.0)
+# are purely diagnostic; do NOT set != 1.0 in production runs.
+#   qke_v_nc_scale:      Notzold-Raffelt NC thermal term on active diagonals
+#                        (8√2·G_F·ρ_e·E/(3·m_Z²)).
+#   qke_v_thermal_scale: Notzold-Raffelt CC thermal term on ν_e only
+#                        (8√2·G_F·ρ_e·E/(3·m_W²)).
+#   qke_v_nunu_scale:    ν-ν self-interaction matrix (Pantaleone-Sigl-Raffelt
+#                        √2·G_F·∫y²(ρ-ρ̄)dy/(2π²·a³)).
+qke_v_nc_scale = 1.0
+qke_v_thermal_scale = 1.0
+qke_v_nunu_scale = 1.0
+# Stage E.2 sprint 5: restrict the V_nunu self-interaction matrix to the
+# active-flavor block. Physical: the Z-exchange vertex couples only to
+# SU(2)_L doublet neutrinos; the sterile (singlet) has zero NC charge, so
+# V_nunu[s, *] = V_nunu[*, s] = V_nunu[s, s] = 0 identically. When True,
+# the sterile row and column of V_nunu_eV are zeroed before being added
+# to H in _build_H_list. Default False preserves pre-sprint-5 behaviour
+# bit-identically; flip to True once validated as a physical fix rather
+# than a diagnostic toggle.
+qke_v_nunu_active_only = False
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

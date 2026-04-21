@@ -1,0 +1,27 @@
+================================================================================================
+Stage E.2 sprint-5: Hannestad+2012 WITH projection + T_boltz_start=15 MeV
+qke_v_nunu_active_only = True, T_boltz_start = 15 MeV (auto-scaled n_B).
+================================================================================================
+PRyMini.validate_configuration: T window [15.0, 0.005] MeV spans 3.48 decades (default 3.0); auto-scaling n_B_override = 3609 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  3x3 QKE reference (no sterile, 15 MeV window)    Neff=3.01209  Yp=0.24805  D/H=2.4582  sum_rho_ss=-0.001  (1052s)
+
+PRyMini.validate_configuration: T window [15.0, 0.005] MeV spans 3.48 decades (default 3.0); auto-scaling n_B_override = 3609 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=3.35456  Yp=0.25246  D/H=2.5680  sum_rho_ss=15.574  (1319s)
+PRyMini.validate_configuration: T window [15.0, 0.005] MeV spans 3.48 decades (default 3.0); auto-scaling n_B_override = 3609 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=3.16681  Yp=0.24993  D/H=2.5048  sum_rho_ss=13.801  (1394s)
+PRyMini.validate_configuration: T window [15.0, 0.005] MeV spans 3.48 decades (default 3.0); auto-scaling n_B_override = 3609 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=3.02158  Yp=0.24971  D/H=2.4803  sum_rho_ss=9.737  (1558s)
+
+--------------------------------------------------------------------------------------------------------
+Point                               sin²2θ      H+2012   Ours (proj+15)    Ours (proj+5)   Ours (orig)
+--------------------------------------------------------------------------------------------------------
+A  full thermalisation            1.00e-01       1.000            0.342            0.173         0.953
+B  partial thermalisation         2.26e-03       0.500            0.155            0.133         0.963
+C  minimal thermalisation         1.00e-04       0.040            0.009           -0.012         0.853
+
+Baseline: 3x3 reference Neff = 3.01209
+
+Verdict:
+  - A, B, C all land near Hannestad targets -> BUG FULLY RESOLVED.
+  - Some improve, some don't               -> window extension is part of story.
+  - All still low                          -> deeper bug, not just window.

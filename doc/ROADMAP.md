@@ -731,20 +731,98 @@ active-depletion FortEPiaNO tracks across 60→5 MeV, and (b)
 whether any `_build_L_list` / `_assemble_collision_N` term fires
 specifically because ρ_ss=0 (empty-sterile edge case).
 
-**Next structural candidates**, ranked post-sprint-4:
+**E.2 sprint 5 — Hamiltonian potential scope audit: V_nunu bug
+identified and fix landed as opt-in.** Three diagnostic knobs added
+to `_build_H_list`: `qke_v_nc_scale`, `qke_v_thermal_scale`,
+`qke_v_nunu_scale`. `validation/diagnostics/diag_potential_scope.py`
+scaled each to 0 at Point C:
 
-1. **Effective-mixing amplification (Hamiltonian issue)**. The
-   saturation pattern is consistent with sin²2θ_m → 1 in-medium,
-   regardless of the bare sin²2θ=1e-4. PRyMordial's `V_NC` on
-   active diagonals (without the matching sterile entry) creates
-   an active-sterile matter gap. Is the sign / scope / magnitude
-   correct? Line-by-line audit of `_build_H_list` against the
-   Notzold-Raffelt and Sigl-Raffelt conventions.
+| scenario | Neff | ΔNeff | sum ρ_ss |
+|---|---:|---:|---:|
+| baseline | 3.89870 | +0.8580 | 4.963 |
+| V_NC off | 3.89199 | +0.8513 | 5.170 |
+| V_thermal off | 3.88995 | +0.8493 | 4.973 |
+| **V_nunu off** | **3.01081** | **−0.0299** | **0.006** |
+
+**V_nunu was the entire driver of the saturation.** V_NC and
+V_thermal are innocent (ΔNeff moves by ~0.01, noise level).
+
+Physics of the bug: the Pantaleone-Sigl-Raffelt ν-ν self-interaction
+goes through Z exchange, which couples only to the SU(2)_L doublet.
+Sterile is a singlet with zero NC charge, so
+`V_nunu[α, s] = V_nunu[*, s] = V_nunu[s, s] = 0` identically at
+tree level. PRyMordial was computing the full 4×4 `(ρ − ρ̄)` matrix
+and feeding every entry into H at `_build_H_list` — the non-zero
+`V_nunu[α, s]` entries bootstrapped active-sterile coherence past
+the tiny vacuum mixing, driving the saturation. The active-only
+projection matches FortEPiaNO's implementation (`matter.f90:46-52`
+explicitly zeroes sterile rows/cols of their `nuDensities`) and the
+Sigl-Raffelt derivation.
+
+Fix: `PRyMini.qke_v_nunu_active_only` flag (default `False`
+preserves regression bit-identically). When `True`, the sterile row
+and column of `V_nunu_eV` are zeroed before H assembly in all three
+`_build_H_list` code paths. `validation/diagnostics/diag_vnunu_active_only.py`
+at default 5 MeV window (qke_v_nunu_active_only=True):
+ΔNeff = 0.858 → −0.012 (Hannestad target 0.040). **~70×
+improvement in small-mixing agreement.**
+
+Full Hannestad A/B/C suite with projection:
+
+| Point | sin²2θ | Hannestad | orig | proj+5 MeV | proj+15 MeV |
+|---|---:|---:|---:|---:|---:|
+| A | 1e-1 | 1.00 | 0.953 | 0.173 | 0.342 |
+| B | 2.26e-3 | 0.50 | 0.963 | 0.133 | 0.155 |
+| C | 1e-4 | 0.04 | 0.853 | −0.012 | 0.009 |
+
+The pre-fix numbers were nearly flat across A/B/C (0.95, 0.96, 0.85)
+— the signature of V_nunu saturation happening to land near full
+thermalisation by coincidence. The fix correctly unsaturates the
+production, showing the true oscillation-damping rate. Points B and
+C now undershoot, and A undershoots badly — pointing to a secondary
+issue: PRyMordial's default Phase B window starts at T=5 MeV,
+which is below the MSW resonance at T_MSW ≈ 10 MeV for Δm²=0.93.
+Starting above T_MSW recovers adiabatic passage, which would drive
+Point A back toward 1.0.
+
+Extended-window attempts:
+
+- proj+15 MeV: runs cleanly, gives partial progress (A: 0.17 → 0.34).
+- proj+20 MeV, proj+30 MeV, proj+pointC-only @ 30 MeV: **numerically
+  unstable**. Point A crashes with NaN in `scipy.linalg.expm`
+  (from ETDRK2 off-diagonal clamp at `PRyM_boltzmann.py:4750`);
+  Point C at 30 MeV completes but produces unphysical values
+  (Neff=7.22, Yp=0.29, ΔNeff=+4.21).
+
+Root cause of numerical instability: with V_nunu's off-diagonal
+active-sterile "ballast" removed by the projection, L's eigenstructure
+at high T develops a giant dynamic range — large thermal-damping
+eigenvalues coexisting with tiny residual vacuum-mixing eigenvalues.
+The condition number tanks `expm` precision, and the existing
+off-diagonal magnitude clamp in `evolve_step_ode_etdrk2` isn't
+NaN-safe. This is a separable engineering problem from the physics
+of the projection fix.
+
+Sprint-5 landing posture: projection lands as **opt-in**
+(`qke_v_nunu_active_only=False` default). Users who need
+small-mixing DW accuracy can flip it at the default 5 MeV window.
+Document the extended-window caveat. `sterile_DW_literature.py`
+continues to serve as the regression target at default config.
+
+**Next structural candidates**, ranked post-sprint-5:
+
+1. **Extended-window numerical stability (blocks full projection
+   default flip).** The clamp at `PRyM_boltzmann.py:4750` needs a
+   NaN-safe branch. Also consider whether the Al-Mohy augmented-matrix
+   expm in `_etdrk2_expm_phi` is the right choice at extreme
+   dynamic range vs. direct `scipy.linalg.expm`. If this is fixed,
+   the projection + T_boltz_start ≈ 30-60 MeV combination should
+   recover Hannestad A/B/C within 10-20% and the default can flip.
 2. **Strang-split time evolution**. ρ_ss is populated *only*
    through the off-diagonal ETDRK2 commutator; diagonal collisions
    never touch it. Controlled test: drop into the D.7 predictor
    path (no Strang split, single-phase off-diag ETDRK2) at Point C
-   and compare.
+   and compare. May become irrelevant if candidate 1 solves.
 3. **Representation-factor leak**. FortEPiaNO's
    `nuDensMatVecFD(i,j)` for off-diagonals divides by f_eq(y).
    PRyMordial's ρ_full(α,β) carries the f_eq(y) shape in. If

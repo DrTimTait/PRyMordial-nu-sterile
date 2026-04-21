@@ -3656,6 +3656,9 @@ class DensityMatrixSolver(object):
         V_pref = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / 3.0
         V_thermal_eV = V_pref / self.mW2 * E_eV
         V_NC_eV = V_pref / (PRyMini.mZ**2) * E_eV
+        # Stage E.2 sprint 5 diagnostic scale knobs.
+        V_thermal_eV = V_thermal_eV * getattr(PRyMini, "qke_v_thermal_scale", 1.0)
+        V_NC_eV = V_NC_eV * getattr(PRyMini, "qke_v_nc_scale", 1.0)
 
         # CC matter potential: V_CC = sqrt(2) GF (n_e- - n_e+)
         # Charge neutrality: n_e- - n_e+ = n_p ~ eta_b * n_gamma
@@ -3675,6 +3678,11 @@ class DensityMatrixSolver(object):
         rho_nubar_mat = self._to_mat(rho_all[1])  # (Ny, N, N)
         diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]
         V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)  # (N, N) eV
+        V_nunu_eV = V_nunu_eV * getattr(PRyMini, "qke_v_nunu_scale", 1.0)
+        if getattr(PRyMini, "qke_v_nunu_active_only", False) and self.n_flavor == 4:
+            # Project onto active 3x3 block: sterile has no NC charge.
+            V_nunu_eV[3, :] = 0.0
+            V_nunu_eV[:, 3] = 0.0
 
         # Active-flavor trace of n_ξ (zero identically in 3-flavor because
         # ρ = ρ̄ by symmetry there, nonzero under Stage C asymmetry). The
@@ -4091,6 +4099,9 @@ class DensityMatrixSolver(object):
         V_pref = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / 3.0
         V_thermal_eV = V_pref / self.mW2 * E_eV
         V_NC_eV = V_pref / (PRyMini.mZ**2) * E_eV
+        # Stage E.2 sprint 5 diagnostic scale knobs.
+        V_thermal_eV = V_thermal_eV * getattr(PRyMini, "qke_v_thermal_scale", 1.0)
+        V_NC_eV = V_NC_eV * getattr(PRyMini, "qke_v_nc_scale", 1.0)
 
         from scipy.special import zeta as _zeta
         n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3
@@ -4105,6 +4116,11 @@ class DensityMatrixSolver(object):
         rho_nubar_mat = self._to_mat(rho_all[1])
         diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]
         V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)
+        V_nunu_eV = V_nunu_eV * getattr(PRyMini, "qke_v_nunu_scale", 1.0)
+        if getattr(PRyMini, "qke_v_nunu_active_only", False) and self.n_flavor == 4:
+            # Project onto active 3x3 block: sterile has no NC charge.
+            V_nunu_eV[3, :] = 0.0
+            V_nunu_eV[:, 3] = 0.0
 
         if N >= 3:
             trace_nxi_eV = V_nunu_eV[0, 0] + V_nunu_eV[1, 1] + V_nunu_eV[2, 2]
@@ -4301,6 +4317,9 @@ class DensityMatrixSolver(object):
         V_pref = 8.0 * np.sqrt(2.0) * PRyMini.GF * rho_e_th / 3.0
         V_thermal_eV = V_pref / self.mW2 * E_eV
         V_NC_eV = V_pref / (PRyMini.mZ**2) * E_eV
+        # Stage E.2 sprint 5 diagnostic scale knobs.
+        V_thermal_eV = V_thermal_eV * getattr(PRyMini, "qke_v_thermal_scale", 1.0)
+        V_NC_eV = V_NC_eV * getattr(PRyMini, "qke_v_nc_scale", 1.0)
 
         n_gamma = 2.0 * _zeta(3) / np.pi**2 * Tg**3
         n_e_asym = PRyMini.eta0b * n_gamma
@@ -4314,6 +4333,11 @@ class DensityMatrixSolver(object):
         rho_nubar_mat = self._to_mat(rho_all[1])
         diff_mat = rho_nu_mat[:Ny_coll] - rho_nubar_mat[:Ny_coll]
         V_nunu_eV = V_nunu_pref * np.einsum('i,ijk->jk', y2w, diff_mat)
+        V_nunu_eV = V_nunu_eV * getattr(PRyMini, "qke_v_nunu_scale", 1.0)
+        if getattr(PRyMini, "qke_v_nunu_active_only", False) and self.n_flavor == 4:
+            # Project onto active 3x3 block: sterile has no NC charge.
+            V_nunu_eV[3, :] = 0.0
+            V_nunu_eV[:, 3] = 0.0
 
         if N >= 3:
             trace_nxi_eV = V_nunu_eV[0, 0] + V_nunu_eV[1, 1] + V_nunu_eV[2, 2]

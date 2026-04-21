@@ -1,0 +1,21 @@
+========================================================================================
+Stage E.2 sprint-5: Point C at T_boltz_start=30 MeV + projection
+sin^2 2theta_24=1e-4, Dm2_41=0.93, PMNS on, Mirizzi, qke_v_nunu_active_only=True
+Hannestad target: dNeff = 0.04
+========================================================================================
+PRyMini.validate_configuration: T window [30.0, 0.005] MeV spans 3.78 decades (default 3.0); auto-scaling n_B_override = 5031 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+
+  Point C, proj + 30 MeV window
+    Neff       = 7.22209   (runtime 1980s)
+    Yp         = 0.29320
+    D/H        = 3.8885
+    sum_rho_ss = 20.435
+    Neff_3x3   = 3.00987  (reused from w30 run)
+    dNeff      = +4.2122  vs Hannestad target 0.040
+
+Previous Point C values at same config:
+    proj +  5 MeV window:  dNeff = -0.012
+    proj + 15 MeV window:  dNeff =  0.009
+    proj + 30 MeV window:  dNeff = +4.2122  (this run)
+    original (no proj, 5 MeV): dNeff = +0.853
+    Hannestad+2012: dNeff = 0.040

@@ -1,0 +1,25 @@
+================================================================================================
+Stage E.2 sprint-5: V_nunu active-only projection (fix test)
+Hannestad Point C (sin^2 2theta_24=1e-4, Dm2_41=0.93, PMNS ON, window=5 MeV)
+Hannestad+2012 target: dNeff ~ 0.04
+================================================================================================
+  3x3 reference (V_nunu full 4x4 behaviour, default)           Neff=3.04069  Yp=0.24847  D/H=2.4725  sum_rho_ss=-0.000  (754s)
+  3x3 reference (V_nunu active-only projection)                Neff=3.04069  Yp=0.24847  D/H=2.4725  sum_rho_ss=-0.000  (722s)
+
+  Point C, baseline (V_nunu full 4x4, default)                 Neff=3.89870  Yp=0.26037  D/H=2.7848  sum_rho_ss=4.963  (917s)
+     dNeff = +0.8580  (ref: 3.04069)
+
+  Point C, V_nunu ACTIVE-ONLY projection                       Neff=3.02877  Yp=0.24909  D/H=2.4829  sum_rho_ss=2.744  (967s)
+     dNeff = -0.0119  (ref: 3.04069)
+
+================================================================================================
+scenario                                            Neff      dNeff     sum_rho_ss   ref_Neff
+------------------------------------------------------------------------------------------------
+baseline (V_nunu full 4x4, default)              3.89870    +0.8580          4.963    3.04069
+V_nunu ACTIVE-ONLY projection                    3.02877    -0.0119          2.744    3.04069
+================================================================================================
+
+Verdict:
+  - dNeff drops to O(0.04) with projection -> bug identified and fixed.
+  - dNeff partially drops                  -> projection is part of the story.
+  - dNeff unchanged                        -> V_nunu scope is not the driver.

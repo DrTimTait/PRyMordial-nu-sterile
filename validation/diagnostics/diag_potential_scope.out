@@ -1,0 +1,36 @@
+================================================================================================
+Stage E.2 sprint-5: Hamiltonian potential scope audit
+Point C: sin^2 2theta_24 = 1e-4, Dm2_41 = 0.93 eV^2, PMNS ON, Mirizzi, window=5 MeV.
+================================================================================================
+  3x3 reference (no sterile, all scales = 1.0)                 Neff=3.04069  Yp=0.24847  D/H=2.4725  sum_rho_ss=-0.000  (806s)
+
+  Point C, baseline (all scales = 1.0)                         Neff=3.89870  Yp=0.26037  D/H=2.7848  sum_rho_ss=4.963  (1002s)
+     dNeff = +0.8580
+
+  Point C, V_NC OFF (qke_v_nc_scale = 0.0)                     Neff=3.89199  Yp=0.26039  D/H=2.7823  sum_rho_ss=5.170  (1045s)
+     dNeff = +0.8513
+
+  Point C, V_thermal OFF (qke_v_thermal_scale = 0.0)           Neff=3.88995  Yp=0.26040  D/H=2.7827  sum_rho_ss=4.973  (1060s)
+     dNeff = +0.8493
+
+  Point C, V_nunu OFF (qke_v_nunu_scale = 0.0)                 Neff=3.01081  Yp=0.24850  D/H=2.4707  sum_rho_ss=0.006  (977s)
+     dNeff = -0.0299
+
+================================================================================================
+scenario                                                 Neff      dNeff     sum_rho_ss
+------------------------------------------------------------------------------------------------
+baseline (all scales = 1.0)                           3.89870    +0.8580          4.963
+V_NC OFF (qke_v_nc_scale = 0.0)                       3.89199    +0.8513          5.170
+V_thermal OFF (qke_v_thermal_scale = 0.0)             3.88995    +0.8493          4.973
+V_nunu OFF (qke_v_nunu_scale = 0.0)                   3.01081    -0.0299          0.006
+================================================================================================
+
+Decision guide:
+  - 'V_NC OFF' drops dNeff dramatically (toward Hannestad 0.04)
+    -> V_NC scope / sign / magnitude is the bug (or at least a major driver).
+  - 'V_thermal OFF' drops dNeff dramatically
+    -> V_thermal is the mechanism (unlikely per FortEPiaNO parity but worth checking).
+  - 'V_nunu OFF' drops dNeff dramatically
+    -> V_nunu self-interaction / trace_nxi path is the driver.
+  - All three scenarios give ~0.85 like baseline
+    -> potentials are innocent; suspect Strang split or representation leak next.

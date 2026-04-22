@@ -840,3 +840,121 @@ The new `validation/sterile_DW_gariazzo.py` script is parked for
 reuse in post-E.2 acceptance testing. `validation/sterile_DW_literature.py`
 is unchanged (Dm²=0.93 is Hannestad-specific) and continues to
 serve as the regression target.
+
+**E.2 sprint 6 — extended-window numerical stability: primary
+crash resolved, deeper physics drift surfaced.** Sprint 5's
+extended-window crash (Point A at w20 raising `cannot convert
+float NaN to integer` inside `scipy.linalg.expm`) was targeted via
+option (a) from `doc/STAGE_E2_SPRINT6_BRIEF.md`: NaN-safe clamp
+fix only, no changes to the Strang-symmetric D.7.1 sequence or
+the V_nunu projection physics.
+
+Phase 1 probe (temporary, discarded before commit) instrumented
+`evolve_step_ode_etdrk2` with finite-state checks at entry and after
+each of the four sub-steps (half-diag-1, predictor, corrector,
+half-diag-2). Ran Point A at w20 with projection on. First non-finite
+entry: **step 4099, T=5.5 keV, `post-half-diag-2`, single entry at
+(sector=0, comp=0, y_idx=0)**. That is: ν-sector, ρ_ee diagonal,
+lowest-momentum mode, at the very tail of the Phase B window
+(~5× the T_end floor of 5 keV). The origin is in the cold-T
+collision integral `I_total_post` — one rare numerical excursion
+that half-diag-2 writes into a diagonal. The existing `np.clip` on
+line 4762 passes NaN through (numpy semantics), so the next step's
+`_build_L_list` inherits NaN, `L` carries NaN, and
+`_etdrk2_expm_phi`'s `scipy.linalg.expm` crashes in its
+norm-estimate. The sprint-5 RuntimeWarning at the off-diagonal
+clamp (line 4750) was a downstream symptom one step later, not the
+origin.
+
+Fix (Phase 2, committed): two additive sanitisation passes in
+`evolve_step_ode_etdrk2`:
+
+1. **Off-diagonal clamp** (line ~4749): before computing `ab_mag`,
+   `rho_ab = np.where(np.isfinite(ab_mag), rho_ab, 0 + 0j)`. Zeros
+   non-finite coherences so the clamp's `np.where(ab_mag > max_mag, …)`
+   always operates on finite input.
+2. **Diagonal clip** (line ~4774): `np.clip(np.nan_to_num(x,
+   nan=f_min, posinf=f_max, neginf=f_min), f_min, f_max)`. Sanitises
+   the diagonal at the origin (half-diag-2 write) so NaN does not
+   poison the next step's `L`.
+
+Both passes are mathematical no-ops on finite state (`np.where` with
+a true-everywhere condition returns the input; `nan_to_num` on
+finite input is identity). Gates 1-4 confirm bit-identity.
+
+Validation ladder:
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | `pytest -m "not slow"` (default) | 4/4 bit-identical ✓ |
+| 2 | `pytest -k sterile` (default) | 3/3 bit-identical ✓ |
+| 3 | `diag_2level_damped.py` | ratio 1.000 ✓ |
+| 4 | `diag_vnunu_active_only.py` (proj + 5 MeV) | Point C ΔNeff = −0.0119 (sprint-5: −0.012) bit-identical ✓ |
+| 5a | `diag_hannestad_proj_w20.py` | no crash ✓, all Yp ∈ [0.24, 0.26] ✓ |
+| 5b | `diag_hannestad_proj_w30.py` | no crash ✓, Yp unphysical at A (0.300) and C (0.293) ✗ |
+| 6 | w30 Hannestad A/B/C vs literature | A=1.474, B=0.098, C=4.212 — outside tolerance ✗ |
+
+Extended-window summary (all with projection on):
+
+| Point | Hannestad | w5 | **w20** | w30 | w20 Yp | w30 Yp |
+|-------|---:|---:|---:|---:|---:|---:|
+| A | 1.000 | 0.173 | 0.113 | 1.474 | 0.24954 | 0.30046 |
+| B | 0.500 | 0.133 | 0.045 | 0.098 | 0.24844 | 0.24900 |
+| C | 0.040 | −0.012 | −0.032 | 4.212 | 0.24870 | 0.29320 |
+
+sum ρ_ss grows monotonically with window size (w15 sprint-5:
+9.7-15.6; w20: 12.3-21.8; **w30: 20.4-29.3**), and the w20→w30 ΔNeff
+jump for Point C (−0.032 → +4.212) is non-monotonic. The deeper
+physics bug is a window-dependent over-sterilisation, strongly
+correlated with the same cold-T `I_total_post` numerical hazard
+whose first-NaN the probe caught. When the NaN is sanitised to
+`f_min`, nearby steps' integrals shift enough to bias the sterile
+production at w30; at w20 the hazard is rarer (first NaN only
+occasionally fires) and Yp stays physical. This is a separate
+structural bug from the Phase-2 fix — the NaN-safe clamp makes the
+run complete robustly, but does not fix the physical over-production.
+
+**Sprint-6 landing posture**: clamp + diagonal sanitisation lands
+as a standalone numerical-robustness fix. **Default
+`qke_v_nunu_active_only` remains `False`** — the sprint-5 5 MeV
+baseline is preserved bit-identical, and the extended-window
+recovery of Points A and B (the original motivation for the default
+flip) is blocked by the cold-T over-sterilisation, not by crashes.
+Users can still opt in at the default 5 MeV window. Two benign
+RuntimeWarnings at line 4755 remain in extended-window runs (clamp
+sees NaN `max_mag` from `rho_aa*rho_bb` before the current step's
+diagonal sanitisation fires; scale=1.0 fallback keeps the off-diag
+finite — not a crash path). A future sprint may promote the
+diagonal sanitisation earlier in the step sequence to suppress
+these warnings entirely.
+
+**Next structural candidates**, ranked post-sprint-6:
+
+1. **Cold-T `I_total_post` non-finite origin.** The Phase-1 probe
+   localised the first NaN to sector=0, comp=0, y_idx=0 at T≈5.5 keV
+   during half-diag-2. The origin is inside
+   `_assemble_collision_N(rho_all, a, Tg)`. Likely culprits:
+   Fermi-Dirac exponent overflow at E/T ≫ 1 at the lowest-y edge,
+   `f_eq` division-by-zero, or a numerical edge-case in one of the
+   `D_pair` / scattering kernels at very cold T. Instrument
+   `_assemble_collision_N` to report first non-finite intermediate,
+   then fix at origin. Would also suppress the two line-4755
+   warnings.
+2. **Window-dependent over-sterilisation.** Independent of the NaN:
+   sum ρ_ss growing from ~10 (w5-15) to ~30 (w30) is non-physical.
+   Point C's ΔNeff jumping from −0.032 (w20) to +4.212 (w30) is the
+   smoking gun. Candidate causes: (i) the auto-scaled `n_B_override`
+   formula under-resolves when spanning >3 decades, letting early-T
+   MSW passage integrate incorrectly; (ii) a numerical bias from
+   candidate 1's sanitisation that accumulates across more cold-T
+   steps at larger windows; (iii) Phase-A's thermal IC assumption
+   becoming inadequate when `T_boltz_start ≫ T_MSW`. Start with (i):
+   rerun Point C at w30 with manually-overridden `n_B_override`
+   values (2×, 4×, 8× default) and see whether ΔNeff converges.
+3. **Al-Mohy augmented-matrix expm audit** (sprint-6 brief's
+   Suspect 2). Not needed for the crash fix, but if candidate 1
+   doesn't close the warnings, examine condition-number behaviour
+   of the augmented matrix at extreme eigenvalue spread.
+4. **Strang-split time evolution**, **representation-factor leak**,
+   **Gariazzo damping form**, **Shi-Fuller literature** — same
+   priority and rationale as post-sprint-5.

@@ -4743,6 +4743,11 @@ class DensityMatrixSolver(object):
                 rho_aa = rho_all[sector, alpha]
                 rho_bb = rho_all[sector, beta]
                 ab_mag = np.abs(rho_ab)
+                # Stage E.2 sprint 6: zero non-finite off-diagonals so the
+                # clamp below doesn't silently no-op (np.where treats NaN
+                # as False, letting NaN propagate into _etdrk2_expm_phi).
+                rho_ab = np.where(np.isfinite(ab_mag), rho_ab, 0.0 + 0.0j)
+                ab_mag = np.abs(rho_ab)
                 max_mag = np.minimum(
                     0.5,
                     np.sqrt(np.maximum(rho_aa * rho_bb, 0.0)) + 1e-10)
@@ -4755,11 +4760,21 @@ class DensityMatrixSolver(object):
                 rho_all[sector, im_idx] = rho_ab.imag
 
         # 7. Clip diagonals to [f_min, f_max].
+        # Stage E.2 sprint 6: nan_to_num before clip. At very cold T (~5 keV)
+        # in extended-window runs the collision integral I_total_post
+        # occasionally produces a single-mode non-finite entry that
+        # half-diag-2 writes into a diagonal; np.clip passes NaN through,
+        # so without the sanitisation the next step's _build_L_list
+        # inherits NaN and scipy.linalg.expm crashes inside its
+        # norm-estimate.
         f_min = 1.0e-30
         f_max = 1.0 - f_min
         for sector in range(2):
             for d in range(self.n_flavor):
-                rho_all[sector, d] = np.clip(rho_all[sector, d], f_min, f_max)
+                rho_all[sector, d] = np.clip(
+                    np.nan_to_num(rho_all[sector, d],
+                                  nan=f_min, posinf=f_max, neginf=f_min),
+                    f_min, f_max)
 
     def extract_f_all_3species(self, rho_all):
         """Extract 3-species f_all array compatible with BoltzmannSolver.

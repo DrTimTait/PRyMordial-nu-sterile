@@ -3,42 +3,29 @@ Stage E.2 sprint-5: Hannestad+2012 WITH projection + T_boltz_start=20 MeV
 qke_v_nunu_active_only = True, T_boltz_start = 20 MeV (auto-scaled n_B).
 ================================================================================================
 PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
-  3x3 QKE reference (no sterile, 20 MeV window)    Neff=3.01026  Yp=0.24801  D/H=2.4585  sum_rho_ss=-0.000  (1310s)
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_boltzmann.py:4750: RuntimeWarning: invalid value encountered in greater
-  ab_mag > max_mag,
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_thermo.py:113: IntegrationWarning: The occurrence of roundoff error is detected, which prevents 
-  the requested tolerance from being achieved.  The error may be 
-  underestimated.
-  res_int = quad(rho_e_int,PRyMini.me/Tg,100.,args=(Tg),epsabs=1e-12,epsrel=1e-12)[0]
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_thermo.py:141: IntegrationWarning: The occurrence of roundoff error is detected, which prevents 
-  the requested tolerance from being achieved.  The error may be 
-  underestimated.
-  res_int = quad(p_e_int,PRyMini.me/Tg,100.,args=(Tg),epsabs=1e-12,epsrel=1e-12)[0]
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_boltzmann.py:2808: RuntimeWarning: invalid value encountered in less_equal
-  in_grid = y_arr <= y_max_grid
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_main.py:387: RuntimeWarning: invalid value encountered in less
-  _phi1_mode = np.where(_z_mode < 1.0e-4,
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_boltzmann.py:4681: RuntimeWarning: invalid value encountered in less
-  phi1_h = np.where(z_h < 1.0e-4,
+  3x3 QKE reference (no sterile, 20 MeV window)    Neff=3.01026  Yp=0.24801  D/H=2.4585  sum_rho_ss=-0.000  (1339s)
 
 PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
-Traceback (most recent call last):
-  File "validation/diagnostics/diag_hannestad_proj_w20.py", line 121, in <module>
-    configure_point(sin2_2t, dm2))
-  File "validation/diagnostics/diag_hannestad_proj_w20.py", line 76, in _run
-    c = PRyMmain.PRyMclass()
-  File "/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_main.py", line 404, in __init__
-    dm_solver.evolve_step_ode_etdrk2(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
-  File "/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_boltzmann.py", line 4687, in evolve_step_ode_etdrk2
-    Phi_cache = [self._etdrk2_expm_phi(L_list[s], dt_nat) for s in (0, 1)]
-  File "/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_boltzmann.py", line 4687, in <listcomp>
-    Phi_cache = [self._etdrk2_expm_phi(L_list[s], dt_nat) for s in (0, 1)]
-  File "/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/eloquent-maxwell-9161ee/PRyM/PRyM_boltzmann.py", line 4618, in _etdrk2_expm_phi
-    E = expm(M)
-  File "/opt/anaconda3/lib/python3.7/site-packages/scipy/linalg/matfuncs.py", line 256, in expm
-    return scipy.sparse.linalg.expm(A)
-  File "/opt/anaconda3/lib/python3.7/site-packages/scipy/sparse/linalg/matfuncs.py", line 595, in expm
-    return _expm(A, use_exact_onenorm='auto')
-  File "/opt/anaconda3/lib/python3.7/site-packages/scipy/sparse/linalg/matfuncs.py", line 666, in _expm
-    s = max(int(np.ceil(np.log2(eta_5 / theta_13))), 0)
-ValueError: cannot convert float NaN to integer
+  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=3.12325  Yp=0.24954  D/H=2.4928  sum_rho_ss=21.763  (1781s)
+PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=3.05477  Yp=0.24844  D/H=2.4652  sum_rho_ss=21.286  (1763s)
+PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
+  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=2.97851  Yp=0.24870  D/H=2.4695  sum_rho_ss=12.340  (1768s)
+/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/interesting-hertz-90a1be/PRyM/PRyM_boltzmann.py:4755: RuntimeWarning: invalid value encountered in greater
+  ab_mag > max_mag,
+/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/interesting-hertz-90a1be/PRyM/PRyM_boltzmann.py:4755: RuntimeWarning: invalid value encountered in greater
+  ab_mag > max_mag,
+
+--------------------------------------------------------------------------------------------------------
+Point                               sin²2θ      H+2012   Ours (proj+20)    Ours (proj+5)   Ours (orig)
+--------------------------------------------------------------------------------------------------------
+A  full thermalisation            1.00e-01       1.000            0.113            0.173         0.953
+B  partial thermalisation         2.26e-03       0.500            0.045            0.133         0.963
+C  minimal thermalisation         1.00e-04       0.040           -0.032           -0.012         0.853
+
+Baseline: 3x3 reference Neff = 3.01026
+
+Verdict:
+  - A, B, C all land near Hannestad targets -> BUG FULLY RESOLVED.
+  - Some improve, some don't               -> window extension is part of story.
+  - All still low                          -> deeper bug, not just window.

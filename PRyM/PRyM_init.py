@@ -186,6 +186,24 @@ qke_energy_diag_flag = False
 # When qke_energy_diag_flag is True and this path is non-None, the
 # accumulated energy history is saved as a .npz file at Phase-B exit.
 qke_energy_diag_path = None
+# Stage E.2 sprint 9: per-step per-y-mode MSW-passage instrumentation on
+# evolve_step_ode_etdrk2. When True, the driver appends a row per time-
+# step to self._msw_hist containing, for a single active-sterile pair
+# (alpha, s=3) selected by qke_msw_diag_pair_idx and both sectors, the
+# per-y Hamiltonian entries (H_aa, H_ss, H_as) in eV and the diagonal
+# populations (rho_aa, rho_ss) at two sub-step positions (pre-step,
+# post-clip). Sprint-9 diagnostic hook for Suspect 2 (MSW-passage
+# adiabatic over-pumping in the ETDRK2 eigenbasis). Default False:
+# zero branches taken, zero measurable effect on runtime, bit-identical
+# output.
+qke_msw_diag_flag = False
+# When qke_msw_diag_flag is True and this path is non-None, the
+# accumulated MSW-passage history is saved as a .npz file at Phase-B
+# exit.
+qke_msw_diag_path = None
+# Pair index in self._all_pair_flavors for the channel to instrument;
+# 4 = (alpha=1=numu, s=3), the Hannestad Point-A (theta_24) channel.
+qke_msw_diag_pair_idx = 4
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

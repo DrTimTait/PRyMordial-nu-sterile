@@ -3061,6 +3061,11 @@ class DensityMatrixSolver(object):
         # default costs ~nothing and keeps solver state deterministic.
         self._energy_hist = []
         self._energy_step_idx = 0
+        # Stage E.2 sprint 9: per-step per-y-mode MSW-passage snapshots.
+        # Populated only when PRyMini.qke_msw_diag_flag is True (guarded in
+        # evolve_step_ode_etdrk2 snapshots). Empty default is bit-identical.
+        self._msw_hist = []
+        self._msw_step_idx = 0
 
     def _build_PMNS(self):
         """Construct the PMNS mixing matrix from oscillation parameters.
@@ -4694,6 +4699,70 @@ class DensityMatrixSolver(object):
                 row[f"C_{s}_{alpha}s"] = C_as
         self._energy_hist.append(row)
 
+    def _msw_snapshot(self, rho_all, a, Tg, label):
+        """Stage E.2 sprint 9: append per-y-mode per-sector Hamiltonian and
+        diagonal-population snapshot for the active-sterile pair selected by
+        PRyMini.qke_msw_diag_pair_idx to self._msw_hist.
+
+        Gated by PRyMini.qke_msw_diag_flag. Caller increments
+        self._msw_step_idx once per evolve_step_ode_etdrk2 call.
+
+        Per (sector s, y-mode), records for the pair (alpha, sterile=3):
+          H_aa(y), H_ss(y)      diagonals in eV
+          Re_H_as(y), Im_H_as(y) off-diagonal in eV
+          rho_aa(y), rho_ss(y)  diagonal populations (dimensionless)
+
+        Purpose: localise which y-modes receive anomalous sterile deposition
+        around the MSW resonance crossing (|H_aa - H_ss| minimum). Combined
+        with the post-processor in validation/diagnostics/diag_msw_passage.py,
+        this extracts per-y resonance temperature, Landau-Zener adiabaticity,
+        and end-state ρ_ss(y) residual vs. a thermal target.
+
+        Active-sterile pairs only: 4-flavor runs append; 3-flavor runs skip
+        silently (no sterile index 3 to reference).
+        """
+        if self.n_flavor != 4:
+            return
+        pair_idx = int(getattr(PRyMini, "qke_msw_diag_pair_idx", 4))
+        if pair_idx < 0 or pair_idx >= len(self._all_pair_flavors):
+            return
+        alpha, beta = self._all_pair_flavors[pair_idx]
+        if beta != 3:
+            # Only active-sterile pairs have a meaningful sterile diagonal.
+            return
+
+        # Build the per-sector Hamiltonian at the current rho_all, a, Tg.
+        # Non-mutating: _build_H_list only reads rho_all.
+        H_list = self._build_H_list(rho_all, a, Tg)
+        rho_mat0 = self._to_mat(rho_all[0])
+        rho_mat1 = self._to_mat(rho_all[1])
+        rho_mats = (rho_mat0, rho_mat1)
+
+        row = {
+            "step": int(self._msw_step_idx),
+            "label": str(label),
+            "a": float(a),
+            "Tg": float(Tg),
+            "pair_idx": int(pair_idx),
+            "alpha": int(alpha),
+            "sterile": int(beta),
+        }
+        for s in (0, 1):
+            H = H_list[s]
+            rho_mat = rho_mats[s]
+            H_aa = H[:, alpha, alpha].real.astype(np.float64)
+            H_ss = H[:, beta, beta].real.astype(np.float64)
+            H_as = H[:, alpha, beta].astype(np.complex128)
+            rho_aa = rho_mat[:, alpha, alpha].real.astype(np.float64)
+            rho_ss = rho_mat[:, beta, beta].real.astype(np.float64)
+            row[f"H_aa_{s}"] = H_aa
+            row[f"H_ss_{s}"] = H_ss
+            row[f"Re_H_as_{s}"] = H_as.real.astype(np.float64)
+            row[f"Im_H_as_{s}"] = H_as.imag.astype(np.float64)
+            row[f"rho_aa_{s}"] = rho_aa
+            row[f"rho_ss_{s}"] = rho_ss
+        self._msw_hist.append(row)
+
     def evolve_step_ode_etdrk2(self, rho_all, dt, phi1_dt, a, Tg):
         """Stage D.7.1: Strang-symmetric diagonal split around ETDRK2 off-diag.
 
@@ -4741,6 +4810,12 @@ class DensityMatrixSolver(object):
         if _diag_on:
             self._energy_step_idx += 1
             self._energy_snapshot(rho_all, a, Tg, label="pre_step")
+
+        # Stage E.2 sprint 9: per-step per-y-mode MSW-passage diagnostic.
+        _msw_on = getattr(PRyMini, "qke_msw_diag_flag", False)
+        if _msw_on:
+            self._msw_step_idx += 1
+            self._msw_snapshot(rho_all, a, Tg, label="pre_step")
 
         # 1. L, gain-only N, and I_total at rho_n.
         L_list, N_gain_n, I_total_n = self._build_L_list(rho_all, a, Tg)
@@ -4861,6 +4936,10 @@ class DensityMatrixSolver(object):
         # Stage E.2 sprint 8: post-clip energy snapshot (end-of-step state).
         if _diag_on:
             self._energy_snapshot(rho_all, a, Tg, label="post_clip")
+
+        # Stage E.2 sprint 9: post-clip MSW-passage snapshot.
+        if _msw_on:
+            self._msw_snapshot(rho_all, a, Tg, label="post_clip")
 
     def extract_f_all_3species(self, rho_all):
         """Extract 3-species f_all array compatible with BoltzmannSolver.

@@ -1244,3 +1244,133 @@ regression-bit-identical at default.
 3. **n_B auto-scale re-pin** for projection=True — still parked
    pending a dNeff fix.
 4. **Sprint-6 carryovers** — unchanged.
+
+**E.2 sprint 9 — Suspect 2 falsified at Point A; y-distribution
+bias inverted from prediction; Suspect 3 promoted to prime.** Scope
+(a) from `doc/STAGE_E2_SPRINT9_BRIEF.md`: per-step per-y-mode MSW-
+passage instrumentation, no fix landed. The new diagnostic resolves
+the Point A resonance-crossing structure and falsifies Suspect 2's
+high-y-over-deposition prediction; the actual bias runs the other
+way.
+
+**Instrumentation.** `PRyMini.qke_msw_diag_flag` (default False) +
+`qke_msw_diag_path` + `qke_msw_diag_pair_idx` (default 4 = (α=1=numu,
+s=3), the Point-A θ_24 channel). `DensityMatrixSolver._msw_snapshot`
+at `PRyM_boltzmann.py:4702-4764` is a second flag-gated helper
+alongside `_energy_snapshot`; it records per-y `H_αα`, `H_ss`,
+`H_αs`, `ρ_αα`, `ρ_ss` per sector per sub-step position
+({pre_step, post_clip}). Gate-flag hooks at `:4815-4818` and
+`:4941-4942`. Defaults bit-identical: gates 1–4 fast regression 4/4
+and sterile regression 3/3 pass; 2-level L-conservation guard
+1.83e-10 << 1e-8. Scaffolding: `_msw_hist`/`_msw_step_idx` init at
+`:3067-3068`, reusing `_boltz_dm_solver` exposure from sprint 8.
+
+**Phase-1 probe.** `validation/diagnostics/diag_msw_passage.py` runs
+Point A (sin²2θ=1e-1, δm²=0.93) at w30 projection, n_B=10000 in
+3983 s, reproducing sprint-7 Phase-5 bit-for-bit: **Neff=4.57772,
+Yp=0.29894, Σρ_ss=29.960**. Instrumentation is non-perturbative.
+Output at `validation/diagnostics/diag_msw_passage.out` (tracked)
+and `diag_msw_passage_pointA.npz` (193 MB, local only, per
+sprint-8 convention).
+
+**Resonance localisation per y-mode (sector 0).** The per-y table
+partitions into two populations:
+
+  * **Low-y (y ≲ 20)** cross their MSW resonance at `step_res` ∈
+    {0, 1, 2}, with `T_res ≈ 29.9–30.0 MeV` — i.e., the resonance
+    lies AT or ABOVE `T_boltz_start = 30 MeV`. Step-indexed
+    Landau-Zener adiabaticity `γ_step` = O(10⁻¹⁰ – 10⁻⁵). These
+    modes enter Phase B already past (or at) their resonance.
+  * **High-y (y ≳ 20)** cross at `step_res ≈ 2260–3350`,
+    `T_res ≈ 1.5–4 MeV`. `γ_step` = O(10⁻⁸ – 10⁻⁶).
+
+**Window-integrated Δρ_ss (sector 0, ±50 steps around resonance):**
+
+| bucket | y range | ⟨Δρ_ss_win⟩ |
+|---:|---:|---:|
+| 0 | 0.5–20.5  | +5.58e-2 |
+| 1 | 20.5–40.5 | +1.06e-1 |
+| 2 | 40.5–60.5 | +7.41e-2 |
+| 3 | 60.5–80.5 | +3.58e-2 |
+| 4 | 80.5–99.5 | −8.84e-4 |
+
+**End-state ρ_ss(y) residual vs. thermal FD at Tg_final, normalised
+to match measured Σρ_ss (sector 0):**
+
+| bucket | y range | ⟨residual⟩ |
+|---:|---:|---:|
+| 0 | 0.5–20.5  | **+8.14e-2** (over-thermal) |
+| 1 | 20.5–40.5 | +6.85e-2 |
+| 2 | 40.5–60.5 | +2.51e-2 |
+| 3 | 60.5–80.5 | −7.18e-3 |
+| 4 | 80.5–99.5 | **−1.08e-2** (under-thermal) |
+
+**Verdict: Suspect 2 is FALSIFIED at Point A.** The predicted
+signature (high-y over-deposition from ETDRK2 eigenbasis bias at
+near-degenerate L) does not appear — the bias runs the opposite
+way. Low-y modes are over-thermal by ~+8% of FD; high-y modes are
+under-thermal by ~−1%. Net `Σρ_ss` matches thermal, so the global
+population is right but redistributed.
+
+**Suspect 3 is PROMOTED to prime candidate.** The signature is
+consistent with a Phase-A thermal-IC inadequacy: low-y modes have
+already crossed their MSW resonance at T > 30 MeV by the time
+Phase B begins, so they arrive with `ρ_ss=0` but a physical
+pre-processed history would have non-zero mass-eigenstate
+occupation. The Phase-B driver, faithfully integrating from the
+wrong IC under large vacuum mixing (sin²2θ=0.1 → θ_vacuum≈9°),
+drives them rapidly toward a new local equilibrium that over-
+shoots thermal at low-y. High-y modes cross resonance *during*
+Phase B at step-indexed `γ_step` ≪ 1, i.e. Landau-Zener-non-
+adiabatic in step units — the driver tunnels through the crossing
+without full conversion, under-thermalising high-y.
+
+Neither anomaly is a driver bug. Both are physics-level consequences
+of the Phase-A cutoff. The fix belongs in the IC, not in
+`_etdrk2_expm_phi`.
+
+**Sprint-9 landing posture.** Diagnostic scaffolding only; no
+default flips, no fix landed. The sprint-8 do-not-touch list is
+inherited in full, plus the sprint-9 `_msw_snapshot` instrumentation
+and the `qke_msw_diag_*` flag defaults. The sprint-9 scaffolding is:
+
+  * `PRyM/PRyM_init.py` — `qke_msw_diag_flag`, `qke_msw_diag_path`,
+    `qke_msw_diag_pair_idx`.
+  * `PRyM/PRyM_boltzmann.py` — `_msw_hist`/`_msw_step_idx` init,
+    `_msw_snapshot` helper, two hook points in
+    `evolve_step_ode_etdrk2`.
+  * `validation/diagnostics/diag_msw_passage.py` + `.out` — Point A
+    run harness + resonance-localisation + FD-residual analyses.
+  * `doc/STAGE_E2_SPRINT10_BRIEF.md` — single-file handoff for the
+    sprint-10 Suspect-3 audit (Phase-0 QKE driver from ~100 MeV).
+
+All scaffolding is opt-in (guarded on `qke_msw_diag_flag`) and
+fast-regression-bit-identical at default.
+
+**Next structural candidates**, ranked post-sprint-9:
+
+1. **Suspect 3 — Phase-A thermal-IC inadequacy** (promoted from
+   sprint-8 #2 to prime). Build a Phase-0 QKE driver that evolves
+   from `T ≈ 100 MeV` down to `T_boltz_start = 30 MeV` with the
+   same 4×4 QKE machinery, consuming adiabatic-vacuum IC and
+   producing a history-preserving `ρ_all(T=30 MeV)` to hand to
+   Phase B. Expected effect at Point A: low-y bucket residual
+   shrinks toward zero as the pre-resonance history is supplied;
+   high-y may also improve if the Phase-0 integration smooths the
+   initial coherence across the 30–100 MeV window. Validation:
+   re-run `diag_msw_passage.py` + gate-6 `diag_hannestad_proj_w30_nB10k.py`.
+   See `doc/STAGE_E2_SPRINT10_BRIEF.md`.
+2. **Non-adiabatic high-y correction** (new, sprint-9 follow-up).
+   High-y bucket 4 under-thermalisation is small (−1%) but genuine,
+   arising from step-indexed Landau-Zener tunneling at `γ_step ≪ 1`.
+   If sprint 10's Phase-0 IC doesn't close it, an n_B refinement
+   localised to the crossing band (or an adaptive step controller
+   near resonance) may be needed.
+3. **n_B auto-scale re-pin** for projection=True — still parked
+   pending dNeff anomaly closing.
+4. **Sprint-6 carryovers** — unchanged.
+5. **Suspect 2 audit at Point C** (optional). Sprint-9 falsified
+   Suspect 2 at Point A only. Point C (small mixing, sin²2θ=1e-4)
+   has a narrow-resonance regime where the ETDRK2 eigenbasis
+   collapse argument *could* still apply. Low priority — Point C
+   already lands in-band at n_B=10000.

@@ -1029,9 +1029,23 @@ def _F_stat_stable(f1, f2, f3, f4):
     This avoids catastrophic cancellation when distributions are near
     equilibrium (all fi close to FD at the same temperature).
     """
-    # Clamp to avoid log(0)
+    # Clamp to avoid log(0) at the f = 0 and f = 1 singularities. Prior to
+    # Stage E.2 sprint 7, _hi was 1.0 - 1.0e-20, which rounds to exactly 1.0
+    # in float64 (1e-20 is far below machine eps(1) ≈ 2.22e-16), so the
+    # upper clamp was a no-op. When a diagonal briefly overshoots f > 1
+    # during the D.7.1 half-diag Strang split (seen at extended windows
+    # with the V_nunu active-only projection on, before the end-of-step
+    # diagonal clip fires), c = 1.0 gives log(0/1) = -inf in mu, so
+    # d_mu = +inf + (-inf) = NaN. At cold T the _fnu_*_scat/ann scalars
+    # are exactly 0, and the product 0 × NaN = NaN poisoned
+    # I_nu_e[species, y_idx=0] at T ~ a few keV. Fix: pick _hi large
+    # enough that 1 - _hi ≠ 1 in float64 (1.0 - 1e-15 ≈ 0.999999999999999).
+    # _lo is unchanged, so the low-edge clamp behaviour for f ∈ [1e-30,
+    # 1e-20] is identical; the only numerical change is for f ≥ 1-1e-15,
+    # which never occurs in the physical [0, 1] range enforced by the
+    # diagonal clip at end-of-step.
     _lo = 1.0e-20
-    _hi = 1.0 - 1.0e-20
+    _hi = 1.0 - 1.0e-15
     c1 = min(max(f1, _lo), _hi)
     c2 = min(max(f2, _lo), _hi)
     c3 = min(max(f3, _lo), _hi)

@@ -3,24 +3,20 @@ Stage E.2 sprint-5: Hannestad+2012 WITH projection + T_boltz_start=20 MeV
 qke_v_nunu_active_only = True, T_boltz_start = 20 MeV (auto-scaled n_B).
 ================================================================================================
 PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
-  3x3 QKE reference (no sterile, 20 MeV window)    Neff=3.01026  Yp=0.24801  D/H=2.4585  sum_rho_ss=-0.000  (1339s)
+  3x3 QKE reference (no sterile, 20 MeV window)    Neff=3.01026  Yp=0.24801  D/H=2.4585  sum_rho_ss=-0.000  (1225s)
 
 PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
-  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=3.12325  Yp=0.24954  D/H=2.4928  sum_rho_ss=21.763  (1781s)
+  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=3.12824  Yp=0.24954  D/H=2.4928  sum_rho_ss=21.425  (1599s)
 PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
-  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=3.05477  Yp=0.24844  D/H=2.4652  sum_rho_ss=21.286  (1763s)
+  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=3.04339  Yp=0.24844  D/H=2.4652  sum_rho_ss=20.397  (1690s)
 PRyMini.validate_configuration: T window [20.0, 0.005] MeV spans 3.60 decades (default 3.0); auto-scaling n_B_override = 4156 to preserve Phase B resolution. Set n_B_override explicitly to opt out.
-  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=2.97851  Yp=0.24870  D/H=2.4695  sum_rho_ss=12.340  (1768s)
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/interesting-hertz-90a1be/PRyM/PRyM_boltzmann.py:4755: RuntimeWarning: invalid value encountered in greater
-  ab_mag > max_mag,
-/Users/tait/Library/CloudStorage/Dropbox/Claude/PRyMordial-nu/.claude/worktrees/interesting-hertz-90a1be/PRyM/PRyM_boltzmann.py:4755: RuntimeWarning: invalid value encountered in greater
-  ab_mag > max_mag,
+  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=2.97851  Yp=0.24870  D/H=2.4695  sum_rho_ss=12.340  (1849s)
 
 --------------------------------------------------------------------------------------------------------
 Point                               sin²2θ      H+2012   Ours (proj+20)    Ours (proj+5)   Ours (orig)
 --------------------------------------------------------------------------------------------------------
-A  full thermalisation            1.00e-01       1.000            0.113            0.173         0.953
-B  partial thermalisation         2.26e-03       0.500            0.045            0.133         0.963
+A  full thermalisation            1.00e-01       1.000            0.118            0.173         0.953
+B  partial thermalisation         2.26e-03       0.500            0.033            0.133         0.963
 C  minimal thermalisation         1.00e-04       0.040           -0.032           -0.012         0.853
 
 Baseline: 3x3 reference Neff = 3.01026

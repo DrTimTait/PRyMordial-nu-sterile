@@ -1,0 +1,11 @@
+================================================================================
+Stage E.2 sprint 7 Phase 5 probe: Point C w30 projection, n_B=10000
+Gate 6 baseline (n_B=5031): Neff=7.22209, Yp=0.29320, sum_rho_ss=20.435, dNeff=+4.212
+================================================================================
+n_B=10000: Neff=3.06981  Yp=0.24972  D/H=2.5021  sum_rho_ss=20.550  (3996s)
+
+Reference 3x3 Neff (gate 6 at w30): 3.00987
+dNeff (ours @ n_B=10000) = +0.0599
+
+VERDICT: n_B under-resolution plausibly driving w30 over-sterilisation.
+         Proceed with full Phase-5 n_B scan + heuristic re-pin.

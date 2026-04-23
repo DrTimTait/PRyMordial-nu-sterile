@@ -958,3 +958,157 @@ these warnings entirely.
 4. **Strang-split time evolution**, **representation-factor leak**,
    **Gariazzo damping form**, **Shi-Fuller literature** — same
    priority and rationale as post-sprint-5.
+
+**E.2 sprint 7 — cold-T collision-integral NaN localised and fixed at
+origin; Hannestad w30 over-sterilisation refactored into two
+independent residual bugs.** Plan (b) from
+`doc/STAGE_E2_SPRINT7_BRIEF.md` (origin fix + n_B re-pin). The
+origin fix landed; the n_B re-pin was investigated and produced a
+nuanced result that scopes sprint 7 down to (a) plus a documented
+Phase-5 finding.
+
+**Phase 1 probe** (transient, discarded before commit). Instrumented
+`_assemble_collision_N` with a per-call non-finite check against
+every intermediate (`f_all`, `tail_params`, the four `_fnu_*` scalar
+interpolant returns, `I_nu_nu`, `I_nu_e`, `I_total`). First-hit
+AssertionError. Ran Point A at w30 with the probe on: first non-finite
+at **`I_nu_e[species=numu, y_idx=0]` at T=6.25 keV, a=6713**, in the
+*second* `_assemble_collision_N` call (the half-diag-2 `I_total_post`
+site). All upstream intermediates clean. Pre-flight pre-probe checks
+had already falsified Suspect-1 candidate A (interpolant extrapolation:
+the four `_fnu_*` tables return exactly `0.0` at T ∈ [1e-10, 9.9e-3] MeV
+by linear interp between two near-zero entries — no NaN) and candidate
+B (`/y1²` amplification: `y_grid[0] = dy/2 = 0.5 MeV`, not tiny — `/y1²`
+benign).
+
+**Phase 2 root cause and fix.** The NaN is produced inside
+`_F_stat_stable` at `PRyM_boltzmann.py:1060`: the upper clamp
+`_hi = 1.0 - 1.0e-20` rounds to **exactly 1.0** in float64 (1e-20 is
+far below machine eps(1) ≈ 2.22e-16). When a diagonal briefly overshoots
+`f > 1` during the Strang-split half-diag-1 (before the end-of-step
+diagonal clip), the clamp is a no-op: `c = 1.0 → (1-c)/c = 0 →
+log(0) = -inf → d_mu = -inf + +inf = NaN`. At cold T the
+`_fnu_*_scat/ann` scalars are exactly `0.0`, so `D_scat/D_ann = 0.0`
+and the product is `0 × NaN = NaN`. The NaN then poisoned
+`I_total[2]` at y_idx=0 and propagated into `rho_all[:, 1..2, 0]`
+via half-diag-2. (Sprint-6's probe caught a different y_idx=0 NaN at
+sector=0 comp=0 from the same root cause applied to `I_total[0]`.)
+
+Fix at origin (one constant change): `PRyM_boltzmann.py:1060`,
+`_hi = 1.0 - 1.0e-20` → `_hi = 1.0 - 1.0e-15`. Asymmetric (keeps
+`_lo = 1.0e-20` unchanged) so `f ∈ [0, 1]` physical-range callers
+are strictly bit-identical: the new `_hi` only clamps `f ≥ 1-1e-15`,
+which never occurs in the diagonal clip's post-step `[1e-30, 1-1e-30]`
+range. Post-fix probe re-run at w30 Point A was **silent**; run
+completed cleanly.
+
+**Phase 3+4 validation ladder (all at default projection=False unless
+noted):**
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | `pytest -m "not slow"` | 4/4 bit-identical ✓ |
+| 2 | `pytest -k sterile` | 3/3 bit-identical ✓ |
+| 3 | `diag_2level_damped.py` | ratio 1.000 ✓ |
+| 4 | `diag_vnunu_active_only.py` (proj + w5) | Point C ΔNeff = −0.0119 bit-identical ✓ |
+| 5 | `diag_hannestad_proj_w20.py` (proj + w20) | clean, Yp ∈ [0.24, 0.26] for all points ✓ |
+| 6 | `diag_hannestad_proj_w30.py` (proj + w30) | bit-identical Yp to sprint-6; dNeff drift (A 1.474→1.257, B 0.098→0.021, C 4.212→4.212); gate-6 **does not hit Hannestad bands** |
+
+Gate 6 not hitting was the surprise. Unwinding it: sprint-6's
+downstream sanitisation (`nan_to_num(NaN, nan=f_min=1e-30)` in the
+diagonal clip) had been substituting the "correct" cold-T asymptotic
+value for the NaN-producing mode — the clamp fix just formalises the
+same numerical outcome at the origin. So the w30 over-sterilisation
+observed in sprint 6 (Yp 0.30 at A and C, ΔNeff +4.2 at C) is
+**not** driven by the NaN + sanitisation biasing the neighbouring
+steps, as the sprint-6 ROADMAP speculated. It is a separate, deeper
+structural bug.
+
+**Phase 5 n_B convergence probe.** Suspect 2 from the brief's scope-(b)
+plan: the sprint-2 auto-scale `n_B = int(2000 * scale**4)` was pinned
+at projection=False; with V_nunu's sterile ballast removed by the
+projection, the MSW passage resolution requirement rises. Single-point
+probe at Point C w30 projection, n_B=10000 (≈ 2× sprint-2 default of
+5031):
+
+| n_B | Neff | Yp | ΔNeff | Σρ_ss |
+|---:|---:|---:|---:|---:|
+| 5031 (gate 6) | 7.22209 | 0.29320 | +4.212 | 20.435 |
+| 10000 (probe) | **3.06981** | **0.24972** | **+0.060** | 20.550 |
+
+Point C collapses from catastrophic over-sterilisation to within the
+Hannestad [0.02, 0.1] band by doubling n_B. (Σρ_ss is similar at
+both because it counts raw sterile occupation, dominated by low-y
+modes pinned near f_min; what changed is the energy-weighted Neff
+contribution from the high-y tail that n_B=10000 now resolves.)
+Encouraged, ran the full A/B/C suite at n_B=10000 w30 projection:
+
+| Point | sin²2θ | Hannestad | dNeff @ n_B=5031 | dNeff @ n_B=10000 | Yp @ n_B=10000 | Σρ_ss @ n_B=10000 | Band |
+|---|---:|---:|---:|---:|---:|---:|---|
+| A | 1e-1    | 1.00 | +1.257 | **+1.568** | 0.29894 | 29.960 | MISS (too high) |
+| B | 2.26e-3 | 0.50 | +0.021 | +0.060 | 0.24833 | 28.551 | MISS (too low)  |
+| C | 1e-4    | 0.04 | +4.212 | **+0.060** | 0.24972 | 20.550 | **IN BAND** ✓ |
+
+Point C: clean n_B-convergence, **fixed**. Point A: non-monotonic
+(gets *worse* with more n_B), indicating a separate structural bug at
+large mixing. Point B: under-production, stable across n_B, also a
+separate bug. Full-thermalisation sterile at A+B (Σρ_ss ≈ 30 ≈
+thermal) coexists with wildly-different ΔNeff values (+1.57 at A vs
++0.06 at B), suggesting the issue is energy-weighted: sterile is
+hotter than T_nu at A (dNeff ~ (T_s/T_nu)^4 = 1.11^4 ≈ 1.52, close
+to observed 1.57) and colder at B. An energy-balance / MSW-passage
+anomaly in the active↔sterile conversion at adiabatic and
+semi-adiabatic mixings.
+
+Full `diag_hannestad_proj_w30_nB10k.out` and
+`diag_pointC_nB_probe.out` kept under `validation/diagnostics/` as
+sprint-8 reference.
+
+**Sprint-7 landing posture.** Land Phase 2's single-constant fix as
+a standalone numerical-robustness commit. The fix:
+
+1. Eliminates the cold-T NaN at origin (first non-finite no longer
+   fires at any Hannestad-configured run).
+2. Is strictly bit-identical at projection=False (the default) — all
+   regression gates pass bit-identical. The sprint-6 sanitisation
+   passes are retained as defense in depth; they are now
+   mathematical no-ops on finite state in all runs.
+3. At extended windows (w20, w30) with projection=True, produces
+   **equivalent Yp** and slightly-shifted Neff vs. sprint-6 output.
+   The shift is from the sanitisation being an effective-f_min
+   substitution vs. a clamp-formalised equivalent — same physics
+   outcome, cleaner numerics.
+
+**Default `qke_v_nunu_active_only` stays `False`.** Point C's
+n_B-convergent behaviour at n_B=10000 is encouraging for a future
+heuristic re-pin, but the structural bugs at Points A and B must be
+resolved before the default flip. The sprint-7 cold-T fix + sprint-6
+sanitisation together make extended-window QKE runs numerically
+stable regardless of physical correctness, so future structural-bug
+sprints can iterate cleanly on Points A and B without re-tripping
+over the NaN.
+
+**Next structural candidates**, ranked post-sprint-7:
+
+1. **Point-A over-heating / Point-B under-production at w30
+   projection.** The n_B-independent dNeff anomalies at adiabatic
+   and semi-adiabatic mixings. Candidate causes: (i) energy-balance
+   bug in the active↔sterile damping → collision-integral coupling
+   (we damp coherence but do not explicitly transfer energy from ρ_αα
+   to ρ_ss in a conservation-verified way); (ii) MSW-passage
+   handling at large mixing — the ETDRK2 method in the eigenbasis may
+   over-pump adiabatic transitions; (iii) Phase-A thermal-IC
+   inadequacy at T_boltz_start=30 MeV, biasing the initial ν
+   reservoir. Diagnostic: integrate ∂_t[∫y² ρ_αα + ∫y² ρ_ss] across
+   a few steps at Point A and check whether the sum drifts — a
+   conservation violation pins (i).
+2. **n_B auto-scale re-pin for projection=True.** Point C's clean
+   convergence at n_B=10000 (vs. default 5031) says the sprint-2
+   `scale**4` heuristic under-resolves at projection-on extended
+   windows. Candidate re-pin: conditional `k=4` at
+   projection=False, `k=7` at projection=True, so `1.259**k ≈ 5`
+   gives n_B ≈ 10000 at w30 and n_B = 2000 bit-identical at default
+   w5. Defer until candidate 1 closes, since the flip depends on it.
+3. **Sprint-6 carryovers** (representation-factor leak, Al-Mohy
+   audit, Strang-split evolution, Gariazzo damping, Shi-Fuller
+   literature) — all unchanged in priority.

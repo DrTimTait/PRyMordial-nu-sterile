@@ -525,9 +525,13 @@ class PRyMclass(object):
               if PRyMini.qke_density_matrix_flag:
                   self._boltz_rho_final = rho_curr.copy()
                   self._boltz_f_final = None
+                  # Stage E.2 sprint 8: expose the DM solver so diagnostic
+                  # harnesses (qke_energy_diag_flag) can reach _energy_hist.
+                  self._boltz_dm_solver = dm_solver
               else:
                   self._boltz_f_final = f_curr.copy()
                   self._boltz_rho_final = None
+                  self._boltz_dm_solver = None
 
               # Phase C: Frozen distributions, 1-variable Tg ODE to end
               Tg_C_ini = Tg_B[-1]

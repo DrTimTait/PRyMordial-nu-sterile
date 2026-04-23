@@ -3055,6 +3055,13 @@ class DensityMatrixSolver(object):
             print(f"  DensityMatrixSolver: {tag} QKE, "
                   f"{2*self.n_components*self.Ny} real DOFs")
 
+        # Stage E.2 sprint 8: per-step energy accounting for the active-
+        # sterile 2x2 blocks. Populated only when PRyMini.qke_energy_diag_flag
+        # is True (guarded in evolve_step_ode_etdrk2 snapshots). Empty
+        # default costs ~nothing and keeps solver state deterministic.
+        self._energy_hist = []
+        self._energy_step_idx = 0
+
     def _build_PMNS(self):
         """Construct the PMNS mixing matrix from oscillation parameters.
 
@@ -4636,6 +4643,57 @@ class DensityMatrixSolver(object):
 
         return Phi0, Phi1, Phi2
 
+    def _energy_snapshot(self, rho_all, a, Tg, label):
+        """Stage E.2 sprint 8: append per-(sector, active-sterile pair) N/E/C
+        integrals for the current rho_all to self._energy_hist.
+
+        Gated by PRyMini.qke_energy_diag_flag. Caller increments
+        self._energy_step_idx once per evolve_step_ode_etdrk2 call.
+
+        Metrics per (sector s, pair (alpha, sterile_idx=3)) under the
+        uniform midpoint rule (dy constant across y_grid):
+          N_as = dy * sum_y y^2 * (rho_aa(y) + rho_ss(y))
+          E_as = dy * sum_y y^3 * (rho_aa(y) + rho_ss(y))
+          C_as = dy * sum_y y^3 * |rho_as(y)|
+
+        N/E conservation is the diagnostic for Suspect 1 (active-sterile
+        off-diagonal damping energy-balance). C is a coherence sidebar.
+        Active-sterile pairs only: 4-flavor runs append data; 3-flavor
+        runs skip silently.
+        """
+        if self.n_flavor != 4:
+            return
+        # Uniform midpoint rule over the full Ny grid (dy constant by
+        # construction at PRyM_boltzmann.py:1988-1989). The collision-integral
+        # Gauss-Legendre weights self._boltz.quad_w are only Ny_coll long;
+        # we want the full comoving distribution here, so use dy directly.
+        dy = self.dy
+        y = self.y_grid
+        y2 = y * y
+        y3 = y2 * y
+        row = {
+            "step": int(self._energy_step_idx),
+            "label": str(label),
+            "a": float(a),
+            "Tg": float(Tg),
+        }
+        rho_mat0 = self._to_mat(rho_all[0])
+        rho_mat1 = self._to_mat(rho_all[1])
+        rho_mats = (rho_mat0, rho_mat1)
+        for s in (0, 1):
+            rho_mat = rho_mats[s]
+            for alpha in (0, 1, 2):
+                rho_aa = rho_mat[:, alpha, alpha].real
+                rho_ss = rho_mat[:, 3, 3].real
+                rho_as = rho_mat[:, alpha, 3]
+                N_as = float(dy * np.sum(y2 * (rho_aa + rho_ss)))
+                E_as = float(dy * np.sum(y3 * (rho_aa + rho_ss)))
+                C_as = float(dy * np.sum(y3 * np.abs(rho_as)))
+                row[f"N_{s}_{alpha}s"] = N_as
+                row[f"E_{s}_{alpha}s"] = E_as
+                row[f"C_{s}_{alpha}s"] = C_as
+        self._energy_hist.append(row)
+
     def evolve_step_ode_etdrk2(self, rho_all, dt, phi1_dt, a, Tg):
         """Stage D.7.1: Strang-symmetric diagonal split around ETDRK2 off-diag.
 
@@ -4677,6 +4735,12 @@ class DensityMatrixSolver(object):
         N = self.n_flavor
         Ny = self.Ny
         _ = phi1_dt  # see docstring: ignored in D.7.1 (half-step phi computed locally)
+
+        # Stage E.2 sprint 8: per-step energy-accounting diagnostic.
+        _diag_on = getattr(PRyMini, "qke_energy_diag_flag", False)
+        if _diag_on:
+            self._energy_step_idx += 1
+            self._energy_snapshot(rho_all, a, Tg, label="pre_step")
 
         # 1. L, gain-only N, and I_total at rho_n.
         L_list, N_gain_n, I_total_n = self._build_L_list(rho_all, a, Tg)
@@ -4736,6 +4800,10 @@ class DensityMatrixSolver(object):
             rho_new_mat = 0.5 * (rho_new_mat + rho_new_mat.conj().swapaxes(-1, -2))
             rho_all[s] = self._to_vec(rho_new_mat)
 
+        # Stage E.2 sprint 8: post-corrector energy snapshot (pre half-diag #2).
+        if _diag_on:
+            self._energy_snapshot(rho_all, a, Tg, label="post_corrector")
+
         # 6. Re-evaluate I_total at rho_after_corrector for the second half-diag.
         #    We only need I_total, not the full L; skip _build_L_list and call
         #    _assemble_collision_N directly to keep cost down.
@@ -4789,6 +4857,10 @@ class DensityMatrixSolver(object):
                     np.nan_to_num(rho_all[sector, d],
                                   nan=f_min, posinf=f_max, neginf=f_min),
                     f_min, f_max)
+
+        # Stage E.2 sprint 8: post-clip energy snapshot (end-of-step state).
+        if _diag_on:
+            self._energy_snapshot(rho_all, a, Tg, label="post_clip")
 
     def extract_f_all_3species(self, rho_all):
         """Extract 3-species f_all array compatible with BoltzmannSolver.

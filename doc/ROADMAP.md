@@ -1112,3 +1112,135 @@ over the NaN.
 3. **Sprint-6 carryovers** (representation-factor leak, Al-Mohy
    audit, Strang-split evolution, Gariazzo damping, Shi-Fuller
    literature) — all unchanged in priority.
+
+**E.2 sprint 8 — Suspect-1 energy-balance falsified at machine
+precision; Point A dNeff anomaly isolated to a y-distribution effect
+downstream of a correctly-trace-preserving driver.** Scope (b) from
+`doc/STAGE_E2_SPRINT8_BRIEF.md` began with the Suspect-1 diagnostic.
+The surgical result rerouted the sprint to scope (a) close-out: no
+fix landed, but the Suspect-1 hypothesis is now removed from the
+candidate list, and the downstream default flip + n_B re-pin are
+parked pending a sprint-9 root cause.
+
+**Phase 1 instrumentation.** Added `PRyMini.qke_energy_diag_flag`
+(default False; bit-identical when off — the gates 1–4 fast regression
+ladder passes bit-for-bit at default) and a three-position per-step
+accumulator inside `evolve_step_ode_etdrk2` (`PRyM_boltzmann.py`
+lines 4695-4744, 4802-4805, 4858-4862). Each time step records, for
+each active-sterile block (α, s) and each sector, the uniform-
+midpoint-rule integrals `N_αs = dy·Σ y² (ρ_αα + ρ_ss)`, `E_αs = dy·
+Σ y³ (ρ_αα + ρ_ss)`, and coherence `C_αs = dy·Σ y³ |ρ_αs|`, at three
+sub-step positions (pre_step, post_corrector, post_clip). Accumulated
+on `DensityMatrixSolver._energy_hist` and exposed via
+`PRyMclass._boltz_dm_solver` (`PRyM_main.py:526`).
+
+**Phase 1 probe.** Harness
+`validation/diagnostics/diag_energy_balance.py` runs Point A
+(sin²2θ=1e-1, δm²=0.93) at w30 projection, n_B=10000, with the flag
+on. Output at `validation/diagnostics/diag_energy_balance.out` and
+`diag_energy_balance_pointA.npz`. Reproduces sprint-7's Point A bit-
+identically on public observables (Neff = 4.57772, Yp = 0.29894,
+Σρ_ss = 29.960), so instrumentation is non-perturbative.
+
+**Observed drift.** Per-step mean drift per (α, s) block:
+
+| sector | pair | ⟨dE_mid/E⟩ | ⟨dE_end/E⟩ | ⟨dE_tot/E⟩ | dE_mid / dE_tot |
+|---:|---:|---:|---:|---:|---:|
+| 0 | (0,s) | +7.04e-5 | +1.03e-7 | +7.05e-5 | 1.00 |
+| 0 | (1,s) | +7.64e-5 | −1.81e-8 | +7.63e-5 | 1.00 |
+| 0 | (2,s) | +7.90e-5 | −1.83e-8 | +7.90e-5 | 1.00 |
+| 1 | (0,s) | +8.34e-5 | +6.38e-8 | +8.35e-5 | 1.00 |
+| 1 | (1,s) | +9.35e-5 | −1.74e-8 | +9.34e-5 | 1.00 |
+| 1 | (2,s) | +1.02e-4 | −1.74e-8 | +1.02e-4 | 1.00 |
+
+Total (pre_step → post_clip) dE/E over the run: +0.48 to +0.52. All
+growth concentrated in the pre_step → post_corrector window (half-
+diag-1 + predictor + corrector); the off-diag clamp and diagonal clip
+contribute < 1e-7 per step each.
+
+That pattern triggers the brief's "Candidate A" verdict (positive
+drift → double-counting in L add-back) only superficially. The
+(ρ_αα + ρ_ss) sum is NOT a closed-system invariant in PRyMordial's
+Phase B — it couples to the thermal bath via `I_total` on the active
+diagonal at the half-diag-1 and half-diag-2 exp-Euler steps. A +50%
+growth over n_B=10000 steps is consistent with physical bath-pumped
+thermalisation plus unitary coherent transfer, not a numerical leak.
+
+**Surgical per-step trace test.**
+`validation/diagnostics/diag_energy_balance_decomp.py` post-processes
+the `.npz` and also replays one step of `evolve_step_ode_etdrk2`
+manually with explicit sub-step accounting on the full TRACE (the
+correct invariant under trace-preserving L):
+
+  * S0 pre: E_total = 3.3721e5
+  * S1 after half-diag-1: dE = 0 (I_total ≈ 0 at the thermal IC)
+  * S2 after predictor: **dE = +7.57e−10 (relative 2.24e-15)**
+  * S3 after corrector: dE = 0
+  * S4 after half-diag-2: dE = +1098 (bath refill after active→sterile
+    unitary transfer moved 4.47e4 E into ρ_ss during predictor)
+
+Predictor and corrector preserve trace at machine precision. The
+`dE_mid / dE_tot = 1.00` pattern in the full-run table just reflects
+that the bath delivery bookkeeping happens at half-diag-1 and
+half-diag-2, both of which live inside the pre_step → post_corrector
+window.
+
+**Verdict: Suspect 1 is falsified.** The driver's trace accounting
+is correct. The Point A dNeff = +1.57 anomaly (sterile ~11% hotter
+than T_ν at Σρ_ss ≈ thermal) must therefore be a y-DISTRIBUTION
+effect — where the bath-pumped resonance deposits its energy — not
+a total-energy accounting bug. That shifts the prime suspect to
+Suspect 2 (MSW-passage adiabatic over-pumping in the ETDRK2
+eigenbasis) from the sprint-8 brief.
+
+**Also confirmed.** L construction is correct at the matrix level:
+`validation/diagnostics/diag_2level_damped_energy.py` (new) evolves
+the (μ, s) 2×2 sub-block under the PRyMordial 4×4 L via direct expm
+for 1000 steps and finds |dN/N|, |dE/E| < 1.83e−10 (well under the
+1e−8 tolerance). Both the analytic 2-level L and the PRyMordial L
+extracted at the (μ, s) block preserve N and E in damping-only
+dynamics. Any sprint-9 fix that touches L construction has this as
+a regression guard.
+
+**Sprint-8 landing posture.** Land diagnostic scaffolding only.
+Default `qke_v_nunu_active_only` stays False. The conditional n_B
+re-pin (k=4 → k=7 at projection=True) is parked, since it depends
+on the dNeff anomaly closing first. `test_sterile_dw_production`
+is unchanged. Sprint-7's gate-6 n_B=10000 reference stays the
+primary Point A/B/C benchmark. The sprint-8 scaffolding is:
+
+  * `PRyM/PRyM_init.py` — `qke_energy_diag_flag`, `qke_energy_diag_path`.
+  * `PRyM/PRyM_boltzmann.py` — `_energy_snapshot` helper,
+    three-position instrumentation in `evolve_step_ode_etdrk2`.
+  * `PRyM/PRyM_main.py` — expose `dm_solver` as `_boltz_dm_solver`.
+  * `validation/diagnostics/diag_energy_balance.py` + `.out` + `.npz`
+    — Point A run harness + outputs.
+  * `validation/diagnostics/diag_energy_balance_decomp.py` + `.out`
+    — post-processor + surgical per-step trace test.
+  * `validation/diagnostics/diag_2level_damped_energy.py` + `.out`
+    — 2-level L N+E conservation unit test (pass at 1e-8).
+  * `validation/diagnostics/diag_hannestad_proj_w30_nB10k.py` —
+    sprint-7 Phase-5 transient harness resurrected for sprint 9.
+
+All scaffolding is opt-in (guarded on `qke_energy_diag_flag`, or on
+explicit `n_B_override = 10000` for the gate-6 harness) and fast-
+regression-bit-identical at default.
+
+**Next structural candidates**, ranked post-sprint-8:
+
+1. **Suspect 2 — MSW-passage adiabatic over-pumping in ETDRK2
+   eigenbasis** (promoted from sprint-7 #1.ii). The y-distribution
+   bias in ρ_ss must come from either the Hamiltonian resonance
+   structure or from how the ETDRK2 `_etdrk2_expm_phi` handles the
+   in-medium mixing angle sweep through π/4 at adiabatic mixing.
+   Diagnostic candidate: at each step, record the instantaneous
+   in-medium mixing angle θ_m(T, y) per y-mode and compare the
+   ETDRK2 trajectory to a direct-RK4 reference at a handful of
+   resonance-crossing y-modes. Where they diverge locates the bug.
+   See `doc/STAGE_E2_SPRINT9_BRIEF.md`.
+2. **Suspect 3 — Phase-A thermal-IC inadequacy** at T_boltz_start=30
+   MeV (demoted from sprint-7 #1.iii, was never prime). Only worth
+   investigating if Suspect 2 also falsifies.
+3. **n_B auto-scale re-pin** for projection=True — still parked
+   pending a dNeff fix.
+4. **Sprint-6 carryovers** — unchanged.

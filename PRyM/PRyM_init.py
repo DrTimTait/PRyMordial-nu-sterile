@@ -171,6 +171,21 @@ qke_v_nunu_scale = 1.0
 # bit-identically; flip to True once validated as a physical fix rather
 # than a diagnostic toggle.
 qke_v_nunu_active_only = False
+# Stage E.2 sprint 8: per-step energy-accounting diagnostic inside
+# evolve_step_ode_etdrk2. When True, the Strang-split driver appends a
+# row per time-step to self._energy_hist containing, for each active-
+# sterile pair (alpha, s) in {(0,3), (1,3), (2,3)} and each sector, the
+# number-weighted integral N_alphas = dy*sum_y y^2*(rho_aa+rho_ss) and
+# the energy-weighted integral E_alphas = dy*sum_y y^3*(rho_aa+rho_ss)
+# (uniform midpoint rule on the full Ny grid), at three sub-step
+# positions (pre-step, post-corrector, post-clip). Sprint-8 diagnostic
+# hook for Suspect 1 (active-sterile energy-balance anomaly). Default
+# False: zero branches taken, zero measurable effect on runtime,
+# bit-identical output.
+qke_energy_diag_flag = False
+# When qke_energy_diag_flag is True and this path is non-None, the
+# accumulated energy history is saved as a .npz file at Phase-B exit.
+qke_energy_diag_path = None
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

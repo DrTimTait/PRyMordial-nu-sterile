@@ -1,0 +1,36 @@
+================================================================================================
+Stage E.2 sprint 8 Phase 1 post-processor: Suspect-1 decomposition
+================================================================================================
+------------------------------------------------------------------------------------------------
+(1) Sub-step decomposition of Point A run
+------------------------------------------------------------------------------------------------
+sect    pair      <dE_mid/E>      <dE_end/E>      <dE_tot/E>   dE_mid / dE_tot
+------------------------------------------------------------------------------------------------
+   0  (0,s)     +7.0365e-05     +1.0315e-07     +7.0468e-05            0.9985
+   0  (1,s)     +7.6363e-05     -1.8082e-08     +7.6345e-05            1.0002
+   0  (2,s)     +7.9000e-05     -1.8267e-08     +7.8982e-05            1.0002
+   1  (0,s)     +8.3398e-05     +6.3800e-08     +8.3462e-05            0.9992
+   1  (1,s)     +9.3457e-05     -1.7367e-08     +9.3440e-05            1.0002
+   1  (2,s)     +1.0161e-04     -1.7383e-08     +1.0159e-04            1.0002
+
+Interpretation: dE_mid / dE_tot ~ 1.0 across all (alpha, s)
+blocks -> all growth is in pre_step -> post_corrector (half-diag-1
++ predictor + corrector). The clamp + clip contribute < 1e-7 per
+step. Next: decide whether the pre -> post_corrector growth is the
+bath-pumped physical thermalisation or a numerical leak.
+
+------------------------------------------------------------------------------------------------
+(2) Surgical per-step trace decomposition (fresh IC at a=1, T=10 MeV, dt=1e-4)
+------------------------------------------------------------------------------------------------
+         phase         E_total              dE            E_ss           dE_ss
+--------------------------------------------------------------------------------
+        S0 pre      3.3721e+05     +0.0000e+00      0.0000e+00     +0.0000e+00
+        S1 hd1      3.3721e+05     +0.0000e+00      0.0000e+00     +0.0000e+00
+       S2 pred      3.3721e+05     +7.5670e-10      4.4680e+04     +4.4680e+04
+       S3 corr      3.3721e+05     +0.0000e+00      4.4680e+04     +0.0000e+00
+        S4 hd2      3.3831e+05     +1.0983e+03      4.4680e+04     +0.0000e+00
+
+predictor relative trace drift = 2.24e-15  (threshold 1e-9)
+corrector relative trace drift = 0.00e+00  (threshold 1e-9)
+
+Verdict: PASS: predictor + corrector preserve trace at machine precision. Suspect 1 (double-counting or missing back-reaction in active-sterile off-diagonal damping) is FALSIFIED. The Point A dNeff anomaly is a y-distribution effect under the bath-pumped resonance, not a driver trace-accounting bug. Escalate to Suspect 2 (MSW-passage adiabatic over-pumping in ETDRK2 eigenbasis).

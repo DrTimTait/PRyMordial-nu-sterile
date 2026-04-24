@@ -23,7 +23,8 @@
       "Bash(tee validation/diagnostics/diag_2level_damped.out)",
       "Bash(git commit -m ' *)",
       "Bash(git clone *)",
-      "Bash(kill 87568)"
+      "Bash(kill 87568)",
+      "Bash(jobs)"
     ]
   }
 }

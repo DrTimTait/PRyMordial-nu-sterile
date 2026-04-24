@@ -255,8 +255,15 @@ class PRyMclass(object):
                   den_nu = 3.*PRyMthermo.drho_nu_dT(Tnu_t)
                   return [num_g/den_g, num_nu/den_nu]
 
-              # Find time at T_boltz_start by running Phase A
-              t_boltz_start = 1./(2.*Hubble(PRyMini.T_boltz_start))
+              # Find time at the Phase-A endpoint. Default endpoint is
+              # T_boltz_start; with qke_phase0_flag enabled on the QKE path,
+              # Phase A stops at T_phase0_start so the subsequent Phase-0
+              # segment can integrate the QKE from there down to T_boltz_start.
+              _phase0_active = (PRyMini.qke_phase0_flag
+                                and PRyMini.qke_density_matrix_flag)
+              _T_phaseA_end = (PRyMini.T_phase0_start if _phase0_active
+                               else PRyMini.T_boltz_start)
+              t_boltz_start = 1./(2.*Hubble(_T_phaseA_end))
               t_boltz_end_approx = 1./(2.*Hubble(PRyMini.T_boltz_end))
               n_A = max(50, int(PRyMini.n_sampling * 0.1))
               sol_A_sampling = np.logspace(np.log10(tini),np.log10(t_boltz_start),n_A)
@@ -288,6 +295,7 @@ class PRyMclass(object):
                   rho_curr = dm_solver.initial_conditions(
                       Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_dm)
                   dm_solver.update_thermo_distributions(rho_curr, a_boltz_ini)
+                  f_curr = None
               else:
                   # Diagonal Boltzmann: n=3, n=4, or n=6.
                   # n=6 (mu_tau=False + nu_nubar=False): full nu/nubar per flavor.
@@ -301,6 +309,7 @@ class PRyMclass(object):
                   f_curr = boltz_solver.initial_conditions(
                       Tnu_boltz_ini, a_boltz_ini, f_initial=f_initial_boltz)
                   boltz_solver.update_thermo_distributions(f_curr, a_boltz_ini)
+                  rho_curr = None
 
               t_B_start = t_A[-1]
 
@@ -346,10 +355,6 @@ class PRyMclass(object):
               _y_grid_boltz = boltz_solver.y_grid
               _dy_boltz = boltz_solver.dy
 
-              # Storage for Phase B trajectory
-              t_B_list = [t_B_start]
-              Tg_B_list = [Tg_boltz_ini]
-              a_B_list = [a_boltz_ini]
               f_min_clip = 1.0e-30
 
               # Froustey state variables
@@ -361,120 +366,229 @@ class PRyMclass(object):
               _y3_grid = _y_grid_boltz**3
               _dy_2pi2 = _dy_boltz / (2.0 * np.pi**2)
 
-              for istep in range(n_B):
-                  a_curr = a_grid[istep]
-                  a_next = a_grid[istep + 1]
-                  da = a_next - a_curr
-                  a_mid = 0.5 * (a_curr + a_next)
+              # Stage E.2 sprint 10: Phase-B Froustey loop body extracted into a
+              # reusable helper. Closes over Hubble, dm_solver, boltz_solver,
+              # _C_D_boltz, _GF2_secm1, _y_grid_boltz, _y3_grid, _dy_2pi2,
+              # n_species_boltz, f_min_clip, PRyMini, PRyMthermo. Invoked
+              # identically for Phase B (30→0.005 MeV) and -- when
+              # qke_phase0_flag is True -- Phase 0 (~100→30 MeV). A no-op
+              # refactor on the sprint-9 path; bit-identical at defaults.
+              def _run_qke_segment(rho_in, f_in, Tg_start, a_start, t_start,
+                                   sigma_start, Tg_end, n_steps, a_grid_seg,
+                                   collect_trajectories=True,
+                                   rho_ss_history=None):
+                  """Run the Froustey QKE / diagonal-Boltzmann loop body.
 
-                  # Midpoint Tg estimate (adiabatic cooling)
-                  Tg_mid = Tg_curr * (a_curr / a_mid)
+                  Mutates ``rho_in`` in-place on the QKE path (and returns the
+                  same object). On the diagonal-Boltzmann path ``f_in`` is
+                  reassigned each step; the final array is returned. When
+                  ``collect_trajectories`` is False the three list outputs are
+                  empty (Phase 0 does not need the trajectory arrays).
+                  """
+                  rho_loc = rho_in
+                  f_loc = f_in
+                  sigma_loc = sigma_start
+                  Tg_loc = Tg_start
+                  t_loc = t_start
+                  a_loc = a_start
 
-                  # Time step: midpoint Hubble for O(da²) accuracy
-                  # (Forward Euler dt = da/(a_curr*H_curr) has O(da) errors
-                  # that accumulate to ~0.2% timing offset over Phase B)
-                  if PRyMini.qke_density_matrix_flag:
-                      dm_solver.update_thermo_distributions(rho_curr, a_curr)
+                  if collect_trajectories:
+                      t_list = [t_start]
+                      Tg_list = [Tg_start]
+                      a_list = [a_start]
                   else:
-                      boltz_solver.update_thermo_distributions(f_curr, a_curr)
-                  H_mid = Hubble(Tg_mid)
-                  dt = da / (a_mid * H_mid)
+                      t_list = []
+                      Tg_list = []
+                      a_list = []
 
-                  # Exponential Euler regularization
-                  _rate_base = _GF2_secm1 * Tg_mid**4 / a_mid * dt
-                  _z_mode = np.outer(_C_D_boltz, _y_grid_boltz) * _rate_base
-                  _z_mode = np.maximum(_z_mode, 1.0e-15)
-                  _phi1_mode = np.where(_z_mode < 1.0e-4,
-                                        1.0 - 0.5*_z_mode + _z_mode**2/6.0,
-                                        (1.0 - np.exp(-_z_mode)) / _z_mode)
+                  for istep in range(n_steps):
+                      a_curr = a_grid_seg[istep]
+                      a_next = a_grid_seg[istep + 1]
+                      da = a_next - a_curr
+                      a_mid = 0.5 * (a_curr + a_next)
 
-                  if PRyMini.qke_density_matrix_flag:
-                      # QKE: track comoving energy before/after for entropy equation.
-                      # Sum over all flavor diagonals × 2 sectors (ν, ν̄).
-                      # For 3×3: diag indices 0,1,2 (e, μ, τ).
-                      # For 4×4 (sterile_flag=True): also include index 3 (s).
-                      _n_diag = dm_solver.n_flavor
-                      _diag_sum_pre = sum(rho_curr[s, d]
-                                          for s in range(2)
-                                          for d in range(_n_diag))
-                      E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
+                      # Midpoint Tg estimate (adiabatic cooling)
+                      Tg_mid = Tg_loc * (a_curr / a_mid)
 
-                      if PRyMini.qke_full_ode_flag:
-                          if PRyMini.qke_ode_etdrk2_flag:
-                              dm_solver.evolve_step_ode_etdrk2(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                      # Time step: midpoint Hubble for O(da²) accuracy
+                      # (Forward Euler dt = da/(a_curr*H_curr) has O(da) errors
+                      # that accumulate to ~0.2% timing offset over Phase B)
+                      if PRyMini.qke_density_matrix_flag:
+                          dm_solver.update_thermo_distributions(rho_loc, a_curr)
+                      else:
+                          boltz_solver.update_thermo_distributions(f_loc, a_curr)
+                      H_mid = Hubble(Tg_mid)
+                      dt = da / (a_mid * H_mid)
+
+                      # Exponential Euler regularization
+                      _rate_base = _GF2_secm1 * Tg_mid**4 / a_mid * dt
+                      _z_mode = np.outer(_C_D_boltz, _y_grid_boltz) * _rate_base
+                      _z_mode = np.maximum(_z_mode, 1.0e-15)
+                      _phi1_mode = np.where(_z_mode < 1.0e-4,
+                                            1.0 - 0.5*_z_mode + _z_mode**2/6.0,
+                                            (1.0 - np.exp(-_z_mode)) / _z_mode)
+
+                      if PRyMini.qke_density_matrix_flag:
+                          # QKE: track comoving energy before/after for entropy equation.
+                          # Sum over all flavor diagonals × 2 sectors (ν, ν̄).
+                          # For 3×3: diag indices 0,1,2 (e, μ, τ).
+                          # For 4×4 (sterile_flag=True): also include index 3 (s).
+                          _n_diag = dm_solver.n_flavor
+                          _diag_sum_pre = sum(rho_loc[s, d]
+                                              for s in range(2)
+                                              for d in range(_n_diag))
+                          E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
+
+                          if PRyMini.qke_full_ode_flag:
+                              if PRyMini.qke_ode_etdrk2_flag:
+                                  dm_solver.evolve_step_ode_etdrk2(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                              else:
+                                  dm_solver.evolve_step_ode(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
                           else:
-                              dm_solver.evolve_step_ode(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                              dm_solver.evolve_step(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
+
+                          _diag_sum_post = sum(rho_loc[s, d]
+                                               for s in range(2)
+                                               for d in range(_n_diag))
+                          E_com_post = np.sum(_y3_grid * _diag_sum_post) * _dy_2pi2
                       else:
-                          dm_solver.evolve_step(rho_curr, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                          # Diagonal Boltzmann: track comoving energy before/after
+                          if n_species_boltz == 3:
+                              _f_weighted_pre = f_loc[0] + f_loc[1] + 4.0 * f_loc[2]
+                          elif n_species_boltz == 4:
+                              _f_weighted_pre = f_loc[0] + f_loc[1] + 2.0 * f_loc[2] + 2.0 * f_loc[3]
+                          else:
+                              _f_weighted_pre = (f_loc[0] + f_loc[1] + f_loc[2]
+                                                 + f_loc[3] + f_loc[4] + f_loc[5])
+                          E_com_pre = np.sum(_y3_grid * _f_weighted_pre) * _dy_2pi2
 
-                      _diag_sum_post = sum(rho_curr[s, d]
-                                           for s in range(2)
-                                           for d in range(_n_diag))
-                      E_com_post = np.sum(_y3_grid * _diag_sum_post) * _dy_2pi2
-                  else:
-                      # Diagonal Boltzmann: track comoving energy before/after
-                      if n_species_boltz == 3:
-                          _f_weighted_pre = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
-                      elif n_species_boltz == 4:
-                          _f_weighted_pre = f_curr[0] + f_curr[1] + 2.0 * f_curr[2] + 2.0 * f_curr[3]
-                      else:
-                          _f_weighted_pre = (f_curr[0] + f_curr[1] + f_curr[2]
-                                             + f_curr[3] + f_curr[4] + f_curr[5])
-                      E_com_pre = np.sum(_y3_grid * _f_weighted_pre) * _dy_2pi2
+                          C_f = boltz_solver.collision_integrals(f_loc, a_mid, Tg_mid)
+                          f_loc = np.clip(f_loc + _phi1_mode * dt * C_f,
+                                          f_min_clip, 1.0 - f_min_clip)
 
-                      C_f = boltz_solver.collision_integrals(f_curr, a_mid, Tg_mid)
-                      f_curr = np.clip(f_curr + _phi1_mode * dt * C_f,
-                                       f_min_clip, 1.0 - f_min_clip)
+                          # Oscillation mixing (operator-split relaxation)
+                          if PRyMini.nu_oscillation_flag and \
+                                  getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'relaxation':
+                              boltz_solver.apply_oscillation_mixing(f_loc, a_mid, Tg_mid, dt)
 
-                      # Oscillation mixing (operator-split relaxation)
-                      if PRyMini.nu_oscillation_flag and \
-                              getattr(PRyMini, 'nu_oscillation_method', 'relaxation') == 'relaxation':
-                          boltz_solver.apply_oscillation_mixing(f_curr, a_mid, Tg_mid, dt)
+                          if n_species_boltz == 3:
+                              _f_weighted_post = f_loc[0] + f_loc[1] + 4.0 * f_loc[2]
+                          elif n_species_boltz == 4:
+                              _f_weighted_post = f_loc[0] + f_loc[1] + 2.0 * f_loc[2] + 2.0 * f_loc[3]
+                          else:
+                              _f_weighted_post = (f_loc[0] + f_loc[1] + f_loc[2]
+                                                  + f_loc[3] + f_loc[4] + f_loc[5])
+                          E_com_post = np.sum(_y3_grid * _f_weighted_post) * _dy_2pi2
 
-                      if n_species_boltz == 3:
-                          _f_weighted_post = f_curr[0] + f_curr[1] + 4.0 * f_curr[2]
-                      elif n_species_boltz == 4:
-                          _f_weighted_post = f_curr[0] + f_curr[1] + 2.0 * f_curr[2] + 2.0 * f_curr[3]
-                      else:
-                          _f_weighted_post = (f_curr[0] + f_curr[1] + f_curr[2]
-                                              + f_curr[3] + f_curr[4] + f_curr[5])
-                      E_com_post = np.sum(_y3_grid * _f_weighted_post) * _dy_2pi2
+                      # Update plasma entropy from energy conservation:
+                      #   d(spl * a³)/dt = -(Q/Tg) * a³
+                      # where Q = ΔE_com / (a⁴ * dt) is the collision energy transfer rate.
+                      # Substituting: Δσ = -ΔE_com / (a * Tg)
+                      dE_com = E_com_post - E_com_pre
+                      sigma_new = sigma_loc - dE_com / (a_mid * Tg_mid)
 
-                  # Update plasma entropy from energy conservation:
-                  #   d(spl * a³)/dt = -(Q/Tg) * a³
-                  # where Q = ΔE_com / (a⁴ * dt) is the collision energy transfer rate.
-                  # Substituting: Δσ = -ΔE_com / (a * Tg)
-                  dE_com = E_com_post - E_com_pre
-                  sigma_new = sigma_curr - dE_com / (a_mid * Tg_mid)
+                      # Find Tg_new from spl(Tg_new) * a_next³ = sigma_new
+                      s_target = sigma_new / a_next**3
+                      Tg_guess = Tg_loc * (a_curr / a_next)  # adiabatic estimate
+                      for _newton in range(10):
+                          s_val = PRyMthermo.spl(Tg_guess)
+                          ds_dT = (PRyMthermo.spl(Tg_guess * 1.001)
+                                   - PRyMthermo.spl(Tg_guess * 0.999)) / (0.002 * Tg_guess)
+                          delta_T = (s_val - s_target) / ds_dT
+                          Tg_guess -= delta_T
+                          if abs(delta_T) < 1.0e-10 * Tg_guess:
+                              break
+                      Tg_new = Tg_guess
 
-                  # Find Tg_new from spl(Tg_new) * a_next³ = sigma_new
-                  s_target = sigma_new / a_next**3
-                  Tg_guess = Tg_curr * (a_curr / a_next)  # adiabatic estimate
-                  for _newton in range(10):
-                      s_val = PRyMthermo.spl(Tg_guess)
-                      ds_dT = (PRyMthermo.spl(Tg_guess * 1.001)
-                               - PRyMthermo.spl(Tg_guess * 0.999)) / (0.002 * Tg_guess)
-                      delta_T = (s_val - s_target) / ds_dT
-                      Tg_guess -= delta_T
-                      if abs(delta_T) < 1.0e-10 * Tg_guess:
+                      # Advance state
+                      sigma_loc = sigma_new
+                      Tg_loc = Tg_new
+                      t_loc += dt
+                      a_loc = a_next
+
+                      if collect_trajectories:
+                          t_list.append(t_loc)
+                          Tg_list.append(Tg_new)
+                          a_list.append(a_next)
+
+                      # Sprint-10 post-landing probe: per-step rho_ss snapshot
+                      # (3+1 QKE path only). Enabled by the Phase-0 caller when
+                      # PRyMini.qke_phase0_diag_flag is True; no-op otherwise.
+                      if (rho_ss_history is not None
+                              and rho_loc is not None
+                              and rho_loc.shape[1] >= 4):
+                          rho_ss_history.append(
+                              (istep, float(a_next), float(Tg_new),
+                               rho_loc[:, 3, :].copy()))
+
+                      if(PRyMini.verbose_flag and (istep+1) % max(1, n_steps//5) == 0):
+                          print(f"    step {istep+1}/{n_steps}: Tg={Tg_loc:.4f} MeV, a={a_next:.2f}")
+
+                      # Stop when Tg drops below Tg_end
+                      if Tg_new <= Tg_end:
                           break
-                  Tg_new = Tg_guess
 
-                  # Advance state
-                  sigma_curr = sigma_new
-                  Tg_curr = Tg_new
-                  t_curr += dt
+                  return (rho_loc, f_loc, sigma_loc, Tg_loc, a_loc, t_loc,
+                          t_list, Tg_list, a_list)
 
-                  t_B_list.append(t_curr)
-                  Tg_B_list.append(Tg_new)
-                  a_B_list.append(a_next)
+              # Stage E.2 sprint 10: optional Phase-0 segment. Evolves the
+              # thermal-FD IC at T_phase0_start (produced above by the same
+              # dm_solver.initial_conditions call that Phase B uses; Phase A
+              # ran to T_phase0_start rather than T_boltz_start when the flag
+              # is on) down to T_boltz_start through _run_qke_segment, then
+              # hands the history-preserving rho to Phase B. The Phase-B
+              # entry state (Tg_boltz_ini, a_boltz_ini, t_B_start, sigma_curr,
+              # rho_curr) is updated in-place from the Phase-0 exit so the
+              # Phase-B call below is unchanged.
+              if _phase0_active:
+                  _n_B_phase0 = (int(PRyMini.n_B_phase0_override)
+                                 if PRyMini.n_B_phase0_override is not None
+                                 else 2500)
+                  _a_phase0_end_est = _a_of_T_entropy(PRyMini.T_boltz_start) * 1.02
+                  _a_grid_phase0 = np.logspace(np.log10(a_boltz_ini),
+                                                np.log10(_a_phase0_end_est),
+                                                _n_B_phase0 + 1)
+                  if PRyMini.verbose_flag:
+                      print(f"Phase 0: QKE density matrix, Tg={Tg_boltz_ini:.3f} "
+                            f"to {PRyMini.T_boltz_start:.3f} MeV")
+                      print(f"  {_n_B_phase0} steps, Ny={Ny_boltz}")
+                  # Optional per-step rho_ss history (sprint-10 probe).
+                  _rho_ss_hist = ([] if getattr(PRyMini, "qke_phase0_diag_flag", False)
+                                  else None)
+                  (rho_curr, _f_ignored, sigma_curr, Tg_boltz_ini, a_boltz_ini,
+                   t_B_start, _, _, _) = _run_qke_segment(
+                      rho_in=rho_curr, f_in=None,
+                      Tg_start=Tg_boltz_ini, a_start=a_boltz_ini,
+                      t_start=t_B_start, sigma_start=sigma_curr,
+                      Tg_end=PRyMini.T_boltz_start,
+                      n_steps=_n_B_phase0, a_grid_seg=_a_grid_phase0,
+                      collect_trajectories=False,
+                      rho_ss_history=_rho_ss_hist)
+                  self._phase0_rho_ss_history = _rho_ss_hist
+                  # Rebuild Phase-B a_grid from the Phase-0 exit a.
+                  a_end_est = _a_of_T_entropy(PRyMini.T_boltz_end) * 1.02
+                  a_grid = np.logspace(np.log10(a_boltz_ini),
+                                        np.log10(a_end_est), n_B + 1)
+                  # Update the Phase-B-entry Tnu metadata to the physical
+                  # Phase-B entry temperature (nu and gamma are still coupled
+                  # thermally at T_boltz_start, so Tnu ~= Tg ~= T_boltz_start).
+                  # Keeps downstream T_com = Tnu_ini * a_ini diagnostics sensible
+                  # when Phase 0 is active.
+                  Tnu_boltz_ini = Tg_boltz_ini
+                  # Expose the Phase-0 exit rho for diagnostics.
+                  self._phase0_rho_final = rho_curr.copy()
+              else:
+                  self._phase0_rho_final = None
+                  self._phase0_rho_ss_history = None
 
-                  if(PRyMini.verbose_flag and (istep+1) % max(1, n_B//5) == 0):
-                      print(f"    step {istep+1}/{n_B}: Tg={Tg_curr:.4f} MeV, a={a_next:.2f}")
-
-                  # Stop when Tg drops below T_boltz_end
-                  if Tg_new <= PRyMini.T_boltz_end:
-                      break
+              (rho_curr, f_curr, sigma_curr, Tg_curr, a_curr_unused, t_curr,
+               t_B_list, Tg_B_list, a_B_list) = _run_qke_segment(
+                  rho_in=rho_curr, f_in=f_curr,
+                  Tg_start=Tg_boltz_ini, a_start=a_boltz_ini,
+                  t_start=t_B_start, sigma_start=sigma_curr,
+                  Tg_end=PRyMini.T_boltz_end,
+                  n_steps=n_B, a_grid_seg=a_grid,
+                  collect_trajectories=True)
 
               t_B = np.array(t_B_list)
               Tg_B = np.array(Tg_B_list)

@@ -1,24 +1,18 @@
-================================================================================================
-Stage E.2 sprint 7 Phase 5: Hannestad A/B/C @ w30 projection, n_B=10000 (2× default)
-Gate 6 baseline (n_B=5031): A Yp=0.30046 dNeff=+1.257; B Yp=0.24900 dNeff=+0.021; C Yp=0.29320 dNeff=+4.212.
-3x3 ref at w30 (reused from gate 6): Neff_3x3 = 3.00987.
-================================================================================================
-  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=4.57772  Yp=0.29894  D/H=4.2229  sum_rho_ss=29.960  (4373s)
-     dNeff = +1.5679  target 1.0  band (0.9, 1.1)  ✗ OUTSIDE
-
-  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=3.06973  Yp=0.24833  D/H=2.4648  sum_rho_ss=28.551  (4120s)
-     dNeff = +0.0599  target 0.5  band (0.3, 0.7)  ✗ OUTSIDE
-
-  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=3.06981  Yp=0.24972  D/H=2.5021  sum_rho_ss=20.550  (4890s)
-     dNeff = +0.0599  target 0.04  band (0.02, 0.1)  ✓ IN BAND
-
+========================================================================================================
+Stage E.2 sprint 8 gate 6: Hannestad A/B/C @ w30 projection, n_B=10000
+qke_v_nunu_active_only = True, T_boltz_start = 30 MeV, n_B_override = 10000.
+Targets: A [0.9, 1.1]  B [0.3, 0.7]  C [0.02, 0.1].
+========================================================================================================
+  DW (A  full thermalisation, sin²2θ=1.00e-01, δm²=0.93) Neff=3.83523  Yp=0.26090  Σρ_ss=28.809
+  DW (B  partial thermalisation, sin²2θ=2.26e-03, δm²=0.93) Neff=3.06787  Yp=0.25022  Σρ_ss=28.939
+  DW (C  minimal thermalisation, sin²2θ=1.00e-04, δm²=0.93) Neff=8.52219  Yp=0.27209  Σρ_ss=22.225
 
 ----------------------------------------------------------------------------------------------------------------
-Point                               sin²2θ      H+2012    Ours @ n_B=10000            band     ΣρSS     verdict
+Point                               sin²2θ    H+2012    Ours @ n_B=10000        Yp      Σρss            band   verdict
 ----------------------------------------------------------------------------------------------------------------
-A  full thermalisation            1.00e-01       1.000              1.5679  [ 0.90,  1.10]   29.960        MISS
-B  partial thermalisation         2.26e-03       0.500              0.0599  [ 0.30,  0.70]   28.551        MISS
-C  minimal thermalisation         1.00e-04       0.040              0.0599  [ 0.02,  0.10]   20.550     IN BAND
+A  full thermalisation            1.00e-01     1.000              0.8349   0.26090    28.809  [0.90, 1.10]      MISS
+B  partial thermalisation         2.26e-03     0.500              0.0675   0.25022    28.939  [0.30, 0.70]      MISS
+C  minimal thermalisation         1.00e-04     0.040              5.5219   0.27209    22.225  [0.02, 0.10]      MISS
 
-VERDICT: at least one point misses Hannestad band.
-         Detail which ones; may need sterner n_B, or deeper structural bug.
+3x3 reference Neff = 3.00034
+VERDICT: no points in band -> fix not helping, investigate or roll back.

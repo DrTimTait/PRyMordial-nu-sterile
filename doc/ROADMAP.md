@@ -1374,3 +1374,167 @@ fast-regression-bit-identical at default.
    has a narrow-resonance regime where the ETDRK2 eigenbasis
    collapse argument *could* still apply. Low priority — Point C
    already lands in-band at n_B=10000.
+
+**E.2 sprint 10 — Phase-0 QKE driver lands; Point-A anomaly 87%
+closed, Point-C narrow-mixing regression promotes Suspect 2-residual
+to prime.** Scope (b)-minus-flip from `doc/STAGE_E2_SPRINT10_BRIEF.md`:
+Phase-0 driver, flags, auto-scale, decoupled-sterile regression
+guard, and diagnostic harness updates all land as opt-in machinery;
+the `qke_phase0_flag` default stays `False` because gate-9 Point C
+(sin²2θ=1e-4) regresses from in-band to far out-of-band when Phase 0
+is on.
+
+**Refactor landed first (no-op commit verified independently).** The
+Phase-B Froustey loop body at the old `PRyM_main.py:364-477` was
+extracted into a nested `_run_qke_segment(rho_in, f_in, Tg_start,
+a_start, t_start, sigma_start, Tg_end, n_steps, a_grid_seg,
+collect_trajectories, rho_ss_history)` helper inside
+`PRyMclass.__init__`. Both Phase 0 and Phase B now call it.
+Bit-identical to sprint-9 `ac1d521` at all defaults: fast regression
+4/4, sterile regression 3/3.
+
+**Instrumentation and machinery.**
+
+  * `PRyM/PRyM_init.py` — `qke_phase0_flag` (master toggle, default
+    False), `T_phase0_start = 100.0` (MeV), `n_B_phase0_override =
+    None` (validator auto-scales); `qke_phase0_diag_flag` (sprint-10
+    post-landing probe instrumentation, default False). Four new
+    validator clauses: warn when `qke_phase0_flag` is set with
+    `qke_full_ode_flag=False`, with `T_phase0_start <= T_boltz_start`,
+    or with `T_start/MeV_to_Kelvin < T_phase0_start`. New section 5b
+    auto-scale: `n_B_phase0 = int(2500 * (decades/0.52)^2)` anchored
+    at log10(100/30) = 0.52 decades, clamped to [500, 20000]. At the
+    default window the scale factor is exactly 1.0, so the auto-scale
+    picks the anchor 2500 verbatim.
+  * `PRyM/PRyM_main.py` — Phase-A endpoint dispatches on
+    `_phase0_active = (qke_phase0_flag and qke_density_matrix_flag)`;
+    the Phase-B IC construction is unchanged (it now builds the
+    thermal-FD IC at `T_phase0_start` when Phase 0 is on — which is
+    exactly the correct Phase-0 IC). A conditional Phase-0 block
+    between the Phase-B IC and the Phase-B loop calls
+    `_run_qke_segment(...)` with `Tg_end=T_boltz_start`,
+    `n_steps=n_B_phase0`, `collect_trajectories=False` and an
+    optional `rho_ss_history=[]` list when
+    `qke_phase0_diag_flag=True`. Post-Phase-0 it updates
+    `rho_curr, Tg_boltz_ini, a_boltz_ini, t_B_start, sigma_curr`
+    from Phase-0 exit and rebuilds the Phase-B `a_grid`. Exposes
+    `self._phase0_rho_final` and `self._phase0_rho_ss_history` on
+    the class for diagnostic harnesses.
+  * `validation/diagnostics/diag_phase0_decoupled.py` + `.out` — new
+    gate-5 regression guard. `sterile_flag=True`, all θ_α4 = 0,
+    xi_* = 0, `qke_phase0_flag=True`, 100→30 MeV over 1000 Phase-0
+    steps. Asserts `max|ρ_ss(T=T_boltz_start)| < 1e-12` (actual:
+    1e-30 at clip floor, both Phase-0 and Phase-B exits). PASS.
+  * `validation/diagnostics/diag_msw_passage.py` + `.out` — sprint-9
+    MSW-passage harness `_base_flags()` updated with
+    `qke_phase0_flag=True, T_phase0_start=100.0,
+    T_start=105*MeV_to_K, n_B_phase0_override=2500`. Gate 8 with
+    Phase 0 moves Point A Neff 4.57772 → 3.83523, Yp 0.29894 →
+    0.26090 (now in band), Σρ_ss 29.960 → 28.809.
+  * `validation/diagnostics/diag_hannestad_proj_w30_nB10k.py` +
+    `.out` — same Phase-0 enable in `_base_flags()`. Gate 9 results
+    below.
+  * `validation/diagnostics/diag_phase0_pointC.py` + `.out` — new
+    post-landing probe. Runs gate-9 Point C with
+    `qke_phase0_diag_flag=True` so `_run_qke_segment` appends
+    `(istep, a, Tg, rho_ss_slice.copy())` after each Phase-0 step.
+    Post-processes to locate threshold crossings, top-10 y-modes,
+    and nu/nubar asymmetry.
+  * `doc/STAGE_E2_SPRINT11_BRIEF.md` — single-file handoff for the
+    sprint-11 Suspect 2-residual fix (narrow-mixing ETDRK2 over-
+    adiabatisation at MSW passage).
+
+**Gate-9 Hannestad A/B/C at w30 projection, n_B=10000, Phase 0 on
+(5133-5226 s per run, ~5.5 h total wall-clock).** 3×3 QKE reference
+with Phase 0 on: Neff = 3.00034, Yp = 0.24779 — Phase 0 preserves
+the no-sterile Standard-Model value bit-for-bit.
+
+| Point | sin²2θ | Hannestad | Sprint-9 (no P0) | Sprint-10 (P0 on) | Yp | Σρ_ss | verdict |
+|---|---|---|---|---|---|---|---|
+| A | 1e-1 | 1.000 | +1.57 | **+0.835** | 0.26090 | 28.809 | miss low by 0.065 (87% closed) |
+| B | 2.26e-3 | 0.500 | +0.06 | 0.068 | 0.25022 | 28.939 | miss low (unchanged) |
+| C | 1e-4 | 0.040 | +0.06 | **+5.522** | 0.27209 | 22.225 | **miss high by 5.5 — regression** |
+
+Point A's closure is strong evidence for Suspect 3 (Phase-A thermal-
+IC inadequacy at low-y modes whose MSW resonance lies at
+`T_res ≳ 30 MeV`). Point B is neutral (small mixing, small Phase-0
+effect). Point C's regression is the prime sprint-10 finding.
+
+**Point-C post-landing probe
+(`diag_phase0_pointC.py`).** Ran gate-9 Point C with per-step
+instrumentation. Findings, in descending order of signal:
+
+  1. **Only 3% of the final Σρ_ss is deposited during Phase 0.**
+     Σρ_ss at Phase-0 exit = 0.666; at Phase-B exit = 22.22. The
+     remaining 97% is Phase-B collisional thermalisation of the
+     Phase-0 seed.
+  2. The Phase-0 seed is localised almost entirely at **y = 0.5 in
+     the antineutrino sector** (ρ_ss = 0.444). The next y-mode
+     (y = 1.5) is 20× smaller. All other y-modes are < 0.01.
+  3. Factor **2.6× antineutrino/neutrino asymmetry**: max_ν̄ = 0.444,
+     max_ν = 0.168 at Phase-0 exit. Consistent with the MSW sign
+     asymmetry for Dm²_41 > 0 (antineutrino resonance at higher T).
+  4. Growth is two-staged and includes a **step-function jump from
+     0.177 → 0.4145 between istep 906 (Tg = 64.1 MeV) and istep 1035
+     (Tg = 60.2 MeV)** in the antineutrino sector. Factor-2.3
+     doubling inside a ~130-step window, then flat for 1400 steps
+     until Phase-0 exit.
+
+**Verdict: Suspect 2-residual (ETDRK2 eigenbasis over-adiabatisation
+at narrow-mixing MSW passage) is PROMOTED to prime.** Sprint-9's
+original Suspect 2 hypothesis was falsified at Point A (large
+mixing, wrong signature direction) but re-surfaces at Point C
+(narrow mixing) with the **predicted** signature: spurious
+conversion at the one y-mode whose MSW resonance falls inside the
+integration window. The step-function jump at T ≈ 62 MeV is a
+regulariser-branch transition inside `_etdrk2_expm_phi`'s Al-Mohy
+augmented-matrix expm — the adiabatic width for y = 0.5 at
+sin²2θ = 1e-4 is narrow enough that the regulariser tolerance
+straddles it. Phase 0 only surfaces this bug by moving a previously-
+silent (pre-`T_boltz_start`) resonance into the integrated range;
+the mechanism applies equally in Phase B whenever a resonance falls
+inside the integration window. See `doc/STAGE_E2_SPRINT11_BRIEF.md`
+for the full mechanism write-up and fix plan.
+
+**Sprint-10 landing posture.** Phase-0 driver + instrumentation +
+diagnostic harnesses land as opt-in machinery. All defaults stay at
+`False` / `None`. No test fixtures changed. The sprint-10 bit-
+identity guarantees (all regression gates at defaults pass with zero
+drift against `ac1d521`) are what license shipping the Phase-0 code
+without the default flip — Point A's 87% closure is a **promising
+capability under user control**, Point C's regression is a
+**diagnosed numerical bug** with a narrow fix scope handed to
+sprint 11.
+
+**Next structural candidates**, ranked post-sprint-10:
+
+1. **Suspect 2-residual — ETDRK2 eigenbasis over-adiabatisation at
+   narrow-mixing MSW passage** (promoted from sprint-9's #5 parked
+   item to prime). Step-function jump localised to
+   `_etdrk2_expm_phi` at y = 0.5, antineutrino, Tg ≈ 62 MeV,
+   istep 906-1035 in Phase 0. Fix candidates ordered by scope:
+   (a) direct-expm fallback for y-modes within an adiabatic-width
+   fraction of resonance (cheapest, scope-local to a handful of
+   y-modes); (b) tighten the regulariser tolerance inside
+   `_etdrk2_expm_phi` (global effect, must be validated against
+   Point A's +0.835 — must not worsen); (c) architectural
+   resonance-aware step controller (1-2 session scope). See
+   `doc/STAGE_E2_SPRINT11_BRIEF.md`.
+2. **Suspect 4 — Phase-B collisional amplification at narrow
+   mixing** (new sprint-10 follow-up). Even if the Phase-0 seed at
+   y = 0.5 is reduced to ~0.01, Phase B's observed 33× amplification
+   would still push the final Σρ_ss above the Hannestad band. The
+   amplification may itself be over-integrating for narrow mixing.
+   Only investigate if Suspect 2-residual closes the Phase-0 seed
+   but Phase-B final is still above band.
+3. **Point-A residual 0.065 below-band** (sprint-10 remainder).
+   87% of the Point-A anomaly closed with Phase 0; the remaining 7%
+   may share the same `_etdrk2_expm_phi` regulariser mechanism at a
+   handful of edge y-modes near `T_boltz_start`. Likely resolved as
+   a side-effect of the Suspect 2-residual fix; verify via sprint-10
+   probe technique at Point A after the fix lands.
+4. **Non-adiabatic high-y correction** (sprint-9 carryover).
+   Superseded by Suspect 2-residual if (1) resolves the core
+   mechanism — same `_etdrk2_expm_phi` site.
+5. **n_B auto-scale re-pin** for projection=True — still parked.
+6. **Sprint-6 carryovers** — unchanged.

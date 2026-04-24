@@ -1,0 +1,12 @@
+================================================================================================
+Stage E.2 sprint 10 gate 5: Phase-0 decoupled-sterile regression guard
+sterile_flag=True, theta_14=theta_24=theta_34=0, xi_*=0.
+Phase 0: 100 -> 30 MeV, 1000 steps. Pass if max|rho_ss(30 MeV)| < 1e-12.
+================================================================================================
+Runtime: 2405.5s
+
+max |rho_ss| at Phase-0 exit (T = T_boltz_start): 1.000e-30
+max |rho_ss| at Phase-B exit (T = T_boltz_end):   1.000e-30
+tolerance: 1.0e-12
+
+PASS: Phase-0 leakage test (<) 1e-12 in the decoupled-sterile configuration.

@@ -60,6 +60,33 @@ n_sampling = 1200 # recommended for accuracy
 # integrators without perturbing Phase A or Phase C resolution. Intended
 # mainly for dt-convergence diagnostics and Stage D refinement tests.
 n_B_override = None
+# Stage E.2 sprint 10: Phase-0 QKE driver that evolves the 4x4 active-sterile
+# density matrix from T_phase0_start (~100 MeV) down to T_boltz_start before
+# Phase B begins. Supplies a history-preserving rho_all(T_boltz_start) to
+# Phase B, replacing the previous Phase-A thermal-FD cutoff IC. Targets the
+# low-y over-thermalisation localised by sprint 9's MSW-passage diagnostic:
+# modes whose MSW resonance lies at T_res >= T_boltz_start would otherwise
+# arrive at Phase B already past crossing with rho_ss = 0, letting the
+# driver overdrive them under large vacuum mixing. Default False preserves
+# sprint-9 behaviour bit-identically; enabling the flag requires T_start
+# to exceed T_phase0_start so Phase A can reach the Phase-0 entry point.
+qke_phase0_flag = False
+# Stage E.2 sprint 10: Phase-0 upper temperature [MeV]. Must lie above
+# T_boltz_start; the validator refuses equal or inverted windows. Default
+# 100 MeV chosen so V_thermal dominates the vacuum mass splitting across
+# all practical y-modes (theta_m ~ 0), making the thermal-FD adiabatic-
+# vacuum IC correct at the Phase-0 entry.
+T_phase0_start = 100.0
+# Stage E.2 sprint 10: optional Phase-0 step-count override. When None,
+# validate_configuration auto-scales from the Phase-0 window per the
+# heuristic documented in the sprint-10 ROADMAP entry.
+n_B_phase0_override = None
+# Stage E.2 sprint 10 post-landing probe: per-step Phase-0 rho_ss(y) history.
+# When True, _run_qke_segment appends a (istep, a, Tg, rho_ss_slice.copy())
+# tuple after each Phase-0 step to PRyMclass._phase0_rho_ss_history. Used by
+# validation/diagnostics/diag_phase0_pointC.py to localise the Point-C
+# narrow-mixing Phase-0 runaway. Default False: zero overhead, no allocation.
+qke_phase0_diag_flag = False
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 
@@ -693,6 +720,7 @@ def validate_configuration():
     """
     import warnings as _warnings
     global n_B_override  # auto-scaled below when window extends beyond default
+    global n_B_phase0_override  # sprint-10 auto-scale for the Phase-0 segment
 
     # 1. String-typed flags: reject typos immediately.
     if qke_damping_formula not in _QKE_DAMPING_FORMULAS:
@@ -719,6 +747,27 @@ def validate_configuration():
         _warnings.warn(
             "PRyMini.qke_full_ode_flag=True requires qke_density_matrix_flag=True; "
             "the Stage D ODE driver will be inactive. Set both or neither.",
+            stacklevel=2,
+        )
+    # Stage E.2 sprint 10: Phase-0 QKE driver preconditions.
+    if qke_phase0_flag and not qke_full_ode_flag:
+        _warnings.warn(
+            "PRyMini.qke_phase0_flag=True requires qke_full_ode_flag=True; the "
+            "Phase-0 segment reuses the Stage D ODE driver. Enable both or neither.",
+            stacklevel=2,
+        )
+    if qke_phase0_flag and T_phase0_start <= T_boltz_start:
+        _warnings.warn(
+            f"PRyMini.qke_phase0_flag=True but T_phase0_start = {T_phase0_start} "
+            f"MeV is not above T_boltz_start = {T_boltz_start} MeV; the Phase-0 "
+            "window is empty and the segment will no-op.",
+            stacklevel=2,
+        )
+    if qke_phase0_flag and T_start / MeV_to_Kelvin < T_phase0_start:
+        _warnings.warn(
+            f"PRyMini.qke_phase0_flag=True but T_start = {T_start/MeV_to_Kelvin:.3f} "
+            f"MeV is below T_phase0_start = {T_phase0_start} MeV; Phase A cannot "
+            "reach the Phase-0 entry point. Bump T_start above T_phase0_start.",
             stacklevel=2,
         )
 
@@ -784,6 +833,31 @@ def validate_configuration():
                 f"n_B_override = {n_B_override} to preserve Phase B "
                 "resolution. Set n_B_override explicitly to opt out."
             )
+
+    # 5b. Stage E.2 sprint 10: Phase-0 QKE step-count auto-scale. Phase 0 is
+    #     MSW-resonance-dominated, not collision-damping-dominated like Phase B,
+    #     so the sprint-2 exponent-4 formula is not portable (at 0.52 decades
+    #     the exponent-4 scaling collapses to ~0 steps). Anchor at 2500 steps
+    #     for the reference 100->30 MeV window (decades_p0_default = 0.52);
+    #     exponent-2 margin covers longer Phase-0 spans without overshooting.
+    #     Clamped to [500, 20000]. At the reference window the scale is
+    #     exactly 1.0, so the override picks the anchor 2500 verbatim.
+    if qke_phase0_flag and n_B_phase0_override is None \
+            and T_phase0_start > 0.0 and T_boltz_start > 0.0 \
+            and T_phase0_start > T_boltz_start:
+        decades_p0 = np.log10(T_phase0_start / T_boltz_start)
+        decades_p0_default = 0.52   # log10(100.0 / 30.0) ~= 0.5229
+        n_B_phase0_base = 2500
+        scale_p0 = max(1.0, decades_p0 / decades_p0_default)
+        n_B_phase0_override = int(max(500, min(20000,
+                                                n_B_phase0_base * scale_p0**2)))
+        print(
+            f"PRyMini.validate_configuration: Phase-0 window "
+            f"[{T_phase0_start}, {T_boltz_start}] MeV spans "
+            f"{decades_p0:.2f} decades (anchor {decades_p0_default:.2f}); "
+            f"auto-scaling n_B_phase0_override = {n_B_phase0_override} to "
+            "resolve MSW crossings. Set n_B_phase0_override explicitly to opt out."
+        )
 
     # 6. QED correction tables top out at T = 40 MeV. Above that top the
     #    baseline interpolators zero-clamp rather than linear-extrapolate

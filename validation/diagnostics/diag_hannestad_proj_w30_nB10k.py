@@ -62,6 +62,14 @@ def _base_flags():
     PRyMini.qke_v_thermal_scale = 1.0
     PRyMini.qke_v_nunu_scale = 1.0
     PRyMini.qke_v_nunu_active_only = True
+    # Sprint-10: Phase-0 QKE driver integrated from T_phase0_start down to
+    # T_boltz_start. Bumps T_start above T_phase0_start so Phase A reaches
+    # the Phase-0 entry; n_B_phase0_override pins step count per the sprint-10
+    # heuristic (see PRyM_init.validate_configuration section 5b).
+    PRyMini.qke_phase0_flag = True
+    PRyMini.T_phase0_start = 100.0
+    PRyMini.T_start = 105.0 * PRyMini.MeV_to_Kelvin
+    PRyMini.n_B_phase0_override = 2500
 
 
 def _run(label, configure):

@@ -89,6 +89,15 @@ def _base_flags():
     PRyMini.qke_msw_diag_flag = True
     PRyMini.qke_msw_diag_path = _OUT_NPZ
     PRyMini.qke_msw_diag_pair_idx = 4  # (alpha=1=numu, s=3) — theta_24 channel
+    # Sprint-10 Phase-0 driver: evolve the QKE from T_phase0_start down to
+    # T_boltz_start so the MSW resonance visible in the sprint-9 Point-A
+    # low-y bucket is encountered with a history-preserving IC rather than
+    # the thermal-FD cutoff at 30 MeV. T_start is bumped above
+    # T_phase0_start so Phase A can reach the Phase-0 entry.
+    PRyMini.qke_phase0_flag = True
+    PRyMini.T_phase0_start = 100.0
+    PRyMini.T_start = 105.0 * PRyMini.MeV_to_Kelvin
+    PRyMini.n_B_phase0_override = 2500
 
 
 _SCALAR_KEYS = ("step", "label", "a", "Tg", "pair_idx", "alpha", "sterile")

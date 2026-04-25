@@ -1811,3 +1811,111 @@ Stage E.2 sprint 12 carryovers (must not regress under sprint 13):
    primary localisation tool.
 4. **Sprint-11 carryovers** unchanged.
 5. **Sprint-10 carryovers** unchanged.
+
+**E.2 sprint 13 — Suspect 6 falsified, collision-N refactor reverted:
+ESCALATE to sprint 14 (DLSODA-first).** Sprint 13 attempted scope (a)
+of the sprint-13 brief: refactor `_assemble_collision_N` and
+`_build_L_list` so active-sterile pairs produce a TRUE zero collision
+RHS instead of the cancelled −D·ρ + add-back pair. Hypothesis was
+that the ULP cancellation residual at narrow mixing drives V_nunu
+lock-in via a spurious `Phi1·N_off` kick in the ETDRK2 predictor.
+**Hypothesis falsified at gate 6.**
+
+Refactor diff (two surgical edits in `PRyM/PRyM_boltzmann.py`,
+~10 lines total):
+
+  * `_assemble_collision_N` line 4537: branch on `p_idx<3` so
+    active-sterile pairs return `rhs_si = 0` instead of `-D·ρ`.
+  * `_build_L_list` line 4613: skip the +D·ρ add-back loop for
+    `p_idx≥3` pairs (since N_full is now 0 for them).
+
+Active-active pairs were bit-identical by construction (only the
+dead `S_gain_si = 0.0` branch for active-sterile changed; gain-only
+pairs got the same N_full and N_gain).
+
+Sprint 13 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 4/4 in 32s | bit-identical (active-active untouched) |
+| 2 sterile pytest | PASS 3/3 in 660s (11min) | bit-identical |
+| 3 2-level damped Rabi | PASS ratio=1.000 | bit-identical |
+| 4 2-level L conservation | PASS \|dN/N\|=\|dE/E\|=1.83e-10 | bit-identical |
+| 5 decoupled-sterile guard | PASS max\|ρ_ss\|=1e-30, eigendecomp=0 | refactor sound for decoupled physics |
+| 6 Phase-0 Point-C substep | **FAIL** | Σρ_ss(P0 exit)=0.6489, ρ_ss saturation 0.4099 |
+
+Comparison of gate-6 outcomes:
+
+| Variant | Runtime | Σρ_ss(P0 exit) | ρ_ss saturation | Neff (truncated PB) | Yp |
+|---|---|---|---|---|---|
+| sprint-12 no fix | 923s | 0.6673 | 0.4145 | 3.31068 | 0.26528 |
+| sprint-12 picard | 1605s | 0.6491 | 0.4097 | 3.24463 | 0.25187 |
+| sprint-13 refactor | **2965s** | 0.6489 | 0.4099 | **9.82082** | **0.31190** |
+
+Σρ_ss(P0 exit) and ρ_ss saturation are essentially bit-identical to
+sprint-12 picard — the refactor changed nothing in Phase 0. **Suspect
+6 (V_nunu lock-in via spurious Phi1 kick) is falsified.** Sub-step
+localisation summary confirms `|N_gain_13| nubar` max single-step
+relative jump = 0.00e+00 (exact zero, was ULP residual before), so
+the refactor took effect — but `|rho_diff_act|` and the gap-collapse
+pattern are unchanged at the resonance crossing. The cancellation
+residual was never the source.
+
+**Phase-B regression** (the unexpected part). With identical
+Phase-0 exit state, the refactor produced Neff = 9.82 in the
+truncated Phase B (n_B=200) — a 3× jump from sprint-12 baselines.
+Yp = 0.312 sits well outside the [0.24, 0.26] BBN-physical band.
+Mechanism: with N_full[active-sterile] structurally zero (instead
+of the prior −D·ρ + ULP residual), Phase-B integration of active-
+sterile coherence has lost a force term that was contributing
+non-trivially under the higher-temperature, more-stiff Phase-B
+regime. Decoupled physics is unaffected (gate 5 PASS); the Phase-B
+breakdown is conditional on having a non-zero active-sterile
+coherence to integrate.
+
+Wall-clock signal: gate 6 ran 2965s vs 1605s picard = 85% slower
+even though Phase-0 dynamics are equivalent. Slowdown localises to
+Phase-B integration and is consistent with adaptive timestep being
+forced smaller to handle the now-stiffer regime. (Diagnostic flags
+to localise this further: rerun gate 6 with `qke_substep_phase_b`
+counters; not landed.)
+
+**Refactor reverted** in the same sprint commit. Both edits rolled
+back to sprint-12 state — `git diff PRyM/PRyM_boltzmann.py` is empty
+against the sprint-12 landing. Sprint-12 instrumentation, opt-in
+H-iteration, sprint-11 eigendecomp fallback all preserved.
+
+**Failure record artifact**:
+`validation/diagnostics/diag_phase0_pointC_substep_refactor_failed.out`
+(sibling of `..._no_fix.out` and `..._picard.out`). Captured for the
+sprint-14 post-mortem.
+
+**Sprint-14 brief**: `doc/STAGE_E2_SPRINT14_BRIEF.md` lays out scope
+(c) — a parallel `scipy.integrate.solve_ivp(method='LSODA')` driver
+on the full vectorised state, with the same H/N kernels but a
+production-grade adaptive step size and stiff method. Rationale:
+both H-iteration variants (sprint 12) and the collision-N refactor
+(sprint 13) failed to break V_nunu lock-in while keeping Phase-B
+stable. The ETDRK2 driver may be the wrong tool for narrow-mixing
+resonance crossings. A LSODA reference will tell us either (a) the
+correct dynamics also hits Σρ_ss ~ 0.65 (in which case Hannestad's
+Landau-Zener prediction is being mis-applied to our problem and we
+should re-read the literature), or (b) the correct dynamics drops
+to [0.02, 0.10] and our ETDRK2 driver is the bottleneck (in which
+case LSODA replaces it as the production path).
+
+Stage E.2 sprint 13 carryovers (must not regress under sprint 14):
+
+1. **Sprint-12 instrumentation, sprint-11 fallback, sprint-10 driver,
+   sprint-9 MSW probe, sprint-8 energy probe, sprint-7 cold-T fix,
+   sprint-6 NaN-safe sanitisation, sprint-5 V_nunu projection,
+   D.7.1 Strang sequence, D.7 expm cache** — all preserved bit-
+   identical (revert restored sprint-12 state).
+2. **Refactor failure record**:
+   `validation/diagnostics/diag_phase0_pointC_substep_refactor_failed.out`
+   is read-only — keep alongside `..._no_fix.out` and `..._picard.out`
+   as the third corner of the suspect-survey table.
+3. **Suspect 6 is FALSIFIED.** Do not retry the collision-N refactor
+   in any variant; the Phase-0 step-function survives identical
+   modulo ULP, and Phase-B regresses by 3× on Neff. The fix path
+   moves to a different driver entirely.

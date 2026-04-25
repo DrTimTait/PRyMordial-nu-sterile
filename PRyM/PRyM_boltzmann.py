@@ -3066,6 +3066,13 @@ class DensityMatrixSolver(object):
         # evolve_step_ode_etdrk2 snapshots). Empty default is bit-identical.
         self._msw_hist = []
         self._msw_step_idx = 0
+        # Stage E.2 sprint 12: per-step sub-step Strang-split snapshots.
+        # Populated only when PRyMini.qke_phase0_substep_diag_flag is True
+        # (guarded in evolve_step_ode_etdrk2 snapshots). y_idx is cached
+        # on first snapshot call from PRyMini.qke_phase0_substep_y_target.
+        self._phase0_substep_hist = []
+        self._phase0_substep_step_idx = 0
+        self._phase0_substep_y_idx = None
 
     def _build_PMNS(self):
         """Construct the PMNS mixing matrix from oscillation parameters.
@@ -4858,6 +4865,97 @@ class DensityMatrixSolver(object):
             row[f"rho_ss_{s}"] = rho_ss
         self._msw_hist.append(row)
 
+    def _phase0_substep_snapshot(self, label, rho_all, a, Tg, *,
+                                  H_list=None, N_gain=None,
+                                  predictor_delta=None,
+                                  corrector_delta=None, z_h=None):
+        """Stage E.2 sprint 12: append a sub-step Strang-split snapshot row to
+        self._phase0_substep_hist for the y-mode closest to
+        PRyMini.qke_phase0_substep_y_target. Captures the metrics required
+        for sub-suspect 5a / 5b / 5c localisation in one pass:
+
+          5a (V_nunu non-linear feedback)
+            * (rho_nu - rho_nubar)[y_idx] active 3x3 entries (drives V_nunu).
+            * Per sector s in {0,1}: H[s][y_idx,alpha,alpha] for alpha=0,1,2;
+              H[s][y_idx,3,3] (sterile diagonal); H[s][y_idx,alpha,3] for
+              alpha=0,1,2 (active-sterile coupling).
+          5b (N_gain D*rho cancellation)
+            * N_gain[s][y_idx, 1, 3] (post add-back; entering predictor/corrector).
+            * N_full[s][y_idx, 1, 3] = N_gain - D_off * rho (raw, pre add-back).
+            * predictor_delta = (Phi1 . N_off_n) at (y_idx, 1, 3) per sector.
+            * corrector_delta = (Phi2 . dN_off) at (y_idx, 1, 3) per sector.
+          5c (phi_half Taylor threshold)
+            * z_h[alpha=0,1,2, y_idx] (channel-resolved damping argument).
+            * Taylor-branch boolean per channel (z_h < 1e-4).
+
+        Gated by PRyMini.qke_phase0_substep_diag_flag. Caller increments
+        self._phase0_substep_step_idx once per evolve_step_ode_etdrk2 call.
+        Active-sterile (3+1) only: 4-flavor runs append, others skip silently.
+        """
+        if self.n_flavor != 4:
+            return
+        y_idx = self._phase0_substep_y_idx
+        if y_idx is None:
+            y_target = float(getattr(PRyMini, "qke_phase0_substep_y_target",
+                                     0.5))
+            y_idx = int(np.argmin(np.abs(self.y_grid - y_target)))
+            self._phase0_substep_y_idx = y_idx
+
+        rho_mat0 = self._to_mat(rho_all[0])
+        rho_mat1 = self._to_mat(rho_all[1])
+        diff_active = (rho_mat0[y_idx, :3, :3]
+                       - rho_mat1[y_idx, :3, :3]).astype(np.complex128)
+
+        row = {
+            "step": int(self._phase0_substep_step_idx),
+            "label": str(label),
+            "a": float(a),
+            "Tg": float(Tg),
+            "y_idx": int(y_idx),
+            "y": float(self.y_grid[y_idx]),
+            "rho_diff_active": np.asarray(diff_active).copy(),
+        }
+        if H_list is not None and H_list[0] is not None:
+            for s in (0, 1):
+                H = H_list[s]
+                row[f"H_diag_a_{s}"] = np.array(
+                    [float(H[y_idx, alpha, alpha].real)
+                     for alpha in (0, 1, 2)], dtype=np.float64)
+                row[f"H_ss_{s}"] = float(H[y_idx, 3, 3].real)
+                row[f"H_as_{s}"] = np.array(
+                    [complex(H[y_idx, alpha, 3])
+                     for alpha in (0, 1, 2)], dtype=np.complex128)
+        if N_gain is not None:
+            # Recompute D_off to derive N_full = N_gain - D_off * rho on
+            # off-diagonals. Same formula as _build_L_list:4574 and
+            # _assemble_collision_N. Cheap: one helper call per snapshot.
+            T_eV = Tg * 1.0e6
+            E_arr = np.maximum(self.y_grid / a * 1.0e6, 1.0e-4)
+            D_off_eV = self._compute_D_pair_matrix(T_eV, E_arr, units="eV")
+            for s in (0, 1):
+                rho_mat_s = rho_mat0 if s == 0 else rho_mat1
+                ng_13 = N_gain[s][y_idx, 1, 3]
+                rho_13 = rho_mat_s[y_idx, 1, 3]
+                d_13 = complex(D_off_eV[1, 3, y_idx])
+                row[f"N_gain_13_{s}"] = complex(ng_13)
+                row[f"N_full_13_{s}"] = complex(ng_13 - d_13 * rho_13)
+                row[f"rho_13_{s}"] = complex(rho_13)
+            row["D_off_13"] = float(D_off_eV[1, 3, y_idx].real)
+        if predictor_delta is not None:
+            for s in (0, 1):
+                row[f"pred_delta_13_{s}"] = complex(
+                    predictor_delta[s][y_idx, 1, 3])
+        if corrector_delta is not None:
+            for s in (0, 1):
+                row[f"corr_delta_13_{s}"] = complex(
+                    corrector_delta[s][y_idx, 1, 3])
+        if z_h is not None:
+            row["z_h"] = np.array([float(z_h[c, y_idx]) for c in range(3)],
+                                  dtype=np.float64)
+            row["taylor_branch"] = np.array(
+                [bool(z_h[c, y_idx] < 1.0e-4) for c in range(3)], dtype=bool)
+        self._phase0_substep_hist.append(row)
+
     def evolve_step_ode_etdrk2(self, rho_all, dt, phi1_dt, a, Tg):
         """Stage D.7.1: Strang-symmetric diagonal split around ETDRK2 off-diag.
 
@@ -4912,6 +5010,13 @@ class DensityMatrixSolver(object):
             self._msw_step_idx += 1
             self._msw_snapshot(rho_all, a, Tg, label="pre_step")
 
+        # Stage E.2 sprint 12: per-step sub-step Strang-split diagnostic.
+        # Increment once at the top so all four substep snapshots in this
+        # step share the same step index.
+        _substep_on = getattr(PRyMini, "qke_phase0_substep_diag_flag", False)
+        if _substep_on:
+            self._phase0_substep_step_idx += 1
+
         # 1. L, gain-only N, and I_total at rho_n.
         L_list, N_gain_n, I_total_n = self._build_L_list(rho_all, a, Tg)
         dt_nat = dt * self._eV_to_secm1
@@ -4919,8 +5024,11 @@ class DensityMatrixSolver(object):
         # _etdrk2_expm_phi to discriminate true MSW resonance (H_αs ≠ 0)
         # from a decoupled active-sterile sector (H_αs ≡ 0). Build only
         # when the fallback flag is on; redundant with the build inside
-        # _build_L_list but cheap (~1 ms per step).
-        if getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False):
+        # _build_L_list but cheap (~1 ms per step). Sprint-12: also build
+        # when the substep diagnostic is on so the snapshot can record H
+        # at the y-mode under investigation.
+        if (getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False)
+                or _substep_on):
             H_list_n = self._build_H_list(rho_all, a, Tg)
         else:
             H_list_n = (None, None)
@@ -4955,8 +5063,29 @@ class DensityMatrixSolver(object):
         rho_all[1, 1] += phi_half[2] * I_total_n[2]
         rho_all[1, 2] += phi_half[2] * I_total_n[2]
 
-        # 4. ETDRK2 predictor -- off-diagonal coherence only. Applied to the
-        #    state AFTER the first half-diag; Phi0/Phi1 use L(rho_n) (frozen).
+        # Sprint 12: after_half1 snapshot. Capture H_list_n (built at rho_n)
+        # and z_h before the predictor mutates off-diagonals.
+        if _substep_on:
+            self._phase0_substep_snapshot(
+                "after_half1", rho_all, a, Tg,
+                H_list=H_list_n, z_h=z_h)
+
+        # Sprint 12 (5a fix): if iterating H, save rho_after_half1 so the
+        # second predictor pass can be done from the same starting state.
+        # Phi0 = e^(L·dt) propagates diagonals via the [H,·] commutator, so
+        # iterating H affects both predictor and corrector. Default off:
+        # bit-identical to sprint-11. Cost when on: ~2x per step (one extra
+        # _build_H_list + _build_L_list + _etdrk2_expm_phi).
+        _iterate_h = (
+            getattr(PRyMini, "qke_etdrk2_iterate_h_flag", False)
+            and getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False))
+        if _iterate_h:
+            rho_after_half1 = rho_all.copy()
+
+        # 4. ETDRK2 predictor pass 1 -- off-diagonal coherence only. Applied
+        #    to the state AFTER the first half-diag; Phi0/Phi1 use L(rho_n).
+        if _substep_on:
+            pred_phi1_contrib = [None, None]
         for s in range(2):
             Phi0, Phi1, _p2 = Phi_cache[s]
             rho_mat = self._to_mat(rho_all[s])
@@ -4969,11 +5098,60 @@ class DensityMatrixSolver(object):
             rho_star_mat = rho_star_vec.reshape(Ny, N, N)
             rho_star_mat = 0.5 * (rho_star_mat + rho_star_mat.conj().swapaxes(-1, -2))
             rho_all[s] = self._to_vec(rho_star_mat)
+            if _substep_on and not _iterate_h:
+                phi1_term = np.einsum('ijk,ik->ij', Phi1, N_off_vec)
+                pred_phi1_contrib[s] = phi1_term.reshape(Ny, N, N)
 
-        # 5. Corrector -- evaluate N at rho_star; Phi2 reuses cache at L(rho_n).
+        # Sprint 12 (5a fix, Picard restart): re-build L and Phi at the pass-1
+        # rho_star, then redo the predictor from rho_after_half1 with the
+        # updated cache. Cheaper than a full fixed-point iteration but
+        # captures the V_nunu non-linear shift that drives the resonance.
+        if _iterate_h:
+            L_list_star, _, _ = self._build_L_list(rho_all, a, Tg)
+            H_list_star = self._build_H_list(rho_all, a, Tg)
+            Phi_cache_star = [
+                self._etdrk2_expm_phi(L_list_star[s], dt_nat, H_list_star[s])
+                for s in (0, 1)]
+            # Restore rho_all to rho_after_half1 and redo the predictor with
+            # the H-iterated Phi cache.
+            np.copyto(rho_all, rho_after_half1)
+            for s in range(2):
+                Phi0, Phi1, _p2 = Phi_cache_star[s]
+                rho_mat = self._to_mat(rho_all[s])
+                rho_vec = rho_mat.reshape(Ny, N * N)
+                N_off_vec = N_gain_n[s].reshape(Ny, N * N).copy()
+                for alpha in range(N):
+                    N_off_vec[:, alpha * N + alpha] = 0.0
+                rho_star_vec = (np.einsum('ijk,ik->ij', Phi0, rho_vec)
+                                + np.einsum('ijk,ik->ij', Phi1, N_off_vec))
+                rho_star_mat = rho_star_vec.reshape(Ny, N, N)
+                rho_star_mat = 0.5 * (rho_star_mat
+                                       + rho_star_mat.conj().swapaxes(-1, -2))
+                rho_all[s] = self._to_vec(rho_star_mat)
+                if _substep_on:
+                    phi1_term = np.einsum('ijk,ik->ij', Phi1, N_off_vec)
+                    pred_phi1_contrib[s] = phi1_term.reshape(Ny, N, N)
+
+        # Sprint 12: after_predictor snapshot. With iterate_h, H_list_star
+        # reflects rho_star_pass1 (the V_nunu-shifted Hamiltonian); without,
+        # H_list_n is the frozen-coefficient H.
+        if _substep_on:
+            self._phase0_substep_snapshot(
+                "after_predictor", rho_all, a, Tg,
+                H_list=(H_list_star if _iterate_h else H_list_n),
+                N_gain=N_gain_n,
+                predictor_delta=pred_phi1_contrib)
+
+        # 5. Corrector -- evaluate N at rho_star; Phi2 reuses Phi_cache_star
+        # if iterating, else the frozen Phi_cache at L(rho_n).
         _, N_gain_star, _ = self._build_L_list(rho_all, a, Tg)
+        if _substep_on:
+            corr_phi2_contrib = [None, None]
         for s in range(2):
-            _p0, _p1, Phi2 = Phi_cache[s]
+            if _iterate_h:
+                _p0, _p1, Phi2 = Phi_cache_star[s]
+            else:
+                _p0, _p1, Phi2 = Phi_cache[s]
             dN_off = (N_gain_star[s] - N_gain_n[s]).reshape(Ny, N * N).copy()
             for alpha in range(N):
                 dN_off[:, alpha * N + alpha] = 0.0
@@ -4982,10 +5160,21 @@ class DensityMatrixSolver(object):
             rho_new_mat = rho_new_vec.reshape(Ny, N, N)
             rho_new_mat = 0.5 * (rho_new_mat + rho_new_mat.conj().swapaxes(-1, -2))
             rho_all[s] = self._to_vec(rho_new_mat)
+            if _substep_on:
+                phi2_term = np.einsum('ijk,ik->ij', Phi2, dN_off)
+                corr_phi2_contrib[s] = phi2_term.reshape(Ny, N, N)
 
         # Stage E.2 sprint 8: post-corrector energy snapshot (pre half-diag #2).
         if _diag_on:
             self._energy_snapshot(rho_all, a, Tg, label="post_corrector")
+
+        # Sprint 12: after_corrector snapshot. N_gain_star reflects N at
+        # rho_star (the difference N_gain_star - N_gain_n drove Phi2.dN_off).
+        if _substep_on:
+            self._phase0_substep_snapshot(
+                "after_corrector", rho_all, a, Tg,
+                H_list=H_list_n, N_gain=N_gain_star,
+                corrector_delta=corr_phi2_contrib)
 
         # 6. Re-evaluate I_total at rho_after_corrector for the second half-diag.
         #    We only need I_total, not the full L; skip _build_L_list and call
@@ -4999,6 +5188,12 @@ class DensityMatrixSolver(object):
         rho_all[0, 2] += phi_half[2] * I_total_post[2]
         rho_all[1, 1] += phi_half[2] * I_total_post[2]
         rho_all[1, 2] += phi_half[2] * I_total_post[2]
+
+        # Sprint 12: after_half2 snapshot. Capture rho_final and z_h
+        # (5c probe — unchanged across the step but recorded once per step).
+        if _substep_on:
+            self._phase0_substep_snapshot(
+                "after_half2", rho_all, a, Tg, z_h=z_h)
 
         # 6. Off-diagonal magnitude clamp (same as evolve_step_ode).
         for sector in range(2):

@@ -67,6 +67,16 @@ def _base_flags():
     # Sprint-11: eigendecomposition fallback for narrow-mixing MSW collapse.
     PRyMini.qke_expm_fallback_near_degeneracy = True
     PRyMini.qke_expm_fallback_eps_cross = 1.0e-3
+    # Sprint-12: sub-step instrumentation for Phase-0 step-function localisation.
+    PRyMini.qke_phase0_substep_diag_flag = True
+    PRyMini.qke_phase0_substep_y_target = 0.5
+    # Sprint-12 5a fix: H-iteration in the ETDRK2 corrector smooths the
+    # V_nunu non-linear feedback that drives the istep 906→1035 step-function
+    # in ρ_ss(y=0.5, ν̄). Required for the gate-6 success criterion
+    # (Σρ_ss(Phase-0 exit) < 0.05). Toggle off via env var PRYM_ITERATE_H=0
+    # to reproduce the sprint-11 baseline (step-function preserved).
+    PRyMini.qke_etdrk2_iterate_h_flag = (
+        os.environ.get("PRYM_ITERATE_H", "1") not in ("0", "", "false", "False"))
 
 
 def _run():
@@ -206,3 +216,202 @@ if __name__ == "__main__":
     print(text, flush=True)
     with open(_OUT_TXT, "w") as fh:
         fh.write(text + "\n")
+
+    # ----------------------------------------------------------------------
+    # Sprint-12 sub-step instrumentation output. Independent of the existing
+    # output above; writes to a separate file so the gate-6 success criterion
+    # (this script's primary output) is unaffected.
+    # ----------------------------------------------------------------------
+    _OUT_SUBSTEP = os.path.join(
+        _WT, "validation/diagnostics/diag_phase0_pointC_substep.out")
+    boltz = getattr(c, "_boltz_dm_solver", None)
+    sub_hist = getattr(boltz, "_phase0_substep_hist", None) if boltz is not None else None
+    if sub_hist is None or len(sub_hist) == 0:
+        print("Sprint-12 substep history is empty (flag may not be wired); "
+              "skipping substep output.", flush=True)
+    else:
+        # Each evolve_step_ode_etdrk2 call emits 4 rows. Solver-side step
+        # index is 1-based and is incremented at the top of each call,
+        # whereas the Phase-0 caller's istep is 0-based — so step = istep + 1
+        # on the Phase-0 segment. Filter to istep window [880, 1080] =>
+        # solver step in [881, 1081].
+        win_lo, win_hi = 881, 1081
+        win = [r for r in sub_hist if win_lo <= r["step"] <= win_hi]
+        # Group by step for compact emission (4 labels per step).
+        by_step = {}
+        for r in win:
+            by_step.setdefault(r["step"], {})[r["label"]] = r
+
+        sub_lines = [
+            "=" * 132,
+            "Sprint-12 sub-step localisation probe — Hannestad Point C, Phase 0",
+            f"y_target = {PRyMini.qke_phase0_substep_y_target}, window istep+1 in "
+            f"[{win_lo}, {win_hi}], substep rows: {len(win)}",
+            "=" * 132,
+        ]
+        if win:
+            y_actual = win[0]["y"]
+            sub_lines.append(f"y_actual (closest grid mode) = {y_actual:.6f}")
+            sub_lines.append("")
+
+        # ---------------- 5a table — V_nunu / H feedback signature -----------
+        sub_lines.append("-" * 132)
+        sub_lines.append(
+            "5a probe: rho_nu - rho_nubar (active 3x3 trace + (1,3)) and "
+            "H gap (H_aa - H_ss) for alpha=1, both sectors.")
+        sub_lines.append(
+            f"  {'step':>6s}  {'label':>14s}  {'Tg [MeV]':>9s}  "
+            f"{'tr(d_act)':>11s}  {'|d_act|':>11s}  "
+            f"{'gap1_nu':>11s}  {'gap1_nb':>11s}  "
+            f"{'|H_13_nu|':>11s}  {'|H_13_nb|':>11s}")
+        for step in sorted(by_step.keys()):
+            for lab in ("after_half1", "after_predictor",
+                        "after_corrector", "after_half2"):
+                r = by_step[step].get(lab)
+                if r is None:
+                    continue
+                d = r["rho_diff_active"]
+                tr_d = float(np.real(np.trace(d)))
+                fro_d = float(np.linalg.norm(d))
+                if "H_diag_a_0" in r:
+                    gap1_nu = float(r["H_diag_a_0"][1] - r["H_ss_0"])
+                    gap1_nb = float(r["H_diag_a_1"][1] - r["H_ss_1"])
+                    H13_nu = float(np.abs(r["H_as_0"][1]))
+                    H13_nb = float(np.abs(r["H_as_1"][1]))
+                else:
+                    gap1_nu = gap1_nb = H13_nu = H13_nb = float("nan")
+                sub_lines.append(
+                    f"  {step:6d}  {lab:>14s}  {r['Tg']:9.4f}  "
+                    f"{tr_d:+11.4e}  {fro_d:11.4e}  "
+                    f"{gap1_nu:+11.4e}  {gap1_nb:+11.4e}  "
+                    f"{H13_nu:11.4e}  {H13_nb:11.4e}")
+        sub_lines.append("")
+
+        # ---------------- 5b table — N_gain D*rho cancellation --------------
+        sub_lines.append("-" * 132)
+        sub_lines.append(
+            "5b probe: N_gain vs N_full at (alpha=1, sterile, y) for sector "
+            "nubar (s=1); predictor and corrector deltas at the same entry.")
+        sub_lines.append(
+            f"  {'step':>6s}  {'label':>14s}  {'|rho_13_nb|':>12s}  "
+            f"{'|N_gain_nb|':>12s}  {'|N_full_nb|':>12s}  "
+            f"{'|D*rho_nb|':>12s}  {'|pred_d_nb|':>12s}  "
+            f"{'|corr_d_nb|':>12s}")
+        for step in sorted(by_step.keys()):
+            for lab in ("after_half1", "after_predictor",
+                        "after_corrector", "after_half2"):
+                r = by_step[step].get(lab)
+                if r is None:
+                    continue
+                rho13 = abs(complex(r.get("rho_13_1", 0.0)))
+                ng13 = abs(complex(r.get("N_gain_13_1", 0.0)))
+                nf13 = abs(complex(r.get("N_full_13_1", 0.0)))
+                d_off = float(r.get("D_off_13", 0.0))
+                drho13 = d_off * rho13
+                pd13 = abs(complex(r.get("pred_delta_13_1", 0.0)))
+                cd13 = abs(complex(r.get("corr_delta_13_1", 0.0)))
+                # Skip rows with no 5b payload to keep table tight.
+                if "N_gain_13_1" not in r and lab not in (
+                        "after_predictor", "after_corrector"):
+                    continue
+                sub_lines.append(
+                    f"  {step:6d}  {lab:>14s}  {rho13:12.4e}  "
+                    f"{ng13:12.4e}  {nf13:12.4e}  "
+                    f"{drho13:12.4e}  {pd13:12.4e}  {cd13:12.4e}")
+        sub_lines.append("")
+
+        # ---------------- 5c table — phi_half threshold ---------------------
+        sub_lines.append("-" * 132)
+        sub_lines.append(
+            "5c probe: z_h per channel and Taylor-branch flag at the y-target "
+            "mode (recorded once per step — substep-invariant).")
+        sub_lines.append(
+            f"  {'step':>6s}  {'label':>14s}  {'Tg [MeV]':>9s}  "
+            f"{'z_h[0]':>12s}  {'z_h[1]':>12s}  {'z_h[2]':>12s}  "
+            f"{'tay[0]':>7s}  {'tay[1]':>7s}  {'tay[2]':>7s}")
+        for step in sorted(by_step.keys()):
+            for lab in ("after_half1", "after_half2"):
+                r = by_step[step].get(lab)
+                if r is None or "z_h" not in r:
+                    continue
+                z = r["z_h"]
+                t = r["taylor_branch"]
+                sub_lines.append(
+                    f"  {step:6d}  {lab:>14s}  {r['Tg']:9.4f}  "
+                    f"{float(z[0]):12.4e}  {float(z[1]):12.4e}  "
+                    f"{float(z[2]):12.4e}  "
+                    f"{str(bool(t[0])):>7s}  {str(bool(t[1])):>7s}  "
+                    f"{str(bool(t[2])):>7s}")
+        sub_lines.append("")
+
+        # ---------------- top-level summary ---------------------------------
+        sub_lines.append("-" * 132)
+        sub_lines.append("Localisation summary (rough heuristics):")
+
+        def _step_function_signature(values, eps_jump=2.0):
+            """Detect a step-function in a 1D series: max relative jump in a
+            single window step. Returns (max_rel_jump, idx_of_jump). """
+            arr = np.asarray(values, dtype=float)
+            if arr.size < 2:
+                return 0.0, -1
+            base = np.abs(arr[:-1])
+            base = np.where(base > 1e-30, base, 1e-30)
+            jumps = np.abs(arr[1:] - arr[:-1]) / base
+            i = int(np.argmax(jumps))
+            return float(jumps[i]), i
+
+        # Build per-step series at after_predictor (V_nunu / H proxy is most
+        # informative there since H is built from rho_n).
+        steps_sorted = sorted(by_step.keys())
+        gap1_nu_series, gap1_nb_series = [], []
+        rho_diff_fro = []
+        ng13_series, nf13_series, pd13_series, cd13_series = [], [], [], []
+        zh1_series = []
+        for st in steps_sorted:
+            r = by_step[st].get("after_predictor")
+            if r is None:
+                continue
+            gap1_nu_series.append(float(r["H_diag_a_0"][1] - r["H_ss_0"]))
+            gap1_nb_series.append(float(r["H_diag_a_1"][1] - r["H_ss_1"]))
+            rho_diff_fro.append(float(np.linalg.norm(r["rho_diff_active"])))
+            ng13_series.append(abs(complex(r.get("N_gain_13_1", 0.0))))
+            nf13_series.append(abs(complex(r.get("N_full_13_1", 0.0))))
+            pd13_series.append(abs(complex(r.get("pred_delta_13_1", 0.0))))
+        for st in steps_sorted:
+            r = by_step[st].get("after_corrector")
+            if r is None:
+                continue
+            cd13_series.append(abs(complex(r.get("corr_delta_13_1", 0.0))))
+        for st in steps_sorted:
+            r = by_step[st].get("after_half1")
+            if r is None or "z_h" not in r:
+                continue
+            zh1_series.append(float(r["z_h"][1]))
+
+        def _fmt(name, vals):
+            j, i = _step_function_signature(vals)
+            sub_lines.append(
+                f"  {name:>22s}: max relative jump = {j:8.2e} "
+                f"at index {i:4d} of {len(vals):4d}")
+
+        _fmt("|rho_diff_act| Fro", rho_diff_fro)
+        _fmt("gap1 nu (H_11 - H_ss)", gap1_nu_series)
+        _fmt("gap1 nubar (H_11 - H_ss)", gap1_nb_series)
+        _fmt("|N_gain_13| nubar", ng13_series)
+        _fmt("|N_full_13| nubar", nf13_series)
+        _fmt("|pred delta_13| nubar", pd13_series)
+        _fmt("|corr delta_13| nubar", cd13_series)
+        _fmt("z_h[1] (electron chan)", zh1_series)
+        sub_lines.append("")
+        sub_lines.append(
+            "Heuristic: a relative jump >> 1 in a SINGLE step (consecutive "
+            "indices) indicates a step-function in that quantity. Compare "
+            "the 5a / 5b / 5c series above to identify which sub-suspect "
+            "drives the istep 906->1035 ρ_ss step-function.")
+
+        substep_text = "\n".join(sub_lines)
+        with open(_OUT_SUBSTEP, "w") as fh:
+            fh.write(substep_text + "\n")
+        print(substep_text, flush=True)
+        print(f"\nSprint-12 substep output written to "
+              f"{_OUT_SUBSTEP}", flush=True)

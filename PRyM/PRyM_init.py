@@ -245,6 +245,36 @@ qke_expm_fallback_near_degeneracy = False
 # Relative threshold for the MSW gate (see qke_expm_fallback_near_degeneracy).
 # Smaller values keep more modes on the Al-Mohy path.
 qke_expm_fallback_eps_cross = 1.0e-3
+# Stage E.2 sprint 12: per-step sub-step instrumentation inside
+# evolve_step_ode_etdrk2 to localise the Phase-0 step-function in
+# rho_ss(y=0.5, nu-bar) at istep 906->1035 (Hannestad Point C with
+# qke_expm_fallback_near_degeneracy on, Phase-0 unchanged from sprint 10).
+# When True, the Strang-split driver appends one row per Strang substep
+# (after_half1, after_predictor, after_corrector, after_half2) to
+# self._phase0_substep_hist at the y-grid index closest to
+# qke_phase0_substep_y_target. Each row captures: H diagonals + active-
+# sterile coupling at both sectors (5a probe); (rho_nu - rho_nubar) at the
+# target y-mode (5a probe); N_gain pre/post D*rho add-back (5b probe);
+# predictor and corrector deltas (5b probe); and z_h per channel (5c
+# probe). Default False: zero branches taken, bit-identical output.
+qke_phase0_substep_diag_flag = False
+# y-mode under investigation for the Phase-0 sub-step probe. The
+# instrumentation selects the grid index whose y-value is closest to this
+# target.
+qke_phase0_substep_y_target = 0.5
+# Stage E.2 sprint 12: opt-in H-iteration in the ETDRK2 corrector to
+# smooth V_nunu non-linear feedback at narrow mixing. When True (and the
+# sprint-11 fallback flag is also True), the Strang-split driver
+# re-evaluates H(rho_star), L(rho_star), and Phi2(L(rho_star)) between the
+# predictor and corrector, replacing the cached Phi2(L(rho_n)) used by the
+# corrector update. Sprint-12 sub-suspect 5a fix: the V_nunu(ρ - ρ̄)
+# integral grows non-linearly across the istep 906→1035 window at
+# Hannestad Point C, shifting H_α,α relative to H_ss; without iterating H,
+# the corrector's frozen-coefficient Phi2 kick over-pumps rho_star into
+# the resonance, producing the step-function in ρ_ss(y=0.5, ν̄). Cost when
+# on: one extra _build_H_list + _build_L_list + _etdrk2_expm_phi per
+# step. Default False: bit-identical to sprint-11.
+qke_etdrk2_iterate_h_flag = False
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

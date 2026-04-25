@@ -1701,3 +1701,113 @@ that mechanism.
    unchanged. Check whether sprint-12's Suspect 5 fix collapses
    any of these (likely Point-A residual is the same mechanism).
 6. **Sprint-6 carryovers** — unchanged.
+
+**E.2 sprint 12 — Suspect 5 partially localised, H-iteration fix
+insufficient: ESCALATE to sprint 13.** Sprint 11's eigendecomposition
+fallback closed Phase-B over-amplification but left the Phase-0 step-
+function in ρ_ss(y=0.5, ν̄) untouched (istep 906→1035 jump from 0.177
+to 0.4145, Σρ_ss(Phase-0 exit) = 0.6673 vs target < 0.05). Sprint 12
+delivered sub-step instrumentation, used it to localise the active
+sub-suspect, and attempted the brief's recommended 5a fix; the fix
+materially smoothed corrector deltas but did **not** suppress the
+step-function. Mechanism is more complex than the brief anticipated.
+
+Sub-step instrumentation (`qke_phase0_substep_diag_flag`,
+`qke_phase0_substep_y_target`, opt-in, default off): four snapshot
+labels (after_half1, after_predictor, after_corrector, after_half2)
+emitted by `evolve_step_ode_etdrk2` to `self._phase0_substep_hist` at
+the y-grid index closest to the target. Each row records, at the
+y-mode under investigation:
+  * 5a probe: H diagonals + active-sterile coupling for both sectors,
+    (ρ_ν − ρ_ν̄) active 3×3.
+  * 5b probe: N_gain pre/post D·ρ add-back, predictor / corrector
+    deltas at (α=1, sterile).
+  * 5c probe: z_h per channel, Taylor-branch boolean.
+
+Surfaced via the existing `_boltz_dm_solver` exposer (no PRyM_main
+changes). Default config: zero branches taken, bit-identical to
+sprint 11.
+
+Localisation results from the slim Phase-B-truncated probe
+`validation/diagnostics/diag_phase0_pointC_substep.py` (n_B=200,
+~15 min):
+
+  * **5c falsified.** z_h[1] max single-step relative jump 1.47e−3
+    ≪ 1; Taylor-branch flag never flickers across istep 881→1081.
+    Hard threshold at z_h < 1e−4 is stable at narrow mixing.
+  * **5a partially confirmed.** |ρ_diff_active| Frobenius jumps
+    7.34× in a single substep at istep 926→927; the ν̄ gap (H_11 −
+    H_ss) collapses 9.91× and crosses zero at istep 959→960 (MSW
+    resonance). Asymmetry is striking: ν gap relative jump only
+    0.25 (smooth), confirming ν̄-only resonance.
+
+Two fix variants attempted (both opt-in via
+`qke_etdrk2_iterate_h_flag`, default off, gated to fire only when
+`qke_expm_fallback_near_degeneracy` is also on):
+
+| Fix variant       | Σρ_ss(P0 exit) | ρ_ss saturation | \|corr Δ\| jump |
+|-------------------|----------------|-----------------|-----------------|
+| No fix (sprint 11)| 0.6673         | 0.4145          | 1.88e+04        |
+| Corrector-only Φ₂ | 0.6659         | 0.4145          | 71.7            |
+| Picard restart    | 0.6491         | 0.4097          | 2.43e+03        |
+
+Both variants reach the resonance-saturated regime and fail the
+scope-(a) deliverable (Σρ_ss < 0.05). The corrector-only variant
+(rebuild L + Φ₂ at rho_star) reduces the corrector kick 260× but
+leaves the predictor's Φ₀(L_n) frozen, so Phase-0 ρ_ss is bit-
+identical to sprint 11. The Picard-restart variant (rebuild L +
+Φ_cache at rho_star and redo the predictor) further reduces the
+ρ_diff jump and the saturation by ~1%, but the resonance still
+fully pumps.
+
+**Mechanism reinterpretation.** With sin²(2θ_24) = 1e-4, Hannestad
+expects ρ_ss saturation in [0.02, 0.10] (Landau-Zener non-adiabatic
+crossing for narrow mixing). Our solver consistently saturates near
+0.41 — the full resonance equilibrium — regardless of how H is
+iterated. This points to **V_nunu lock-in at resonance**: as the
+active-block diagonal collapses toward the sterile diagonal, V_nunu
+adapts to keep the system near the resonance peak, driving fully-
+adiabatic conversion. The fix is not in the ETDRK2 substep
+composition but in either:
+  * collision-damping refactor (sub-suspect 5b — refactor
+    `_assemble_collision_N` and `_build_L_list` to never produce
+    −D·ρ, removing the cancellation residual at narrow mixing); or
+  * adaptive resonance-aware time-stepping with explicit Landau-
+    Zener treatment; or
+  * a parallel DLSODA driver (brief's scope (c)).
+
+**Sprint-13 brief**: `doc/STAGE_E2_SPRINT13_BRIEF.md` covers
+scope (b) — the full collision-N refactor — as the highest-priority
+next step. Scope (c) (DLSODA driver) is the fallback.
+
+Sprint 12 verification gates (gate-5 + gate-1, both at default
+config — new flags off → bit-identical to sprint 11):
+
+  * **Gate-1 fast regression** (`pytest tests/test_regression.py
+    -m "not slow" -v`): 4/4 PASS in 27 s.
+  * **Gate-5 decoupled-sterile guard** (`diag_phase0_decoupled_fallback.py`):
+    PASS — max|ρ_ss| < 1e−12 at Phase-0 exit (sprint-11 guarantee
+    preserved).
+  * **Gate-6 Phase-0 fallback Point-C probe**: still FAILS the
+    scope-(a) deliverable (Σρ_ss < 0.05). With H-iteration on, ρ_ss
+    saturates at 0.4097 (best variant); without, 0.4145.
+
+Stage E.2 sprint 12 carryovers (must not regress under sprint 13):
+
+1. **Substep instrumentation** is the load-bearing diagnostic for
+   any future ETDRK2 driver work — sprint 13 will use it to verify
+   that the collision-N refactor breaks the V_nunu lock-in. Don't
+   touch the snapshot method or its hooks unless explicitly
+   landing a new diagnostic surface.
+2. **`qke_etdrk2_iterate_h_flag`** stays opt-in (default False).
+   Even though the fix didn't meet scope-(a)'s success criterion,
+   it does smooth the corrector delta and reduce ρ_ss saturation
+   by ~1% — a modest improvement. Sprint 13 should re-evaluate
+   whether to keep, deprecate, or strengthen it after the
+   collision-N refactor.
+3. **`diag_phase0_pointC_substep.py`** (slim, fast variant) is the
+   sprint-12 fast-iteration probe. Keep as a sibling of the
+   canonical gate-6 diagnostic; sprint 13 will use it as the
+   primary localisation tool.
+4. **Sprint-11 carryovers** unchanged.
+5. **Sprint-10 carryovers** unchanged.

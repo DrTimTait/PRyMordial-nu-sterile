@@ -1,0 +1,25 @@
+================================================================================================
+Stage E.2 sprint 11 gate 7: V_nunu active-only at 5 MeV window
+WITH qke_expm_fallback_near_degeneracy = True (eps_cross = 1e-3)
+Sprint-5 baseline at flag off: Point C dNeff ≈ -0.012 (V_nunu projection on)
+Pass criterion: bit-identical to sprint-5 baseline at flag off.
+================================================================================================
+  3x3 reference (V_nunu full 4x4 behaviour, default)           Neff=3.04071  Yp=0.24847  D/H=2.4716  sum_rho_ss=-0.000  (832s)
+  3x3 reference (V_nunu active-only projection)                Neff=3.04071  Yp=0.24847  D/H=2.4716  sum_rho_ss=-0.000  (877s)
+
+  Point C, baseline (V_nunu full 4x4, default)                 Neff=3.89212  Yp=0.26037  D/H=2.7842  sum_rho_ss=5.105  (1032s)
+     dNeff = +0.8514  (ref: 3.04071)
+
+  Point C, V_nunu ACTIVE-ONLY projection                       Neff=3.01542  Yp=0.24883  D/H=2.4803  sum_rho_ss=2.589  (1027s)
+     dNeff = -0.0253  (ref: 3.04071)
+
+================================================================================================
+scenario                                            Neff      dNeff     sum_rho_ss   ref_Neff
+------------------------------------------------------------------------------------------------
+baseline (V_nunu full 4x4, default)              3.89212    +0.8514          5.105    3.04071
+V_nunu ACTIVE-ONLY projection                    3.01542    -0.0253          2.589    3.04071
+================================================================================================
+
+Verdict:
+  Point C dNeff with V_nunu projection should match sprint-5 baseline ~-0.012
+  (bit-identity not strict — fallback may fire ULP-level on edge modes).

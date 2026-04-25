@@ -4602,7 +4602,7 @@ class DensityMatrixSolver(object):
 
         return L_list, N_gain, I_total
 
-    def _etdrk2_expm_phi(self, L, dt_nat):
+    def _etdrk2_expm_phi(self, L, dt_nat, H_sector=None):
         """Compute Phi0 = e^{L dt}, Phi1 = dt*phi_1(L dt), Phi2 = dt*phi_2(L dt)
         per mode via the Al-Mohy & Higham (2011) augmented-matrix exponential.
 
@@ -4614,12 +4614,34 @@ class DensityMatrixSolver(object):
             exp(M)[0:N^2, 2N^2:3N^2]   = dt^2 * phi_2(L dt)
         The ETDRK2 corrector uses dt*phi_2, so divide the third block by dt_nat.
 
+        Stage E.2 sprint 11: when PRyMini.qke_expm_fallback_near_degeneracy is
+        True AND H_sector is supplied, modes that are simultaneously near the
+        MSW resonance — small commutator gap |H_αα − H_ss| relative to the
+        largest active diagonal spread, AND non-zero off-diagonal coupling
+        max_α |H_α,sterile| — are propagated via direct eigendecomposition of
+        L*dt instead of the Al-Mohy augmented expm. The Al-Mohy path crosses
+        a scipy.expm Pade scaling-squaring branch as the eigenvalue gap
+        collapses at narrow mixing, producing a step-function jump in Phi_k.
+        The eigendecomp path computes phi_k(λ) per eigenvalue (with Taylor
+        fallback for |λ| < 1e-4) and reconstructs Phi_k = V·diag(phi_k(λ))·V⁻¹,
+        with a κ(V) > 1e8 guard reverting that mode to Al-Mohy to cover true
+        exceptional-point pathology. Requiring H_α,sterile ≠ 0 ensures a
+        decoupled (theta=0) sector — where L is exactly block-diagonal in
+        vec(ρ) and Al-Mohy already produces zero leak — never enters the
+        eigendecomp branch (np.linalg.eig on degenerate eigenvalues at 0
+        cannot reliably reconstruct Phi_k).
+
         Parameters
         ----------
         L : (Ny, N^2, N^2) complex, in eV
             Vectorised Liouvillian for one sector.
         dt_nat : float
             Time step in inverse-eV units (dt_seconds * _eV_to_secm1).
+        H_sector : (Ny, N, N) complex, in eV, optional
+            Per y-mode Hamiltonian for the same sector. Required for the
+            sprint-11 fallback gate. When None, the fallback never fires
+            (every mode uses Al-Mohy) regardless of the flag — this keeps
+            external callers (tests / diagnostics) on the legacy path.
 
         Returns
         -------
@@ -4638,13 +4660,86 @@ class DensityMatrixSolver(object):
         M[:Nsq, Nsq:2 * Nsq] = I_Nsq
         M[Nsq:2 * Nsq, 2 * Nsq:3 * Nsq] = I_Nsq
 
+        # Sprint-11 fallback gate. Default off (or H_sector=None) → all-False
+        # mask → Al-Mohy taken every iteration → bit-identical to sprint 10.
+        use_fallback = (
+            bool(getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False))
+            and H_sector is not None
+            and self.n_flavor >= 2
+        )
+        if use_fallback:
+            eps_cross = float(getattr(
+                PRyMini, "qke_expm_fallback_eps_cross", 1.0e-3))
+            N = self.n_flavor
+            sterile = N - 1
+            # Per-y-mode H diagnostics: real diagonal (Hermitian), abs of the
+            # active↔sterile off-diagonal column (max over α).
+            H_diag = H_sector.diagonal(axis1=1, axis2=2).real    # (Ny, N)
+            H_off_as = np.abs(H_sector[:, :sterile, sterile])    # (Ny, sterile)
+            # Smallest active-sterile diagonal gap and its associated coupling
+            # at the same α. Largest pairwise active-active spread normalises
+            # the gap into a relative quantity.
+            gap_as_per_alpha = np.abs(
+                H_diag[:, :sterile] - H_diag[:, sterile:sterile + 1])  # (Ny, sterile)
+            arg_min_alpha = np.argmin(gap_as_per_alpha, axis=1)        # (Ny,)
+            iy = np.arange(Ny)
+            gap_min = gap_as_per_alpha[iy, arg_min_alpha]
+            coupling_at_min = H_off_as[iy, arg_min_alpha]
+            spread_full = np.abs(
+                H_diag[:, :, None] - H_diag[:, None, :]).max(axis=(1, 2))
+            spread_full = np.maximum(spread_full, 1.0e-30)
+            needs_fallback = (
+                ((gap_min / spread_full) < eps_cross)
+                & (coupling_at_min > 0.0)
+            )
+        else:
+            needs_fallback = np.zeros(Ny, dtype=bool)
+
         for i in range(Ny):
-            M[:Nsq, :Nsq] = L[i] * dt_nat
-            # the other blocks of M are constant across modes (see pre-loop init).
-            E = expm(M)
-            Phi0[i] = E[:Nsq, :Nsq]
-            Phi1[i] = E[:Nsq, Nsq:2 * Nsq]
-            Phi2[i] = E[:Nsq, 2 * Nsq:3 * Nsq] / dt_nat
+            if needs_fallback[i]:
+                Z = L[i] * dt_nat
+                lam, V = np.linalg.eig(Z)
+                kappa = np.linalg.cond(V)
+                if kappa > 1.0e8:
+                    # Eigenvector basis is too ill-conditioned for stable
+                    # reconstruction (true exceptional-point neighborhood);
+                    # accept Al-Mohy's known imperfection for this mode.
+                    self._expm_fallback_kappa_high_count = 1 + getattr(
+                        self, "_expm_fallback_kappa_high_count", 0)
+                    M[:Nsq, :Nsq] = Z
+                    E = expm(M)
+                    Phi0[i] = E[:Nsq, :Nsq]
+                    Phi1[i] = E[:Nsq, Nsq:2 * Nsq]
+                    Phi2[i] = E[:Nsq, 2 * Nsq:3 * Nsq] / dt_nat
+                    continue
+                V_inv = np.linalg.solve(V, np.eye(Nsq, dtype=complex))
+                small = np.abs(lam) < 1.0e-4
+                # Avoid 0/0 in the unused branch of np.where by substituting
+                # a finite placeholder for the small-|λ| eigenvalues.
+                lam_safe = np.where(small, 1.0 + 0.0j, lam)
+                exp_lam = np.exp(lam)
+                phi1_formula = (exp_lam - 1.0) / lam_safe
+                phi1_taylor = (1.0 + lam / 2.0
+                               + lam * lam / 6.0
+                               + lam * lam * lam / 24.0)
+                phi1_lam = np.where(small, phi1_taylor, phi1_formula)
+                phi2_formula = (phi1_lam - 1.0) / lam_safe
+                phi2_taylor = (0.5 + lam / 6.0
+                               + lam * lam / 24.0
+                               + lam * lam * lam / 120.0)
+                phi2_lam = np.where(small, phi2_taylor, phi2_formula)
+                Phi0[i] = (V * exp_lam) @ V_inv
+                Phi1[i] = dt_nat * ((V * phi1_lam) @ V_inv)
+                Phi2[i] = dt_nat * ((V * phi2_lam) @ V_inv)
+                self._expm_fallback_eig_count = 1 + getattr(
+                    self, "_expm_fallback_eig_count", 0)
+            else:
+                M[:Nsq, :Nsq] = L[i] * dt_nat
+                # the other blocks of M are constant across modes (see pre-loop init).
+                E = expm(M)
+                Phi0[i] = E[:Nsq, :Nsq]
+                Phi1[i] = E[:Nsq, Nsq:2 * Nsq]
+                Phi2[i] = E[:Nsq, 2 * Nsq:3 * Nsq] / dt_nat
 
         return Phi0, Phi1, Phi2
 
@@ -4820,6 +4915,15 @@ class DensityMatrixSolver(object):
         # 1. L, gain-only N, and I_total at rho_n.
         L_list, N_gain_n, I_total_n = self._build_L_list(rho_all, a, Tg)
         dt_nat = dt * self._eV_to_secm1
+        # Sprint-11: H is needed by the narrow-mixing fallback gate inside
+        # _etdrk2_expm_phi to discriminate true MSW resonance (H_αs ≠ 0)
+        # from a decoupled active-sterile sector (H_αs ≡ 0). Build only
+        # when the fallback flag is on; redundant with the build inside
+        # _build_L_list but cheap (~1 ms per step).
+        if getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False):
+            H_list_n = self._build_H_list(rho_all, a, Tg)
+        else:
+            H_list_n = (None, None)
 
         # Half-step diagonal regulariser phi_1(Γ_α · dt/2) · (dt/2).
         # Three channels per PRyM_main convention: [nue, nuebar, numu_eff].
@@ -4836,8 +4940,12 @@ class DensityMatrixSolver(object):
                           (1.0 - np.exp(-z_h)) / z_h)
         phi_half = phi1_h * half_dt  # shape (3, Ny)
 
-        # 2. Cache (Phi0, Phi1, Phi2) per sector at L(rho_n).
-        Phi_cache = [self._etdrk2_expm_phi(L_list[s], dt_nat) for s in (0, 1)]
+        # 2. Cache (Phi0, Phi1, Phi2) per sector at L(rho_n). Pass per-sector H
+        # so the sprint-11 narrow-mixing fallback gate can require both a small
+        # active-sterile commutator gap and non-zero off-diagonal H_αs coupling
+        # — a decoupled (theta=0) sector has H_αs ≡ 0 and stays on Al-Mohy.
+        Phi_cache = [self._etdrk2_expm_phi(L_list[s], dt_nat, H_list_n[s])
+                     for s in (0, 1)]
 
         # 3. Half-diag #1 using I_total(rho_n).
         rho_all[0, 0] += phi_half[0] * I_total_n[0]

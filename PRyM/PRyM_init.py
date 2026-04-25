@@ -231,6 +231,20 @@ qke_msw_diag_path = None
 # Pair index in self._all_pair_flavors for the channel to instrument;
 # 4 = (alpha=1=numu, s=3), the Hannestad Point-A (theta_24) channel.
 qke_msw_diag_pair_idx = 4
+# Stage E.2 sprint 11: per-mode eigendecomposition fallback inside
+# _etdrk2_expm_phi for y-modes near MSW eigenvalue collapse, where the
+# Al-Mohy & Higham augmented-matrix expm produces a step-function
+# branch transition (sprint-10 Point-C signature: ν̄ y=0.5 jump
+# at Tg≈62 MeV, sin^2(2θ)=1e-4). When True, modes whose active-sterile
+# Hamiltonian-diagonal gap |H_αα − H_ss| falls below
+# qke_expm_fallback_eps_cross times the largest commutator gap on that
+# mode are propagated via direct eigendecomposition of L; modes that
+# pass the gate use the existing Al-Mohy path. Default False:
+# zero branches taken, bit-identical to sprint-10 output.
+qke_expm_fallback_near_degeneracy = False
+# Relative threshold for the MSW gate (see qke_expm_fallback_near_degeneracy).
+# Smaller values keep more modes on the Al-Mohy path.
+qke_expm_fallback_eps_cross = 1.0e-3
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

@@ -1538,3 +1538,166 @@ sprint 11.
    mechanism — same `_etdrk2_expm_phi` site.
 5. **n_B auto-scale re-pin** for projection=True — still parked.
 6. **Sprint-6 carryovers** — unchanged.
+
+**E.2 sprint 11 — Suspect 2-residual partially confirmed: eigen-
+decomposition fallback closes Phase-B over-amplification but Phase-0
+step-function persists.** Scope (a) from `doc/STAGE_E2_SPRINT11_BRIEF.md`:
+add a per-mode eigendecomposition path inside `_etdrk2_expm_phi`,
+gated on (1) small active-sterile commutator gap relative to the
+largest active-flavor diagonal spread AND (2) non-zero off-diagonal
+H_α,sterile coupling. Land as opt-in machinery (default off, bit-
+identical regression). The plan deliverable was Phase-0 Σρ_ss < 0.1
+with the step-function jump at istep 906→1035 gone. **The deliverable
+was not met**: Phase-0 dynamics with fallback on are essentially
+identical to sprint-10 baseline (Σρ_ss = 0.6673 vs 0.6656 — 0.25%
+relative drift; the istep 906→1035 jump survives unchanged at 0.177
+→ 0.4145). The fallback fired 740 times across the 12500-step Phase-
+0+B run with zero κ-guard reverts. The mechanism Suspect 2-residual
+was hypothesised to be — Pade-branch transition inside the Al-Mohy
+augmented expm at the narrow-mixing MSW pass — does not reproduce in
+Phase 0: eigendecomposition of L*dt and scipy.expm of the augmented
+M produce numerically equivalent (Phi0, Phi1, Phi2) at that mode.
+
+**Surprising side-effect.** Final Neff dropped from sprint-10
+baseline 8.52 to **3.0114** with the fallback on at Point C —
+ΔNeff = −0.033 vs the Hannestad-C target band [0.02, 0.10], so
+slightly below band rather than far above. Yp = 0.2485 (in [0.24,
+0.26]). The Phase-B over-amplification (sprint-10's "33× from 0.667
+seed → 22.22") is fully suppressed, even though the Phase-0 seed is
+unchanged. Re-reading: the fallback is doing useful work somewhere
+in Phase B (where multiple y-modes cross MSW resonance as T sweeps
+30 → 0.005 MeV and Pade-branch step-functions accumulate per
+crossing) — that work was hypothesised to live in Phase 0 and turns
+out to live in Phase B. The Phase-0 step-function and Phase-B
+amplification are two separable mechanisms: this sprint addresses
+the second cleanly, leaves the first unchanged.
+
+**Why the default flip is deferred.** Hannestad C ΔNeff = −0.033
+is out of band on the low side (vs sprint-10's +5.52 out of band
+on the high side); flipping `qke_expm_fallback_near_degeneracy` to
+True also flips the 5 MeV V_nunu projection result from sprint-5's
+ΔNeff = −0.012 to −0.025 — a 0.013 drift from the sprint-5 baseline
+(gate 7). Useful information, not catastrophic, but enough that the
+flag stays opt-in until the Phase-0 step-function is also resolved
+and Hannestad targets land cleanly inside band on **all three points
+simultaneously**.
+
+**Implementation.**
+
+  * `PRyM/PRyM_init.py` — `qke_expm_fallback_near_degeneracy`
+    (master toggle, default False) and `qke_expm_fallback_eps_cross`
+    (relative-gap threshold, default 1.0e-3). Inserted after
+    `qke_msw_diag_pair_idx`, before the y_max_boltz section.
+  * `PRyM/PRyM_boltzmann.py::_etdrk2_expm_phi` — accepts new
+    optional `H_sector` kwarg. When the flag is on AND H_sector is
+    supplied, per y-mode dispatch: if `min_α |H_αα − H_ss| /
+    max |H_αβ| < eps_cross` AND `max_α |H_α,sterile| > 0`, use
+    eigendecomposition of L[i]*dt_nat (np.linalg.eig) with κ(V)
+    > 1e8 guard reverting to Al-Mohy; else use the existing
+    Al-Mohy augmented expm. Phi_k reconstructed from per-eigenvalue
+    scalar phi functions (Taylor for |λ| < 1e-4, formula otherwise).
+    Phi_0/Phi_1/Phi_2 dimensions and downstream-consumer convention
+    unchanged.
+  * `PRyM/PRyM_boltzmann.py::evolve_step_ode_etdrk2` — calls
+    `_build_H_list` exactly when the fallback flag is on (~1 ms/
+    step overhead, opt-in only). H_list is threaded into both
+    sector calls of `_etdrk2_expm_phi`.
+  * `_build_L_list` signature unchanged (5 external callers across
+    tests + diagnostics inspect the 3-tuple return).
+
+**Counters and diagnostic surfaces.**
+
+  * `DensityMatrixSolver._expm_fallback_eig_count` — incremented
+    per (mode, step, sector) eigendecomposition fire. Initialised
+    lazily via getattr for backward compat.
+  * `DensityMatrixSolver._expm_fallback_kappa_high_count` —
+    incremented when κ(V) > 1e8 reverts a mode to Al-Mohy.
+
+**Validation gates.**
+
+  * **Gate 1** — `pytest -m "not slow"`: 4/4 pass at default flag.
+    Bit-identical to sprint-10 by construction (flag off → identity
+    branch). Includes `test_qke_etdrk2_nu_nubar_symmetry`.
+  * **Gate 2** — `pytest -k sterile`: 3/3 pass at default flag.
+  * **Gate 3** — `diag_2level_damped.py`: ratio = 1.000 at default.
+  * **Gate 4** — `diag_2level_damped_energy.py`:
+    \|dN/N\|, \|dE/E\| ≈ 1.7e-9 at default (within 1e-8 tolerance).
+  * **Gate 5** — `diag_phase0_decoupled_fallback.py` (new, flag
+    ON): max\|ρ_ss\| at Phase-0 exit = 1.0e-30, eigendecomp count
+    = 0. The H-coupling gate (`max_α |H_α,sterile| > 0`) correctly
+    rejects all decoupled modes; the fallback never fires when
+    physics demands it not. Required for safety: an earlier gate
+    formulation (using only the L-diagonal commutator gap) leaked
+    Σρ_ss = 0.43 by activating eigendecomp on a 16-dim L with
+    degenerate eigenvalues at zero, which `np.linalg.eig` cannot
+    reconstruct cleanly.
+  * **Gate 6** — `diag_phase0_pointC_fallback.py` (new, flag ON):
+    Σρ_ss(Phase-0 exit) = 0.6673 (target was < 0.1 — **NOT met**);
+    Neff = 3.0114, Yp = 0.2485, D/H = 2.469. Eigendecomp count =
+    740 across Phase-0 + Phase-B; κ-guard reverts = 0.
+  * **Gate 7** — `diag_vnunu_active_only_fallback.py` (new, flag
+    ON, 5 MeV window): Point C with V_nunu projection ΔNeff =
+    −0.025 (sprint-5 baseline at flag off was −0.012; **drift =
+    0.013**); Point C without projection ΔNeff = +0.851 (sprint-5
+    baseline at flag off was +0.858; drift = −0.007). Fallback
+    fires at edge modes despite T_MSW (~62 MeV) being far above
+    the 5 MeV integration range — the gate's relative-ratio
+    formulation triggers when sterile-vacuum H_ss dominates spread.
+
+**New flags landed (defaults).**
+
+  * `qke_expm_fallback_near_degeneracy = False`
+  * `qke_expm_fallback_eps_cross = 1.0e-3`
+
+**Sprint-11 landing posture.** Eigendecomposition fallback +
+H-coupling gate land as opt-in machinery. All defaults stay at
+`False`. No test fixtures changed. The closure of Phase-B over-
+amplification is real and will be the foundation for Stage E.2's
+final close-out, but it is conditional on the user opting in until
+Phase 0 is also resolved.
+
+**Sprint-11 finding (mechanism reinterpretation).** Suspect
+2-residual as defined in sprint-10 — Pade-branch transition in
+`_etdrk2_expm_phi` at the y = 0.5 ν̄ MSW pass at istep 906-1035
+in Phase 0 — is **falsified at narrow mixing**. The eigen-
+decomposition path produces the same dynamics there. Whatever
+drives the step-function jump from 0.177 to 0.4145 is downstream
+of (Phi0, Phi1, Phi2) — the predictor-corrector composition, the
+half-diagonal exp-Euler regularisation around the stiff diagonal
+damping, the V_nunu mean-field feedback as ρ_ss starts to grow,
+or N_gain's collisional sourcing. Sprint 12's job is to localise
+that mechanism.
+
+**Next structural candidates**, ranked post-sprint-11:
+
+1. **Suspect 5 — Phase-0 step-function source** (new, prime).
+   Independent of `_etdrk2_expm_phi`. Per-step diagnostic at the
+   istep 906→1035 window with fallback ON should show: (a) what
+   the (rho, dt, Phi_k) inputs to evolve_step_ode_etdrk2 look like
+   just before the jump; (b) which substep — predictor, corrector,
+   half-diag — produces the discontinuity; (c) whether V_nunu's
+   feedback amplifies an initially small perturbation through the
+   non-linear coupling. See `doc/STAGE_E2_SPRINT12_BRIEF.md`.
+2. **Suspect 4 demoted.** Phase-B over-amplification is no longer
+   a free-standing suspect: sprint 11 closed it via the eigen-
+   decomposition fallback in Phase B. What remains is Phase 0's
+   step-function plus the residual ΔNeff offset that follows from
+   it.
+3. **Default flip cluster** — once Suspect 5 closes, flip
+   `qke_phase0_flag` and `qke_expm_fallback_near_degeneracy` to
+   True together. Update `test_sterile_dw_production` fixture with
+   a config override forcing both False for bit-identity. Re-run
+   gate 7 to verify drift narrows; re-run sprint-5's projection
+   test for ΔNeff convergence.
+4. **Suspect 4 sub-question — eigendecomposition cost.** The
+   fallback path adds ~1.4× wall-clock to the Point-C Phase-0+B
+   run at n_B = 10000 + n_B_phase0 = 2500 (5101s baseline →
+   7219s with fallback). Acceptable for diagnostic runs; for
+   production after the default flip, consider a direct-expm
+   cache for "stable" mode classes that don't trigger across
+   repeated steps.
+5. **Sprint-10 carryovers — Point-A 0.065 residual,
+   non-adiabatic high-y correction, n_B auto-scale re-pin** —
+   unchanged. Check whether sprint-12's Suspect 5 fix collapses
+   any of these (likely Point-A residual is the same mechanism).
+6. **Sprint-6 carryovers** — unchanged.

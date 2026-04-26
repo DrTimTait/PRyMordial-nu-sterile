@@ -5244,6 +5244,122 @@ class DensityMatrixSolver(object):
         if _msw_on:
             self._msw_snapshot(rho_all, a, Tg, label="post_clip")
 
+    # ------------------------------------------------------------------
+    # Stage E.2 sprint 14: LSODA reference driver (qke_lsoda_driver_flag)
+    # ------------------------------------------------------------------
+    # Parallel path to evolve_step_ode_etdrk2. Reuses _build_H_list and
+    # _assemble_collision_N at the kernel level so physics matches; the
+    # only difference is the time integrator. ETDRK2 path stays untouched.
+    # See PRyM_init.qke_lsoda_driver_flag for the falsifier framing.
+
+    def evolve_step_lsoda(self, rho_all, dt, phi1_dt, a, Tg):
+        """LSODA reference driver: integrate the unsplit QKE over [0, dt].
+
+        Solves
+            dρ /dt = -i [H,   ρ]      + N_full[0]      (ν     sector)
+            dρ̄*/dt = +i [H^T, ρ̄*]    + N_full[1]      (ν̄ stored sector)
+
+        in s⁻¹ via scipy.integrate.solve_ivp(method='LSODA'), reusing the
+        existing _build_H_list and _assemble_collision_N kernels so the RHS
+        matches what ETDRK2 sees, mode-for-mode. LSODA adaptively sub-steps
+        inside [0, dt]; no Strang split, no exp-time-differencing, no Picard
+        H-iteration — those are the variables Suspect 7 implicates.
+
+        Parameters
+        ----------
+        rho_all : (2, n_components, Ny) float64
+            Mutated in place with the integrated state at t=dt.
+        dt : float
+            Outer-loop step in seconds.
+        phi1_dt : ignored
+            Kept for dispatcher signature symmetry with the other
+            evolve_step* variants. LSODA handles damping adaptively and
+            does not need the exp-Euler regulariser.
+        a, Tg : float, float
+            Scale factor and photon temperature, held frozen across the
+            outer step (same convention as evolve_step_ode_etdrk2).
+        """
+        from scipy.integrate import solve_ivp
+
+        Ny = self.Ny
+        N = self.n_flavor
+        n_components = self.n_components
+        eV_to_s = self._eV_to_secm1   # eV-rate -> s^-1
+        _to_mat = self._to_mat
+        _to_vec = self._to_vec
+
+        def f(t, y_flat):
+            rho_local = y_flat.reshape(2, n_components, Ny)
+            H_list = self._build_H_list(rho_local, a, Tg)            # eV
+            N_full, _ = self._assemble_collision_N(rho_local, a, Tg)  # eV
+
+            drho_vec = np.zeros((2, n_components, Ny))
+            for s in range(2):
+                rho_mat = _to_mat(rho_local[s])     # (Ny, N, N) complex
+                H = H_list[s]                        # (Ny, N, N) complex eV
+                if s == 0:
+                    # dρ/dt = -i [H, ρ]
+                    comm = (np.einsum('iab,ibc->iac', H, rho_mat)
+                            - np.einsum('iab,ibc->iac', rho_mat, H))
+                    drho_eV = -1j * comm + N_full[s]
+                else:
+                    # Stored ρ̄* obeys dρ̄*/dt = +i [H_ν̄^T, ρ̄*] (matches the
+                    # sign in _build_L_list for sector 1).
+                    H_T = H.swapaxes(-1, -2)
+                    comm = (np.einsum('iab,ibc->iac', H_T, rho_mat)
+                            - np.einsum('iab,ibc->iac', rho_mat, H_T))
+                    drho_eV = +1j * comm + N_full[s]
+                drho_vec[s] = _to_vec(drho_eV * eV_to_s)
+            return drho_vec.ravel()
+
+        rtol = float(getattr(PRyMini, "qke_lsoda_rtol", 1.0e-6))
+        atol = float(getattr(PRyMini, "qke_lsoda_atol", 1.0e-10))
+        sol = solve_ivp(
+            f, [0.0, dt], rho_all.ravel().copy(),
+            method='LSODA',
+            rtol=rtol, atol=atol,
+            dense_output=False,
+        )
+        if not sol.success:
+            raise RuntimeError(
+                f"evolve_step_lsoda: solve_ivp failed at "
+                f"a={a:.4e}, Tg={Tg:.4e} MeV, dt={dt:.4e} s: {sol.message}")
+        rho_all[...] = sol.y[:, -1].reshape(2, n_components, Ny)
+
+        # Post-step sanitisation, mirroring evolve_step_ode_etdrk2 lines
+        # 5198-5237. LSODA's adaptive stepping can leave transient overshoot
+        # at the end of [0, dt]; the next outer step's _build_H_list /
+        # _assemble_collision_N would otherwise feed on out-of-physical
+        # values (negative diagonals, |ρ_αβ| > sqrt(ρ_αα ρ_ββ), or NaN).
+        for sector in range(2):
+            for p_idx, (alpha, beta) in enumerate(self._all_pair_flavors):
+                re_idx, im_idx = self._all_pair_write[p_idx]
+                rho_ab = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
+                rho_aa = rho_all[sector, alpha]
+                rho_bb = rho_all[sector, beta]
+                ab_mag = np.abs(rho_ab)
+                rho_ab = np.where(np.isfinite(ab_mag), rho_ab, 0.0 + 0.0j)
+                ab_mag = np.abs(rho_ab)
+                max_mag = np.minimum(
+                    0.5,
+                    np.sqrt(np.maximum(rho_aa * rho_bb, 0.0)) + 1e-10)
+                scale = np.where(
+                    ab_mag > max_mag,
+                    max_mag / np.maximum(ab_mag, 1e-30),
+                    1.0)
+                rho_ab = rho_ab * scale
+                rho_all[sector, re_idx] = rho_ab.real
+                rho_all[sector, im_idx] = rho_ab.imag
+
+        f_min = 1.0e-30
+        f_max = 1.0 - f_min
+        for sector in range(2):
+            for d in range(self.n_flavor):
+                rho_all[sector, d] = np.clip(
+                    np.nan_to_num(rho_all[sector, d],
+                                  nan=f_min, posinf=f_max, neginf=f_min),
+                    f_min, f_max)
+
     def extract_f_all_3species(self, rho_all):
         """Extract 3-species f_all array compatible with BoltzmannSolver.
 

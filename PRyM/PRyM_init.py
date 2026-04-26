@@ -275,6 +275,21 @@ qke_phase0_substep_y_target = 0.5
 # on: one extra _build_H_list + _build_L_list + _etdrk2_expm_phi per
 # step. Default False: bit-identical to sprint-11.
 qke_etdrk2_iterate_h_flag = False
+# Stage E.2 sprint 14: opt-in parallel LSODA reference driver. When True
+# (and qke_full_ode_flag is True), the QKE per-outer-step dispatcher routes
+# through DensityMatrixSolver.evolve_step_lsoda — a scipy.integrate.solve_ivp
+# call over [0, dt] with method='LSODA' that integrates the unsplit ODE
+# dρ/dt = -i[H, ρ] + N_collision. Reuses _build_H_list and
+# _assemble_collision_N at the kernel level so physics matches ETDRK2; the
+# only difference is the time integrator (adaptive multistep vs Strang split).
+# Built as a falsifier for Suspect 7 (Strang-split incompatibility with
+# narrow-mixing resonance crossings) and Suspect 8 (Hannestad target wrong
+# for self-consistent V_nunu). Default False: ETDRK2 path stays as production.
+qke_lsoda_driver_flag = False
+# Tolerances for solve_ivp under qke_lsoda_driver_flag. Defaults chosen to
+# match ETDRK2 corrector accuracy on Phase-0 / Phase-B trajectories.
+qke_lsoda_rtol = 1.0e-6
+qke_lsoda_atol = 1.0e-10
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points
@@ -787,6 +802,12 @@ def validate_configuration():
             "the ETDRK2 path will be inactive. Set both or neither.",
             stacklevel=2,
         )
+    if qke_lsoda_driver_flag and not qke_full_ode_flag:
+        _warnings.warn(
+            "PRyMini.qke_lsoda_driver_flag=True requires qke_full_ode_flag=True; "
+            "the LSODA reference driver will be inactive. Set both or neither.",
+            stacklevel=2,
+        )
     if qke_full_ode_flag and not qke_density_matrix_flag:
         _warnings.warn(
             "PRyMini.qke_full_ode_flag=True requires qke_density_matrix_flag=True; "
@@ -933,7 +954,9 @@ def _print_physics_config_summary():
 
     # Evolution driver
     if qke_density_matrix_flag:
-        if qke_ode_etdrk2_flag and qke_full_ode_flag:
+        if qke_lsoda_driver_flag and qke_full_ode_flag:
+            driver = "QKE density-matrix, Stage E.2 sprint 14 LSODA reference driver"
+        elif qke_ode_etdrk2_flag and qke_full_ode_flag:
             driver = "QKE density-matrix, Stage D.7 ETDRK2 driver"
         elif qke_full_ode_flag:
             driver = "QKE density-matrix, Stage D ODE driver"

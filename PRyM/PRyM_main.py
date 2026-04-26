@@ -440,7 +440,9 @@ class PRyMclass(object):
                           E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
 
                           if PRyMini.qke_full_ode_flag:
-                              if PRyMini.qke_ode_etdrk2_flag:
+                              if getattr(PRyMini, "qke_lsoda_driver_flag", False):
+                                  dm_solver.evolve_step_lsoda(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                              elif PRyMini.qke_ode_etdrk2_flag:
                                   dm_solver.evolve_step_ode_etdrk2(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
                               else:
                                   dm_solver.evolve_step_ode(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)

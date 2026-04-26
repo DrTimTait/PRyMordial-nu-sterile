@@ -1919,3 +1919,99 @@ Stage E.2 sprint 13 carryovers (must not regress under sprint 14):
    in any variant; the Phase-0 step-function survives identical
    modulo ULP, and Phase-B regresses by 3× on Neff. The fix path
    moves to a different driver entirely.
+
+**E.2 sprint 14 — LSODA reference driver landed; gate-5 wall-clock
+infeasible at Hannestad Point C: ESCALATE to sprint 15
+(stiff-solver hardening).** Sprint 14 took scope (c) of the
+sprint-14 brief: build a parallel `scipy.integrate.solve_ivp(method=
+'LSODA')` driver as a falsifier for Suspect 7 (Strang-split
+incompatibility) vs Suspect 8 (Hannestad target wrong). The driver
+landed cleanly, but gate 5 cannot be run in tractable wall-clock
+with the implementation as written.
+
+Implementation surface (commit `c6149dd`):
+
+  * `qke_lsoda_driver_flag` (default False), with tunable
+    `qke_lsoda_rtol` / `qke_lsoda_atol` (defaults 1e-6 / 1e-10) in
+    `PRyM/PRyM_init.py`. `validate_configuration` consistency check
+    (LSODA needs `qke_full_ode_flag`) and driver-summary line added.
+  * `DensityMatrixSolver.evolve_step_lsoda` in
+    `PRyM/PRyM_boltzmann.py`: per-outer-step closure RHS reshapes
+    the (2, n_components, Ny) state, calls `_build_H_list` and
+    `_assemble_collision_N` (pure, read-only kernels — no
+    instrumentation coupling), assembles `dρ/dt = -i [H, ρ] + N`
+    in matrix form (with sector-1 sign convention matching
+    `_build_L_list`), converts eV→s⁻¹, and `solve_ivp`s over [0, dt].
+    Mirrors ETDRK2's post-step off-diagonal magnitude clamp and
+    diagonal `nan_to_num`/`clip`.
+  * Dispatcher branch in `PRyM/PRyM_main.py:443-444` gates LSODA
+    inside `qke_full_ode_flag`, falling through to ETDRK2 / ODE
+    branches when the flag is off. Default behavior bit-identical.
+  * Diagnostic harnesses: `diag_hannestad_proj_w30_nB10k_lsoda.py`
+    (full A/B/C parallel to ETDRK2) and `diag_hannestad_pointC_lsoda.py`
+    (trimmed Point-C-only).
+
+Sprint 14 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 4/4 in 27.5s | bit-identical at default (LSODA off) |
+| 2 sterile pytest | PASS 3/3 in 657s (10:57) | bit-identical at default |
+| 5 LSODA Hannestad Point C | **DNF** | killed at 5h 28min @ rtol=1e-6 (no result), 6h 17min @ rtol=1e-4 (no result) |
+
+Wall-clock failure mode (the new structural finding): LSODA's
+adaptive multistep on the unsplit QKE at Point C requires dense
+finite-difference Jacobian rebuilds across the sterile resonance
+crossing. State size for Point C is `2 * 16 * 100 = 3200` real
+DOFs (sterile flag → 4×4 matrix → 16 components × 100 y-modes ×
+2 sectors); each FD Jacobian rebuild costs 3200 RHS evaluations,
+and `_assemble_collision_N` (the dominant per-RHS cost) is a
+non-trivial collision-integral evaluation. Loosening rtol/atol
+by 100× (1e-6→1e-4, 1e-10→1e-8) saved nothing meaningful — the
+cost is **structural**, not accuracy-bound. Wall-clock budget
+overshot the gate-6 red flag (>5× ETDRK2's 1605s ≈ 8025s) by
+multiple-times-over.
+
+**Suspect 7 vs Suspect 8 verdict: unobtainable from this driver
+as written.** The empirical wall-clock evidence is itself the
+sprint-14 finding: per-outer-step LSODA on the unsplit QKE without
+an analytic Jacobian is computationally infeasible at Hannestad
+Point C.
+
+Sprint-15 brief: `doc/STAGE_E2_SPRINT15_BRIEF.md` lays out three
+options for making the LSODA driver tractable, in increasing order
+of scope:
+
+  (a) **Analytic Jacobian** — pass `jac=` to `solve_ivp`. The QKE
+      Jacobian has closed-form block structure: per-mode N²×N²
+      unitary `-i [H, ·]` + diagonal damping + dense intra-mode
+      collision coupling. Modes are independent at the ODE level,
+      so the full Jacobian is block-diagonal across Ny modes —
+      `Ny` blocks of size `2N² × 2N²` each. Estimated cost
+      reduction: 50-500× per outer step.
+  (b) **`method='BDF'` with `jac_sparsity` hint** — explicit
+      sparsity pattern lets BDF use ~`nnz` RHS evaluations per
+      Jacobian rebuild instead of `n_dof²`. Still FD-based; cheaper
+      than LSODA but more expensive than (a).
+  (c) **Segment-level LSODA over a narrowed Phase-0 sub-window** —
+      run LSODA only across the resonance crossing
+      (istep ~926→960), with ETDRK2 on either side. Decouples the
+      structural cost from the bulk integration. Cheapest but
+      smallest scope.
+
+Stage E.2 sprint 14 carryovers (must not regress under sprint 15):
+
+1. **Sprint-12 instrumentation, sprint-11 fallback, sprint-10
+   driver, sprint-9 MSW probe, sprint-8 energy probe, sprint-7
+   cold-T fix, sprint-6 NaN-safe sanitisation, sprint-5 V_nunu
+   projection, D.7.1 Strang sequence, D.7 expm cache** — all
+   preserved bit-identical (gates 1 and 2 pass at default).
+2. **`evolve_step_lsoda` is opt-in** (`qke_lsoda_driver_flag`
+   defaults False). Sprint-15 work goes inside this method or as
+   variant siblings; do NOT modify `evolve_step_ode_etdrk2` or any
+   other existing driver.
+3. **Suspect 6 stays FALSIFIED** (sprint 13). Do not retry the
+   collision-N refactor in any variant.
+4. **Suspect 7 vs Suspect 8 is still OPEN** — sprint 14 produced no
+   verdict. The decision is gated on getting an LSODA Point-C run
+   to completion in tractable wall-clock.

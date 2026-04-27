@@ -2015,3 +2015,129 @@ Stage E.2 sprint 14 carryovers (must not regress under sprint 15):
 4. **Suspect 7 vs Suspect 8 is still OPEN** — sprint 14 produced no
    verdict. The decision is gated on getting an LSODA Point-C run
    to completion in tractable wall-clock.
+
+**E.2 sprint 15 — analytic Jacobian + segment-only LSODA shipped;
+LSODA still wall-clock infeasible at Hannestad Point C even with
+loose tolerances: ESCALATE to sprint 16 (driver re-architecture).**
+Sprint 15 took scope (a) + scope (c) of the sprint-15 brief: build
+an analytic Jacobian (dense and banded variants) for `evolve_step_lsoda`,
+plus a segment-only dispatch that uses LSODA only inside a Tg window
+across the resonance crossing. The infrastructure landed cleanly,
+but gate 5 still cannot be run in tractable wall-clock because the
+fundamental cost is one Phase-0 outer step at Tg ≈ 80 MeV, 4-flavor,
+not the FD-Jacobian rebuild that sprint 14 had blamed.
+
+Implementation surface:
+
+  * `_lsoda_compute_jblocks` (shared kernel) and two assemblers
+    `_lsoda_jacobian_dense` / `_lsoda_jacobian_banded` in
+    `PRyM/PRyM_boltzmann.py`. Block-diagonal in (sector, mode) under
+    the (s, c, i) flat layout; bandwidth = `n_components - 1` (8 at
+    3-flavor, 15 at 4-flavor) when laid out as (mode, sector,
+    component). Both correctness-verified against FD reference at
+    < 1e-10 relative.
+  * `evolve_step_lsoda` extended to (a) build an analytic Jacobian
+    once per outer step from the start-of-step ρ via `_build_L_list`,
+    and (b) re-layout the state vector to `(mode, sector, component)`
+    when banded so scipy's LSODA wrapper can use a banded LU
+    (`lband = uband = n_components - 1`). ODEPACK requires the banded
+    Jacobian in shape `(2 * lband + uband + 1, n_dof)`; the assembler
+    pads accordingly.
+  * Two new flags in `PRyM/PRyM_init.py`:
+    `qke_lsoda_analytic_jac_flag` (default True; off → FD path) and
+    `qke_lsoda_jac_band_flag` (default True; off → dense Jacobian).
+  * Segment-only dispatch in `PRyM/PRyM_main.py:_run_qke_segment`:
+    when `qke_lsoda_window_Tg_max_MeV` and `_min_MeV` are both
+    positive AND `qke_lsoda_driver_flag` is on, use LSODA only when
+    `Tg_min ≤ Tg_mid ≤ Tg_max`; outside the window fall through to
+    ETDRK2. Default 0/0 disables the window (sprint-14 behavior).
+  * `validation/diagnostics/diag_hannestad_pointC_lsoda.py` updated
+    to use Tg ∈ [40, 80] MeV (brackets the sprint-12 localized
+    resonance jump at Tg ≈ 60-64 MeV), tolerances reverted to
+    production-grade 1e-6 / 1e-10.
+  * Two new fast unit tests in `tests/test_regression.py`:
+    `test_lsoda_analytic_jacobian_matches_finite_difference` and
+    `test_lsoda_banded_jacobian_matches_dense`.
+
+Sprint 15 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 6/6 in 27s | bit-identical at default; +2 new Jacobian tests |
+| 2 sterile pytest | PASS 3/3 in 650s | bit-identical at default |
+| jac dense vs FD | PASS rel < 1e-10 | on f_lin (frozen H, frozen N_full, no FP cancellation against O(1e23) RHS baseline) |
+| jac banded vs dense | PASS rel < 1e-12 | after layout permutation; scipy LSODA accepts shape (3·bw + 1, n_dof) |
+| 3 LSODA 3×3 SM (jac on) | DNF at 35 min (dense) / 24 min (banded) | RHS-bound: ~250 ms per `_assemble_collision_N` × 3-4 sub-steps × 2000 outer steps; LSODA `njev = 0` in benign regime, Jacobian never consulted |
+| 5 windowed LSODA Hannestad Point C | DNF at 3 h | killed; first LSODA call inside the [40, 80] window (Tg ≈ 80 MeV, 4-flavor sterile) does not complete in tractable wall-clock even at rtol = 1e-2, atol = 1e-4 |
+
+The new structural finding (extends sprint 14):
+
+* **Sprint 14 mis-attributed the LSODA cost to FD-Jacobian
+  rebuilds.** The analytic Jacobian doesn't cure the wall-clock —
+  in benign regimes LSODA reports `njev = 0` (Jacobian never
+  consulted, solver stays in non-stiff Adams mode), and in the
+  Hannestad regime LSODA's Newton iteration grinds without
+  consulting the Jacobian (sample stack: `cb_f_in_lsoda` repeated,
+  no `cb_jac` frame). The bottleneck is RHS evaluations during
+  LSODA's adaptive sub-stepping on a system that is simultaneously
+  stiff and oscillatory — the regime where multistep
+  Adams/BDF/LSODA is fundamentally weak.
+* **At Tg ≈ 80 MeV, 4-flavor sterile, Hannestad Point C config**,
+  one outer step (dt ≈ 1.7e-3 s) requires LSODA sub-step h ≪ 1/|H|
+  to track the QKE oscillation. With H eigenvalues O(eV) ⇒ O(1e15
+  s⁻¹) in natural units, h ~ 10⁻¹⁵ s ⇒ ≳ 10¹² sub-steps per outer
+  step. Loosening tolerances 100× did not help (sprint 14) and
+  loosening 10000× still did not help (sprint 15 probe with
+  rtol = 1e-2, atol = 1e-4). This is consistent with adaptive
+  multistep methods being ill-suited to oscillatory stiff problems
+  — the textbook cure is exponential time-differencing (which is
+  what ETDRK2 already is) or a symplectic / Magnus integrator.
+
+**Suspect 7 vs Suspect 8 verdict: still unobtainable.** Option (a)
+(analytic Jacobian) and option (c) (segment-only LSODA) of the
+sprint-15 brief have both been implemented and both confirm — via
+sample-based stack inspection — that the LSODA cost is in the RHS
+evaluations during adaptive sub-stepping, not in the Jacobian or
+the LU. Option (b) (BDF) was not attempted because (i) it shares
+the multistep / Newton machinery that sample stacks identify as
+the bottleneck, and (ii) even if BDF succeeded it would be subject
+to the same RHS-eval budget.
+
+What sprint 15 did achieve:
+
+  1. **Production-grade infrastructure**: analytic Jacobian (dense
+     and banded), state-layout helper for banded LU, window-based
+     dispatcher. All correctness-verified, both `qke_lsoda_*`
+     flag families default to a sensible "use the analytic
+     Jacobian and the banded path when LSODA is enabled" without
+     changing default-flag-off behavior.
+  2. **Negative result on LSODA**: scope (a)+(c) ruled out as
+     practical paths for the Suspect 7 / Suspect 8 verdict at
+     production tolerances. The diagnostic evidence is captured
+     in this landing record.
+  3. **Diagnosis tooling**: `qke_lsoda_window_debug_flag` (gated)
+     for tracing dispatch decisions; `/tmp/instrument_lsoda*.py`
+     templates for measuring per-call `nfev` / `njev` / wall-
+     clock; sample-based stack inspection of the stuck process
+     to confirm RHS-bound (not Jacobian-bound) cost.
+
+Sprint-16 brief: `doc/STAGE_E2_SPRINT16_BRIEF.md` lays out the
+post-LSODA paths. The recommended scope is to prototype an
+**ETDRK4** corrector (Krogstad's 4th-order exponential time-
+differencing) on top of ETDRK2's existing kernels, run Hannestad
+Point C through it, and use the ETDRK4-vs-ETDRK2 disagreement on
+Σρ_ss as a substitute Suspect-7 falsifier. ETDRK4 reuses
+`_build_L_list` and `_etdrk2_expm_phi`'s machinery, so the cost is
+~3× ETDRK2 wall-clock — well within budget.
+
+Stage E.2 sprint 15 carryovers (must not regress under sprint 16):
+
+1. **Sprint-14 LSODA driver** stays opt-in
+   (`qke_lsoda_driver_flag` defaults False); sprint-15's analytic
+   Jacobian and window dispatcher are loaded only on that path.
+   Default behavior bit-identical to sprint 11.
+2. **Sprint-12 instrumentation through D.7 expm cache** — all
+   preserved bit-identical (gates 1 and 2 pass at default).
+3. **Suspect 6 stays FALSIFIED** (sprint 13).
+4. **Suspect 7 vs Suspect 8 still OPEN.** The decision now depends
+   on a non-LSODA driver experiment (sprint-16 ETDRK4 prototype).

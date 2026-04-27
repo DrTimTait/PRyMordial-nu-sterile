@@ -2286,3 +2286,165 @@ Stage E.2 sprint 16 carryovers (must not regress under sprint 17):
    that the physics-config (V_nunu, damping kernel, mixing
    initial condition) does not match Hannestad's. Stage E.2
    closure now flows through literature review.
+
+**E.2 sprint 17 — Hannestad-Tamborra-Tram 2012 reproduction;
+unit-mismatch and axis-bracket findings; ESCALATE to sprint 18
+with joint (V_nunu, damping) bracket.** Sprint 17 took the
+literature-review-first scope of the sprint-17 brief: identify
+the exact Hannestad reference, audit the units in which Σρ_ss is
+reported vs the band [0.02, 0.10] in our project notes, and run a
+controlled single-axis bracket on the two leading divergence
+candidates (V_nunu projection, damping kernel). The literature
+review reveals two material conventions in our project notes that
+do not match the source paper, and the axis bracket shows that
+both candidate axes are quantitatively sensitive but neither alone
+reaches the Hannestad band — the natural next experiment is the
+joint configuration.
+
+Implementation surface (sprint 17 is by design non-code-dominated):
+
+  * `doc/STAGE_E2_SPRINT17_LITERATURE.md` — single-file record of
+    Hannestad-Tamborra-Tram 2012 (arXiv:1204.5861) configuration,
+    with a side-by-side table of HTT 2012 vs PRyMordial-nu
+    (mixing-angle convention, V_nunu form, damping kernel,
+    boundary conditions, sectors, integrator, momentum grid).
+    Includes a §1 unit-convention audit explaining the three-way
+    confusion between the harness-reported raw `Σ_s Σ_y ρ_ss(y, s)`
+    (no measure factor, dimensionless), the brief-described
+    `dy · sum_y y² · ρ_ss(y)` (single-sector number density), and
+    HTT 2012's δN_eff (energy-weighted, two-sector, one-thermal-
+    species denominator). The "[0.02, 0.10]" band cited in earlier
+    project notes is a project-internal label for HTT 2012 Fig. 2
+    top blue curve at sin²(2θ_24)=1e-4 (visual reading δN_eff ≈
+    0.02-0.03 at T=1 MeV); the literal string does not appear in
+    HTT 2012 itself. FortEPiaNO scope check confirms no
+    `diag_fortepiano_*` artefacts exist in the worktree (commits
+    98a5d05 and 141a7d0 added only the comparison document, not
+    harness scripts); FortEPiaNO trajectories are out of scope
+    until a future build/install sprint.
+  * `validation/diagnostics/diag_sprint17_axis_v_nunu.py` — three-
+    run ETDRK2 axis bracket harness at reduced n_B=2500+phase0=
+    1000 (apples-to-apples with sprint-16 gate 5b's Σ_raw_ss=
+    14.5122 baseline). Reports raw Σρ_ss, **δN_eff_ss** (computed
+    as the y³-moment ratio `Σ_y y³ ρ_ss / Σ_y y³ ρ_νe` summed
+    across both sectors — automatically cancels T_ν,com⁴ and gives
+    Hannestad-comparable units), Neff, and Yp for each
+    configuration.
+  * No production code touched. `_build_H_list`, `_build_L_list`,
+    `_assemble_collision_N`, `_compute_D_pair_matrix`, `_etdrk2_*`,
+    `_etdrk_expm_phi_4`, `evolve_step_ode_etdrk*`,
+    `evolve_step_lsoda` all unchanged. No new flags. Sprint 17 is
+    a physics-config investigation; the bracket is via existing
+    `qke_v_nunu_active_only` and `qke_damping_formula` flags.
+
+Discovered while reading HTT 2012:
+
+  * **HTT 2012's damping kernel is the legacy "symmetric" Stodolsky
+    form**, NOT the project default "mirizzi". HTT 2012 Eq. 2.15-
+    2.16: `D = (1/2) Γ` with `Γ = C_a G_F² T⁵ E`, `C_e ≃ 1.27`,
+    `C_{μ,τ} ≃ 0.92`. Our `qke_damping_formula = "mirizzi"`
+    default (`PRyM_init.py:171`, post-E.1 calibration) uses the
+    Mirizzi+2012 Eq. 28 form with `[(g_α^s − g_β^s)² + (g_α^a +
+    g_β^a)²]` — a different quadratic combination of g^s, g^a
+    coefficients. Sprint-17 axis bracket Run C uses "symmetric"
+    to match HTT 2012 directly.
+  * **HTT 2012 evolves no live ν-ν integral**; their V_nunu
+    contribution is closed-form thermal `V_1` (Eq. 2.10) under
+    the assumption of thermal active distributions, sterile not
+    included. Functionally equivalent to our `active_only=True`
+    in the saturating limit, but pre-saturation our live integral
+    can produce deviations from HTT's thermal closed form. This
+    is consistent with the order-of-magnitude δNeff_ss agreement
+    on Run A (project default `active_only=True`) being closer to
+    HTT than Run B (`active_only=False`) — see results below.
+  * **Mixing-angle convention matches.** HTT 2012 Eq. 2.1-2.2
+    uses the standard half-angle parameterisation; our
+    `theta_24 = arcsin(sqrt(1e-4))/2 ≈ 0.005 rad` matches
+    HTT's `θ_s = ½ arcsin(√(sin²(2θ_s)))`. Not a divergence axis.
+  * **HTT 2012 uses a non-uniform Kainulainen-Sorri momentum
+    grid** (Eq. 3.3, x_min=1e-4, x_ext=3.1, x_max=100, ~few hundred
+    nodes). We use linear, Ny=100, y_max=100. Concentration of
+    nodes near the resonance is a structural difference; out of
+    scope for sprint 17 but flagged as a sprint-18+ axis if joint
+    (V_nunu, damping) bracket does not close the gap.
+  * **HTT 2012's L=0 NH case has no resonance.** Our sprint-12
+    "Tg ≈ 60-64 MeV resonance jump" localisation is therefore
+    likely a Phase-0/Phase-B handoff numerical artefact rather
+    than a physical resonance. Flagged for sprint 18 diagnostic.
+
+Sprint 17 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 6/6 in 33s | bit-identical at default; no new flags introduced |
+| 2 sterile pytest | PASS 3/3 in 763s (12:43) | bit-identical at default |
+| Run A (project default) | Σρ_ss(raw)=14.5122 | matches sprint-16 gate-5b baseline 14.5122 BIT-IDENTICALLY → harness wiring confirmed; δN_eff_ss=0.629 (6× above HTT band edge 0.10) |
+| Run B (V_nunu axis flip) | active_only=False | Σρ_ss(raw)=27.89, δN_eff_ss=0.963; Neff=3.09 (near-SM!), Yp=0.250 (near-SM!) |
+| Run C (HTT damping kernel) | damping="symmetric" | Σρ_ss(raw)=7.17 (-50% vs A), δN_eff_ss=0.331 (-47% vs A); Neff=4.10, Yp=0.261 |
+| Verdict at gate 3 | DEFERRED | Both axes >5% sensitive on δN_eff_ss; neither alone reaches [0.02, 0.10]; joint case is the natural sprint-18 bracket |
+
+The two structural findings:
+
+* **The "200× gap" was largely a units artefact.** Project notes
+  inherited from sprints 12-16 cited Σρ_ss=22.225 against a
+  Hannestad band [0.02, 0.10] — a 200× ratio. Sprint 17 confirms
+  that Hannestad's quantity is δN_eff (Eq. 3.1, 3.2 of HTT 2012),
+  not a raw sum. Reframed in HTT-comparable units, the gap at
+  project default (Run A) is **0.629 vs band-upper 0.10 → 6×**,
+  not 200×. Reframed at the HTT-matching damping (Run C), the
+  gap is **0.331 vs 0.10 → 3.3×**. The framing collapse is
+  **partial**: the gap is real but order-of-magnitude smaller
+  than the inherited framing implied. Stage E.2 does **not**
+  close on units alone, but the residual gap is now within reach
+  of the candidate axis cures.
+* **V_nunu projection flips active-flavor thermalisation, not
+  just sterile production.** Run B (`active_only=False`, sprint-5
+  legacy) produces near-SM Neff (3.09) and near-SM Yp (0.250),
+  while Run A's project default (`active_only=True`, sprint-5
+  fix) produces Neff=9.85 and Yp=0.313. Removing the active-only
+  V_nunu projection somehow restores active-flavor thermal
+  saturation while simultaneously increasing sterile production
+  (Σρ_ss raw 27.9 vs 14.5). This is the **opposite** of the
+  Z-exchange-coupling-only intuition that motivated sprint 5;
+  the active-only projection appears to be heating the active
+  sector via a feedback through the sterile coupling. Flagged
+  for closer analysis in sprint 18.
+
+**Suspect 8 is partially CONFIRMED with quantitative axis
+sensitivity but no single-axis cure.** Both candidate axes
+(V_nunu projection and damping kernel) are >5% sensitive on
+δN_eff_ss; the damping axis moves it in the right direction
+(toward HTT's band) and the V_nunu axis moves it in the wrong
+direction (further from the band but toward SM Neff/Yp). The
+natural next experiment is the **joint configuration**
+`(active_only=False, damping='symmetric')` which combines the
+SM-Neff-restoring V_nunu mode with the HTT-matching damping
+kernel — and may either (a) trip into the [0.02, 0.10] band
+(closes Stage E.2 with multi-axis cure) or (b) reveal a
+non-linear interaction between the two axes that requires a
+deeper structural look at the V_nunu wiring.
+
+Sprint-18 brief: `doc/STAGE_E2_SPRINT18_BRIEF.md` lays out the
+joint-axis bracket plus the Phase-0/Phase-B handoff diagnostic
+(per the HTT-2012 "no resonance for L=0 NH" finding). The
+recommended scope is one new harness adding the joint (B+C) run
+and a sub-step instrumentation pass through the Phase-0 → Phase-B
+boundary to identify whether the sprint-12-localised Tg ≈ 60-64
+MeV jump is physical or a handoff artefact.
+
+Stage E.2 sprint 17 carryovers (must not regress under sprint 18):
+
+1. **Sprint-16 ETDRK4** opt-in (`qke_etdrk4_flag` defaults False);
+   sprint-15 LSODA opt-in; sprint-12 instrumentation; sprint-11
+   eigendecomp fallback; sprint-10 Phase-0 driver — all preserved
+   bit-identical (gates 1 and 2 pass at default).
+2. **Suspect 6 stays FALSIFIED** (sprint 13).
+3. **Suspect 7 stays FALSIFIED** (sprint 16).
+4. **Suspect 8 is partially CONFIRMED.** The physics-config
+   axes (V_nunu projection, damping kernel) are quantitatively
+   sensitive; the joint configuration is the next bracket point.
+5. **The "200× gap" framing is RETIRED.** Future sprint briefs
+   should use δN_eff_ss as the comparable quantity, not raw
+   Σρ_ss; the right Stage-E.2 closure target is δN_eff_ss in
+   [0.02, 0.10] (HTT 2012 Fig. 2 top blue curve, T=1 MeV
+   asymptote).

@@ -1,0 +1,22 @@
+==============================================================================================================
+Stage E.2 sprint 17 axis bracket: V_nunu projection + damping kernel
+  Hannestad Point C: sin²(2θ_24)=1e-4, δm²_41=0.93 eV², L=0, NH
+  Reduced n_B = 2500 + n_B_phase0 = 1000 (sprint-16 gate-5b baseline Σρ_ss(raw)=14.512)
+  HTT 2012 reference: δNeff ≈ 0.02-0.03 (Fig. 2 top blue curve, T = 1 MeV)
+==============================================================================================================
+
+==============================================================================================================
+Sprint 17 axis bracket summary
+==============================================================================================================
+  Run A: active_only=True,  damping='mirizzi'  (project default)  v_nunu_active_only=True   damp=mirizzi     Neff=9.8534  Σρ_ss(raw)=14.5122  δNeff_ss=0.6287  Yp=0.31284  (1429s)
+  Run B: active_only=False, damping='mirizzi'  (V_nunu axis flip)  v_nunu_active_only=False  damp=mirizzi     Neff=3.0897  Σρ_ss(raw)=27.8882  δNeff_ss=0.9629  Yp=0.24953  (1375s)
+  Run C: active_only=True,  damping='symmetric' (HTT 2012)    v_nunu_active_only=True   damp=symmetric   Neff=4.1040  Σρ_ss(raw)=7.1729  δNeff_ss=0.3312  Yp=0.26131  (1546s)
+
+  Hannestad band [0.02, 0.1] (HTT 2012 Fig. 2 top blue curve):
+    Run A (project default) δNeff_ss in band: False
+    Run B (V_nunu axis flip) δNeff_ss in band: False
+    Run C (damping = HTT 2012) δNeff_ss in band: False
+
+  VERDICT: both axes are sensitive (>5% on δNeff_ss) but neither alone reaches the Hannestad band. Joint configuration may be needed; defer to sprint 18 with the joint (active_only=False, damping='symmetric') run as the natural fourth bracket point.
+
+Total wall-clock: 4351s (72.5 min)

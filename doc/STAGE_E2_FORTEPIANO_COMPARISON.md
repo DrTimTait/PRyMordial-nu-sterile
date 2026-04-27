@@ -175,10 +175,88 @@ In priority order (highest expected impact first):
   Suspect-7 falsifier independent of the LSODA path, even if P1+P2
   make LSODA viable.
 
+## Pre-compilation: what's already cached vs what could be
+
+User question (sprint-15 → sprint-16 prep): could the collision
+integrals be pre-tabulated, mirroring how FortEPiaNO pre-tabulates
+some of its auxiliary functions?
+
+What FortEPiaNO actually pre-tabulates (appendix B.1):
+
+  * `J(r)`, `Y(r)`, `K(r)`, `G_1(r)`, `G_2(r)` — QED-corrected
+    photon/lepton phase-space integrals for the `dz/dx` equation
+    (Eq. B.6-B.11). These depend on `r = m_e/T_γ` only — a 1D
+    integral over a Fermi-Dirac with mass.
+  * `E_e(r)`, `E_µ(r)` — charged-lepton energy densities used in
+    the matter potential. Also 1D in `r`.
+  * `D_αβ` damping constants — fixed numbers per pair (Eq. A.17-
+    A.20).
+
+What FortEPiaNO does **not** pre-tabulate:
+
+  * The diagonal collision integrals themselves (Eq. A.3-A.4).
+    They are evaluated live at every RHS call via the 2D
+    Gauss-Laguerre quadrature. There is no "pre-averaged"
+    collision integral in the FortEPiaNO design — the bilinear-in-
+    `f` structure of `F^{ab}` (Eq. A.14-A.15) prevents it,
+    because `f` evolves through the run.
+
+What we already pre-tabulate in `PRyM/PRyM_boltzmann.py`:
+
+  * `D_k0`, `D_k1`, `D_k2` — the geometric `D_i(a,b,c,d)` kernel
+    functions of FortEPiaNO Eq. A.11-A.13, evaluated on every
+    `(Ny, Ny, Ny)` grid triple at solver init (`_precompute_D_tables`,
+    line 430). This is exactly the analogue of FortEPiaNO's
+    closed-form analytic `D_i` evaluation.
+  * Vacuum Hamiltonian basis: `_Omega_nu = U M U†` cached per
+    `DensityMatrixSolver.__init__`.
+  * QED background corrections in `PRyMrates/thermo/` — analogous
+    in spirit to FortEPiaNO's J/Y/G tables, used by `PRyM_thermo.py`
+    rather than by the QKE driver.
+
+What we could additionally pre-tabulate, ranked by ROI:
+
+  * **(C1) Damping constants `D_αβ` per pair.** P1 already implies
+    this — store `D_αβ_const[α, β]` at solver init, multiply by
+    `G_F² · T⁵ · y` at use. Net cost: a few hundred bytes; eliminates
+    a per-RHS function call.
+  * **(C2) Jacobian basis matrices `basis_vec[c]`.** Currently
+    rebuilt every Jacobian build inside `_lsoda_compute_jblocks`
+    (sprint-15 code). They depend only on `(n_components, n_flavor)`
+    — pre-store on `DensityMatrixSolver.__init__`. Saves ~Ny × nc
+    function calls per outer step. Trivial change.
+  * **(C3) Vacuum Hamiltonian per mode.** `H_vac(y_i) = M_F / (2 y_i)`
+    is a fixed matrix per mode after the PMNS rotation. Pre-store
+    `(Ny, N, N) complex` once. Currently `_build_H_list` recomputes
+    the prefactor scaling per call. Small saving.
+
+What we cannot pre-tabulate, even in principle:
+
+  * The diagonal collision *integral values* themselves. They are
+    bilinears in the live `f_α(y_i)` distributions; no amount of
+    pre-computation collapses the bilinear into a constant table
+    once `f` evolves. FortEPiaNO doesn't do this either — they
+    pre-tabulate the *kernel*, not the integral.
+  * The `_assemble_collision_N` output. Same reason.
+  * The matter-potential `V_thermal`, `V_CC`, `V_nunu` contributions
+    to `H`. They depend on `T(t)`, `n_b(t)`, and (for V_nunu) on
+    the live `ρ` integrated across modes.
+
+**Take-away:** the only meaningful pre-computation gains beyond
+what we already have are C1 (paired with P1) and C2 (a small
+sprint-15 cleanup). The diagonal collision integrals fundamentally
+have to be re-evaluated each RHS call in any solver — including
+FortEPiaNO's. The cure for our wall-clock is therefore not "pre-
+compile more"; it is "do less work per RHS call", which is exactly
+what P1 (eliminate the off-diagonal integral) and P3 (Gauss-
+Laguerre fewer nodes) deliver.
+
 ## Concrete next move
 
 The lowest-cost / highest-impact path is **P1**: reimplement the
 off-diagonal collision term as the FortEPiaNO damping-only form.
+Bundle C1 (pre-store `D_αβ` constants) into the same edit since it
+is the same one-liner. Defer C2 to a cleanup pass once P1 lands.
 This is a contained edit to `_assemble_collision_N` and a new
 flag, gateable so the existing tests can pin the legacy behaviour.
 If it works (Hannestad Point C completes in tractable wall-clock

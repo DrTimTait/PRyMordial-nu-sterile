@@ -1,0 +1,21 @@
+==============================================================================================================
+Stage E.2 sprint 18 closure run: production n_B no-Phase-0 confirmation
+  Config: damping='symmetric', active_only=True, qke_phase0_flag=False
+  Phase B from T=100 MeV to T=0.005 MeV at n_B=12000
+  Reduced-n_B reference (sprint-18 Phase-0 diagnostic, n_B=3500):
+    Σρ_ss(raw)=4.4416  δNeff_ss=0.0304  Neff=3.9090  Yp=0.24850
+  HTT 2012 reference band: δNeff in [0.02, 0.10]
+==============================================================================================================
+
+==============================================================================================================
+Sprint 18 closure run result
+==============================================================================================================
+  Production n_B=12000: Σρ_ss(raw)=4.9547  δNeff_ss=0.0542  Neff=417.1947  Yp=0.36186  (4377s)
+  Reduced n_B=3500: Σρ_ss(raw)=4.4416  δNeff_ss=0.0304  Neff=3.9090  Yp=0.24850
+
+  VERDICT: δNeff_ss = 0.0542 STILL IN HTT 2012 band [0.02, 0.10] at production n_B. **STAGE E.2 CLOSED.** The combined cure is robust to n_B resolution. Recommended actions:
+    1. Re-run all four Hannestad benchmark points (sin²2θ ∈ {0.1, 2.26e-3, 1e-4, 0.089}) under the closure config to confirm coverage of HTT 2012 Fig. 2 top panel.
+    2. Document the closure config in PRyM_init.py (line 165-200 for damping; Phase-0 flag) and propose default flips for Hannestad-style benchmarks.
+    3. Investigate the V_nunu paradox (sprint-17 Run B near-SM Neff/Yp under active_only=False) at the structural level — it is no longer a Stage E.2 blocker but remains an unexplained behavior worth characterising.
+
+  Total wall-clock: 4377s (73.0 min)

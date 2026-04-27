@@ -1,0 +1,28 @@
+==============================================================================================================
+Stage E.2 sprint 18 joint axis bracket: V_nunu legacy + HTT damping
+  Hannestad Point C: sin²(2θ_24)=1e-4, δm²_41=0.93 eV², L=0, NH
+  Reduced n_B = 2500 + n_B_phase0 = 1000
+  Joint configuration: qke_v_nunu_active_only=False, qke_damping_formula='symmetric'
+  HTT 2012 reference band: δNeff in [0.02, 0.1]
+==============================================================================================================
+
+  Sprint-17 single-axis baselines for context:
+  A: active_only=True,  damping='mirizzi'  (default)  Σρ_ss(raw)=14.5122  δNeff_ss=0.6287  Neff=9.8534  Yp=0.31284
+  B: active_only=False, damping='mirizzi'  (V_nunu flip)  Σρ_ss(raw)=27.8882  δNeff_ss=0.9629  Neff=3.0897  Yp=0.24953
+  C: active_only=True,  damping='symmetric' (HTT)  Σρ_ss(raw)=7.1729  δNeff_ss=0.3312  Neff=4.1040  Yp=0.26131
+
+==============================================================================================================
+Sprint 18 joint axis bracket result
+==============================================================================================================
+  JOINT: active_only=False, damping='symmetric' (HTT)  Σρ_ss(raw)=27.9965  δNeff_ss=0.9618  Neff=3.0571  Yp=0.24952  (1314s)
+
+  VERDICT (δNeff_ss = 0.9618 > 0.30): joint configuration does NOT compose the single-axis effects toward the Hannestad band. Either V_nunu has a non-linear interaction with damping that we have not understood, or there is a third structural axis (likely the Phase-0/Phase-B handoff or the live-integral V_nunu vs HTT's closed form V_1) that is the actual divergence.
+    Sprint-19 escalation: implement HTT 2012's closed-form thermal V_1 (Eq. 2.10) as a third option for qke_v_nunu_form alongside live-integral active-only and live-integral full. This is a structural change, not a flag flip — ~1 day of implementation.
+
+  Composition check (sprint-17 single-axis baselines: A=0.629, B=0.963, C=0.331):
+    Linear-superposition prediction: A + (B-A) + (C-A) = 0.665
+    Multiplicative prediction:       A · (B/A) · (C/A) = 0.507
+    Observed joint:                                      0.962
+    Neither linear nor multiplicative composition matches within 10% (lin err 44.5%, mul err 89.6%); axes interact non-linearly. The joint case is genuinely beyond extrapolation from single-axis bracket data.
+
+  Total wall-clock: 1314s (21.9 min)

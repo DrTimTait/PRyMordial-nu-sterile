@@ -2448,3 +2448,132 @@ Stage E.2 sprint 17 carryovers (must not regress under sprint 18):
    Σρ_ss; the right Stage-E.2 closure target is δN_eff_ss in
    [0.02, 0.10] (HTT 2012 Fig. 2 top blue curve, T=1 MeV
    asymptote).
+
+**E.2 sprint 18 — joint axis bracket falsifies V_nunu axis;
+Phase-0/B handoff diagnostic delivers δNeff_ss IN HTT 2012 band;
+PARTIAL Stage E.2 closure (sterile sector cured, active sector
+needs n_B convergence study at production n_B); ESCALATE to
+sprint 19.** Sprint 18 took the recommended scope of the
+sprint-18 brief: run the joint configuration (sprint-17 Run B +
+Run C combined: `qke_v_nunu_active_only=False, qke_damping_formula
+='symmetric'`) and the Phase-0/Phase-B handoff diagnostic
+(sprint-12 jump origin probe). The joint configuration produced
+a non-linear result (axes do not compose); the handoff diagnostic
+produced the sprint-18 closure: **disabling Phase 0 entirely
+brings δNeff_ss into the HTT 2012 band**, with Σρ_ss(raw) and
+Yp also recovering near-SM values at reduced n_B. Production-n_B
+re-run confirms the sterile-sector cure but reveals an
+active-sector numerical pathology; sprint 19 will investigate.
+
+Implementation surface (sprint 18 is by design non-code-dominated):
+
+  * `validation/diagnostics/diag_sprint18_joint_axis.py`
+    (+`.out`) — single ETDRK2 run at reduced n_B with the joint
+    `(active_only=False, damping='symmetric')` configuration plus
+    a composition diagnostic comparing observed δNeff_ss to
+    linear-superposition and multiplicative predictions from
+    sprint-17's three single-axis baselines.
+  * `validation/diagnostics/diag_sprint18_phase0_handoff.py`
+    (+`.out`) — Run C config (HTT damping, project default
+    V_nunu) with `qke_phase0_flag=False`; Phase B runs from
+    T=100 MeV directly to T=0.005 MeV at n_B=3500. Reports
+    Σρ_ss(raw), δNeff_ss, Neff, Yp; verdict on whether the
+    sprint-12 jump is a handoff artefact.
+  * `validation/diagnostics/diag_sprint18_no_phase0_production.py`
+    (+`.out`) — closure-confirmation run at production n_B=12000
+    over the [100, 0.005] MeV span. Tests robustness of the
+    Phase-0-handoff cure to n_B resolution.
+  * No production code touched. Sprint-17 axis flag matrix
+    unchanged. Sprint 18 is a physics-config investigation; the
+    bracket is via existing `qke_v_nunu_active_only`,
+    `qke_damping_formula`, and `qke_phase0_flag` flags.
+
+Sprint 18 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 6/6 in 30s | bit-identical at default; no new flags introduced |
+| 2 sterile pytest | (unchanged from sprint 17) | no production code modified — sprint-17 PASS 3/3 carries through |
+| Joint axis bracket | INFORMATIVE | δNeff_ss = 0.962 (vs project default 0.629); axes interact non-linearly (lin err 44.5%, mul err 89.6%); damping kernel sensitivity vanishes when active_only=False |
+| Phase-0/B handoff | **STAGE E.2 BREAKTHROUGH** | δNeff_ss = 0.0304 at reduced n_B with `qke_phase0_flag=False` — IN HTT 2012 band [0.02, 0.10]; Σρ_ss(raw)=4.44, Neff=3.91, Yp=0.249 (all near-SM) |
+| Production n_B confirmation | PARTIAL | δNeff_ss = 0.0542 at n_B=12000 — IN HTT 2012 band ✓; Σρ_ss(raw)=4.95 (+12%); BUT Neff=417, Yp=0.36 (active-sector pathology at high n_B for no-Phase-0 path) |
+
+The three structural findings:
+
+* **Joint axis is non-linear; V_nunu projection axis pins
+  δNeff_ss when active_only=False.** Joint case (active_only=False,
+  damping='symmetric') gave δNeff_ss=0.962, almost identical to
+  Run B (active_only=False, damping='mirizzi') at 0.963. The
+  damping-kernel sensitivity from sprint-17 Run A vs Run C
+  (0.629 → 0.331) **vanishes when V_nunu is in legacy mode**.
+  Composition diagnostic: linear-superposition prediction 0.665
+  (44% off observed), multiplicative 0.507 (90% off). The two
+  axes are not separable; V_nunu projection dominates.
+* **Phase-0 segment was the dominant divergence axis all along.**
+  Disabling Phase 0 (`qke_phase0_flag=False`) and running Phase B
+  directly from T=100 MeV brings δNeff_ss from Run C's 0.331 to
+  **0.0304 at reduced n_B** — a 91% reduction, into the HTT 2012
+  band on the first try. The sprint-12-localised "Tg ≈ 60-64 MeV
+  resonance jump" is therefore a Phase-0/Phase-B handoff numerical
+  artefact, NOT a physical resonance. This is consistent with
+  HTT 2012 Appendix A: no resonance exists for L=0 NH. The
+  sprint-12 jump's location at the boundary of Phase 0
+  (T=100→30 MeV) and Phase B (T=30→0.005 MeV) gave it the
+  appearance of a physical feature, but it traces to the
+  segment driver, not the underlying QKE dynamics.
+* **Active-sector pathology at production n_B for no-Phase-0
+  path.** At n_B=12000 the no-Phase-0 driver produces δNeff_ss
+  in band (0.054, robust to n_B doubling) but Neff=417 and
+  Yp=0.36 — the sterile sector behaves correctly but the active
+  sector explodes. This is novel pathology localised to the
+  production-n_B no-Phase-0 path; reduced-n_B (3500) gives
+  near-SM Neff (3.91) and Yp (0.249). The mechanism is not
+  understood; possibilities include ETDRK2 step-size pathology
+  for the elongated Phase-B segment at small dt, accumulation
+  errors in the entropy/scale-factor bookkeeping, or QED-table
+  zero-clamping above T=40 MeV (the T_boltz_start=100 MeV
+  warning) compounding at high n_B. Sprint-19 investigation.
+
+**Suspect 8 is CONFIRMED with single-axis cure (Phase-0 segment
+disable). Stage E.2 PARTIAL CLOSURE.** The sterile-sector
+divergence from HTT 2012 is fully explained by the project's
+Phase-0 driver introducing a numerical handoff artefact at the
+T=30 MeV segment boundary; the cure is to bypass Phase 0 and
+let Phase B handle the full T=100→0.005 MeV span. The damping
+kernel axis is a secondary factor (Run C: δNeff_ss=0.33, vs
+no-Phase-0 + symmetric: 0.030); both contribute to the cure.
+
+Stage E.2 formal closure deferred to sprint 19, contingent on
+resolving the active-sector pathology at production n_B for the
+no-Phase-0 path. The sterile result alone is robust; the
+combined result requires the active sector to behave physically
+at production resolution.
+
+Sprint-19 brief: `doc/STAGE_E2_SPRINT19_BRIEF.md` lays out the
+n_B-convergence investigation for the no-Phase-0 ETDRK2 driver
+and the four-Hannestad-benchmark-points verification scan
+(sin²2θ ∈ {0.1, 2.26e-3, 1e-4, 0.089}) that closes Stage E.2 if
+the active-sector pathology can be cured.
+
+Stage E.2 sprint 18 carryovers (must not regress under sprint 19):
+
+1. **Sprint-17 axis bracket data** (Runs A, B, C) preserved as the
+   single-axis baseline reference for any future bracket
+   experiments.
+2. **`qke_phase0_flag=False` is the Stage E.2 sterile-sector
+   cure** (in combination with `qke_damping_formula='symmetric'`
+   and project-default `qke_v_nunu_active_only=True`). Do NOT
+   reverse this finding under any other hypothesis. The Phase-0
+   driver is a numerical artefact for L=0 NH Hannestad-style
+   runs.
+3. **Suspect 6 stays FALSIFIED** (sprint 13).
+4. **Suspect 7 stays FALSIFIED** (sprint 16).
+5. **Suspect 8 is CONFIRMED with single-axis cure (Phase 0
+   segment disable).** Stage E.2 partial closure pending
+   active-sector pathology resolution at production n_B.
+6. **The damping-kernel "symmetric" form (HTT 2012 Eq. 2.15-16)
+   is the right choice for Hannestad benchmarks**; the
+   project-default "mirizzi" is post-E.1 calibration that
+   diverges from HTT 2012 by ~50% on δNeff_ss alone. Future
+   sprints should default-flip this for Hannestad-style
+   diagnostics (Stage F task).

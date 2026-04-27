@@ -1,0 +1,17 @@
+==============================================================================================================
+Stage E.2 sprint 18 Phase-0/Phase-B handoff diagnostic
+  Run C config (active_only=True, damping='symmetric') with qke_phase0_flag=False
+  Phase B runs from T = 100 MeV directly to T = 0.005 MeV (n_B = 3500)
+  Sprint-17 Run C reference (Phase 0 ON):
+    Σρ_ss(raw)=7.1729  δNeff_ss=0.3312  Neff=4.1040  Yp=0.26131
+==============================================================================================================
+
+==============================================================================================================
+Sprint 18 Phase-0/Phase-B handoff diagnostic result
+==============================================================================================================
+  No-Phase-0 (Run C config): Σρ_ss(raw)=4.4416  δNeff_ss=0.0304  Neff=3.9090  Yp=0.24850  (1459s)
+  Phase-0 ON (sprint-17 Run C): Σρ_ss(raw)=7.1729  δNeff_ss=0.3312  Neff=4.1040  Yp=0.26131
+
+  VERDICT: δNeff_ss differs from Run C by 90.8% — Phase 0 segment is MATERIAL. The handoff at T = 30 MeV (Phase 0 → Phase B) introduces a numerical discontinuity that affects the sterile saturation. Sprint 19 needs a single-pass driver design (Phase 0 + Phase B fused into one ETDRK2 segment) before any further physics-config bracket.
+
+  Total wall-clock: 1459s (24.3 min)

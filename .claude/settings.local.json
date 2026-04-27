@@ -24,7 +24,9 @@
       "Bash(git commit -m ' *)",
       "Bash(git clone *)",
       "Bash(kill 87568)",
-      "Bash(jobs)"
+      "Bash(jobs)",
+      "Bash(awk -F: '$2 ~ /def / || $2 ~ /qke_ode_etdrk2_flag/ || $2 ~ /qke_full_ode_flag/')",
+      "Bash(python3 *)"
     ]
   }
 }

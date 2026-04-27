@@ -5252,6 +5252,141 @@ class DensityMatrixSolver(object):
     # only difference is the time integrator. ETDRK2 path stays untouched.
     # See PRyM_init.qke_lsoda_driver_flag for the falsifier framing.
 
+    def _lsoda_compute_jblocks(self, rho_all, a, Tg):
+        """Per-mode-per-sector Jacobian blocks in packed-real basis.
+
+        Returns J_blocks of shape (2, Ny, n_components, n_components),
+        with J_blocks[s, i, c_row, c_col] = ∂(dy/dt)[s, c_row, i] /
+        ∂y[s, c_col, i] under the LSODA RHS's frozen-H, frozen-N_full
+        approximation. This is the shared-cost piece of both the dense
+        and banded Jacobian assemblers — see _lsoda_jacobian_dense and
+        _lsoda_jacobian_banded.
+        """
+        Ny = self.Ny
+        N = self.n_flavor
+        nc = self.n_components
+        eV_to_s = self._eV_to_secm1
+
+        L_list, _, _ = self._build_L_list(rho_all, a, Tg)
+
+        # Pre-compute the n_components → vec(Hermitian matrix) basis.
+        basis_vec = np.zeros((nc, N * N), dtype=complex)
+        e_c = np.zeros((nc, 1))
+        for c in range(nc):
+            e_c[:] = 0.0
+            e_c[c, 0] = 1.0
+            M = self._to_mat(e_c)[0]              # (N, N) complex Hermitian
+            basis_vec[c] = M.reshape(N * N)       # row-major
+
+        J_blocks = np.zeros((2, Ny, nc, nc))
+        for s in range(2):
+            L_s = L_list[s]
+            for i in range(Ny):
+                L_si = L_s[i]                     # (N², N²) complex eV
+                for c in range(nc):
+                    Lv = L_si @ basis_vec[c]      # (N²,) complex Hermitian
+                    Lv_mat = Lv.reshape(1, N, N)
+                    J_blocks[s, i, :, c] = self._to_vec(Lv_mat)[:, 0] * eV_to_s
+        return J_blocks
+
+    def _lsoda_jacobian_banded(self, rho_all, a, Tg):
+        """Build the banded LSODA Jacobian in (mode, sector, component) layout.
+
+        Used when qke_lsoda_jac_band_flag is on. The state vector is laid
+        out as `y_flat[i * 2 * nc + s * nc + c] = rho_all[s, c, i]`
+        (achieved at the evolve_step_lsoda boundary by transpose+ravel).
+        Under that layout, the unitary + off-diagonal-damping Jacobian
+        has no cross-sector coupling (with H frozen at start-of-outer-
+        step) and no cross-mode coupling, so it is banded with
+        lband = uband = n_components - 1.
+
+        The banded format follows ODEPACK's user-banded-jt=4 convention
+        as expected by scipy's lsoda wrapper: the array has shape
+        `(2 * lband + uband + 1, n_dof)`. The first `lband` rows are
+        scratch space for LSODA's LU pivoting; the user fills entries
+        with offset `lband + uband + (i - j)`:
+            banded[lband + uband + i - j, j] = J_full[i, j]
+        for entries within the band, zero outside.
+
+        Returns
+        -------
+        banded : (2*(nc-1) + (nc-1) + 1, n_dof) real ndarray
+        bandwidth : int
+            uband == lband == n_components - 1. Returned alongside so the
+            caller can pass matching lband, uband to solve_ivp.
+        """
+        Ny = self.Ny
+        nc = self.n_components
+        bsize = 2 * nc           # block size per mode
+        bandwidth = nc - 1       # cross-sector entries are zero by construction
+
+        J_blocks = self._lsoda_compute_jblocks(rho_all, a, Tg)
+
+        n_dof = Ny * bsize
+        # ODEPACK requires nrowpd >= 2*ml + mu + 1 for jt=4.
+        nrowpd = 2 * bandwidth + bandwidth + 1   # = 3*bandwidth + 1
+        banded = np.zeros((nrowpd, n_dof))
+        # User-band data lives at rows [lband, lband + lband + uband].
+        # For lband = uband = bandwidth, the offset for entry at
+        # full-matrix row i, column j is `lband + uband + (i - j)`.
+        # Within a sector i_offset = c_row - c_col ∈ [-(nc-1), nc-1].
+        offset = 2 * bandwidth   # lband + uband
+        for s in range(2):
+            for c_row in range(nc):
+                for c_col in range(nc):
+                    diag_offset = c_row - c_col
+                    band_row = offset + diag_offset
+                    # Column index for mode i is i*bsize + s*nc + c_col.
+                    cols = np.arange(Ny) * bsize + s * nc + c_col
+                    banded[band_row, cols] = J_blocks[s, :, c_row, c_col]
+        return banded, bandwidth
+
+    def _lsoda_jacobian_dense(self, rho_all, a, Tg):
+        """Build the dense, time-constant Jacobian for evolve_step_lsoda.
+
+        Returns the (n_dof, n_dof) real Jacobian of dy/dt with respect to
+        y_flat = rho_all.ravel() (rho_all shape (2, n_components, Ny),
+        n_dof = 2 * n_components * Ny). The Jacobian retains the
+        unitary -i sign[s] [H_i, ρ_i] and the off-diagonal pair damping
+        -D_off,i ⊙ ρ_i pieces — both linear in ρ — and freezes:
+          * the Hamiltonian H (so its V_nunu(ρ) self-coupling is constant
+            across the LSODA outer step), and
+          * the collision integrals N_full[s] (so their non-local
+            ρ-dependence drops out of the Jacobian).
+        Both freezings are consistent with the start-of-outer-step
+        convention used by evolve_step_ode_etdrk2 today; the LSODA RHS
+        itself remains exact.
+
+        The result is block-diagonal in (sector, mode) under the (s, c, i)
+        flat layout: ~200 nonzero blocks of n_components² entries each
+        (2·Ny·N⁴ ≈ 51,200 nonzeros vs n_dof² ≈ 10.24M for 4×4 sterile),
+        but assembled here as dense because scipy's LSODA wrapper
+        accepts only a dense or banded jac= callable.
+        """
+        Ny = self.Ny
+        nc = self.n_components
+
+        J_blocks = self._lsoda_compute_jblocks(rho_all, a, Tg)
+
+        # Assemble the dense Jacobian under the (s, c, i) flat layout.
+        # Within sector s, the entry at (s*nc*Ny + c_row*Ny + i,
+        # s*nc*Ny + c_col*Ny + i) holds J_blocks[s, i, c_row, c_col];
+        # all other entries are zero.
+        n_dof = 2 * nc * Ny
+        J_dense = np.zeros((n_dof, n_dof))
+        for s in range(2):
+            offset = s * nc * Ny
+            for c_row in range(nc):
+                row_base = offset + c_row * Ny
+                for c_col in range(nc):
+                    col_base = offset + c_col * Ny
+                    np.fill_diagonal(
+                        J_dense[row_base:row_base + Ny,
+                                col_base:col_base + Ny],
+                        J_blocks[s, :, c_row, c_col])
+
+        return J_dense
+
     def evolve_step_lsoda(self, rho_all, dt, phi1_dt, a, Tg):
         """LSODA reference driver: integrate the unsplit QKE over [0, dt].
 
@@ -5288,8 +5423,32 @@ class DensityMatrixSolver(object):
         _to_mat = self._to_mat
         _to_vec = self._to_vec
 
+        analytic_jac = bool(getattr(
+            PRyMini, "qke_lsoda_analytic_jac_flag", True))
+        banded = analytic_jac and bool(getattr(
+            PRyMini, "qke_lsoda_jac_band_flag", True))
+
+        # State layout. The default (s, c, i) layout has per-mode blocks
+        # strided by Ny — fine for a dense Jacobian but not banded. The
+        # banded path uses (i, s, c), which is contiguous per mode and
+        # gives bandwidth = n_components - 1. Convert at the boundary.
+        if banded:
+            def _pack(rho_arr):
+                # (2, nc, Ny) → (Ny, 2, nc) → flat
+                return rho_arr.transpose(2, 0, 1).ravel()
+
+            def _unpack(y_flat):
+                # flat → (Ny, 2, nc) → (2, nc, Ny)
+                return y_flat.reshape(Ny, 2, n_components).transpose(1, 2, 0)
+        else:
+            def _pack(rho_arr):
+                return rho_arr.ravel()
+
+            def _unpack(y_flat):
+                return y_flat.reshape(2, n_components, Ny)
+
         def f(t, y_flat):
-            rho_local = y_flat.reshape(2, n_components, Ny)
+            rho_local = _unpack(y_flat)
             H_list = self._build_H_list(rho_local, a, Tg)            # eV
             N_full, _ = self._assemble_collision_N(rho_local, a, Tg)  # eV
 
@@ -5310,21 +5469,39 @@ class DensityMatrixSolver(object):
                             - np.einsum('iab,ibc->iac', rho_mat, H_T))
                     drho_eV = +1j * comm + N_full[s]
                 drho_vec[s] = _to_vec(drho_eV * eV_to_s)
-            return drho_vec.ravel()
+            return _pack(drho_vec)
 
         rtol = float(getattr(PRyMini, "qke_lsoda_rtol", 1.0e-6))
         atol = float(getattr(PRyMini, "qke_lsoda_atol", 1.0e-10))
+
+        # Sprint 15: analytic Jacobian (frozen H, frozen N_full). Built
+        # once per outer step from the start-of-step rho_all and returned
+        # as a constant from the jac closure. See _lsoda_jacobian_dense
+        # / _lsoda_jacobian_banded.
+        jac = None
+        ivp_kwargs = {}
+        if banded:
+            J_banded, bw = self._lsoda_jacobian_banded(rho_all, a, Tg)
+            jac = lambda t, y: J_banded  # noqa: E731
+            ivp_kwargs["lband"] = bw
+            ivp_kwargs["uband"] = bw
+        elif analytic_jac:
+            J_dense = self._lsoda_jacobian_dense(rho_all, a, Tg)
+            jac = lambda t, y: J_dense  # noqa: E731
+
         sol = solve_ivp(
-            f, [0.0, dt], rho_all.ravel().copy(),
+            f, [0.0, dt], _pack(rho_all).copy(),
             method='LSODA',
+            jac=jac,
             rtol=rtol, atol=atol,
             dense_output=False,
+            **ivp_kwargs,
         )
         if not sol.success:
             raise RuntimeError(
                 f"evolve_step_lsoda: solve_ivp failed at "
                 f"a={a:.4e}, Tg={Tg:.4e} MeV, dt={dt:.4e} s: {sol.message}")
-        rho_all[...] = sol.y[:, -1].reshape(2, n_components, Ny)
+        rho_all[...] = _unpack(sol.y[:, -1])
 
         # Post-step sanitisation, mirroring evolve_step_ode_etdrk2 lines
         # 5198-5237. LSODA's adaptive stepping can leave transient overshoot

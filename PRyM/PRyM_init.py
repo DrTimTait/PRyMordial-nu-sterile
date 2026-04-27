@@ -290,6 +290,34 @@ qke_lsoda_driver_flag = False
 # match ETDRK2 corrector accuracy on Phase-0 / Phase-B trajectories.
 qke_lsoda_rtol = 1.0e-6
 qke_lsoda_atol = 1.0e-10
+# Sprint 15: analytic Jacobian for the LSODA driver. Cuts the FD-Jacobian
+# rebuild cost (3200 RHS evals/rebuild at 4×4 sterile, Ny=100) to one
+# matrix evaluation per outer step — the FD path was the wall-clock
+# bottleneck that killed sprint-14 gate 5. The Jacobian uses H frozen at
+# start-of-outer-step (consistent with the Strang/ETDRK2 freezing
+# convention) and drops the collision-integral derivative (smooth across
+# the outer dt). The RHS itself stays exact. Disable to fall back to FD
+# Jacobian for cross-validation against the sprint-14 baseline.
+qke_lsoda_analytic_jac_flag = True
+# Sprint 15 fallback: use a banded Jacobian and a (mode, sector, component)
+# state-vector layout so LSODA's per-step LU drops from O(n_dof³) (which
+# made the dense-Jacobian path 7-10× slower than ETDRK2 at 3×3 SM) to
+# O(n_dof · bandwidth²). With H frozen at start-of-outer-step the unitary
+# + damping Jacobian has no cross-sector coupling, so bandwidth =
+# n_components - 1 (8 at 3-flavor, 15 at 4-flavor sterile). Effective only
+# when qke_lsoda_analytic_jac_flag is also True.
+qke_lsoda_jac_band_flag = True
+# Sprint 15 option (c): segment-only LSODA dispatch. When both Tg_max
+# and Tg_min are positive AND qke_lsoda_driver_flag is on, the dispatcher
+# in PRyM_main._run_qke_segment uses LSODA only when Tg_mid is inside
+# (Tg_min, Tg_max] and falls back to ETDRK2 outside that window. Default
+# 0 / 0 disables the window, preserving sprint-14 behaviour: LSODA on for
+# every outer step. The window option exists because LSODA is ~10× slower
+# than ETDRK2 in benign regimes (RHS-bound on collision integrals); using
+# it only across the resonance crossing where ETDRK2's Strang split is
+# under suspicion (Suspect 7) restores ETDRK2's bulk wall-clock.
+qke_lsoda_window_Tg_max_MeV = 0.0
+qke_lsoda_window_Tg_min_MeV = 0.0
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points

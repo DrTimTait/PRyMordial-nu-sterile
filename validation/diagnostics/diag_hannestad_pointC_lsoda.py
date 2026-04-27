@@ -43,12 +43,23 @@ def _base_flags():
     PRyMini.qke_full_ode_flag = True
     PRyMini.qke_ode_etdrk2_flag = True
     PRyMini.qke_lsoda_driver_flag = True
-    # Sprint-14: tolerances loosened from the production defaults (1e-6 / 1e-10)
-    # to keep wall-clock under gate-6 budget through the narrow-mixing
-    # resonance. Decision-tree band separation (ΔNeff ~0.04 vs ~5.52, factor
-    # of ~100) is unambiguous at this accuracy.
-    PRyMini.qke_lsoda_rtol = 1.0e-4
-    PRyMini.qke_lsoda_atol = 1.0e-8
+    # Sprint-15: production tolerances. Sprint-14 had loosened these to
+    # 1e-4 / 1e-8 to manage FD-Jacobian wall-clock; sprint-15's analytic
+    # Jacobian (qke_lsoda_analytic_jac_flag default True) eliminates the
+    # FD bottleneck so we revert to the production-grade settings that
+    # match ETDRK2 corrector accuracy.
+    PRyMini.qke_lsoda_rtol = 1.0e-6
+    PRyMini.qke_lsoda_atol = 1.0e-10
+    # Sprint-15 option (c): segment-only LSODA across the resonance
+    # crossing. Sprint-12 sub-step probe localised the saturation jump
+    # at istep 906→1035 ⇒ Tg ≈ 60-64 MeV (Phase 0 for Hannestad Point C
+    # config; ROADMAP lines 1478-1479). Window [40, 80] MeV brackets
+    # this with margin so other Hannestad points (different sin²(2θ),
+    # same Δm² = 0.93 eV²) also fall inside. Outside the window LSODA
+    # falls back to ETDRK2 — restores ETDRK2's bulk wall-clock and only
+    # pays LSODA's per-step cost for ~5 % of outer steps.
+    PRyMini.qke_lsoda_window_Tg_max_MeV = 80.0
+    PRyMini.qke_lsoda_window_Tg_min_MeV = 40.0
     PRyMini.massive_electron_flag = False
     PRyMini.n_B_override = 10000
     PRyMini.sterile_flag = True

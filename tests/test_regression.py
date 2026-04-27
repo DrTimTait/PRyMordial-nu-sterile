@@ -289,6 +289,211 @@ def test_qke_etdrk2_nu_nubar_symmetry():
         PRyMini.eta0b = _eta0b_saved
 
 
+def test_lsoda_analytic_jacobian_matches_finite_difference():
+    """Sprint 15: _lsoda_jacobian_dense agrees with the finite-difference
+    Jacobian of the linear (unitary + damping) RHS to <1e-10 relative.
+
+    The analytic Jacobian represents d(f_lin)/dy where
+        f_lin(y) = -i sign[s] [H_frozen, ρ(y)] - D_off ⊙ ρ(y),
+    i.e. the LSODA RHS minus its constant part. The constant pieces —
+    N_full(rho_all) at start-of-outer-step and the +D_off ⊙ ρ add-back
+    that lives inside N_full's off-diagonals — drop out of the
+    derivative. Comparing FD on f_lin (instead of the full RHS, which
+    has values O(1e23) on a thermal point and overwhelms the linear
+    signal of magnitude ~1e6 with floating-point noise) makes the test
+    a clean, tight check on _lsoda_jacobian_dense itself rather than
+    on FP cancellation.
+
+    A representative Phase-B point is used (3-flavor SM, perturbed
+    thermal rho_all to populate off-diagonals). 3-flavor n_dof = 1800
+    (cf 3200 for 4×4 sterile); central FD costs 2·1800 small einsums.
+    """
+    import numpy as np
+    import PRyM.PRyM_init as PRyMini
+    import PRyM.PRyM_boltzmann as PRyM_boltzmann
+
+    _reset_flags()
+    PRyMini.general_nu_flag = True
+    PRyMini.boltzmann_nu_flag = True
+    PRyMini.qke_density_matrix_flag = True
+    PRyMini.qke_full_ode_flag = True
+    PRyMini.qke_ode_etdrk2_flag = True
+
+    solver = PRyM_boltzmann.DensityMatrixSolver()
+    Ny = solver.Ny
+    nc = solver.n_components
+    N = solver.n_flavor
+    eV_to_s = solver._eV_to_secm1
+
+    # Representative Phase-B point. Inject a small Hermitian
+    # perturbation onto thermal FD so off-diagonal components are
+    # populated and the Jacobian is exercised in all 1800 directions
+    # (not just the diagonal sub-block).
+    Tnu = 2.0
+    a = 1.0
+    Tg = Tnu
+    rho_all = solver.initial_conditions(Tnu, a)
+    rng = np.random.default_rng(0)
+    rho_all = rho_all + 1.0e-3 * rng.standard_normal(rho_all.shape)
+
+    # Freeze H_list and the off-diagonal pair damping at this rho_all
+    # — the analytic Jacobian uses both via _build_L_list (which
+    # internally calls _build_H_list and _compute_D_pair_matrix).
+    H_list_frozen = solver._build_H_list(rho_all, a, Tg)
+    T_eV = Tg * 1.0e6
+    E_eV = np.maximum(solver.y_grid / a * 1.0e6, 1.0e-4)
+    D_off_eV = solver._compute_D_pair_matrix(T_eV, E_eV, units="eV")
+
+    def f_lin(y_flat):
+        """Linear (unitary + off-diag damping) part of the LSODA RHS,
+        with H and D_off frozen — exactly what _lsoda_jacobian_dense
+        linearises. The constant N_full piece is omitted so that FD
+        on f_lin tests the Jacobian directly without FP cancellation
+        against an O(1e23) collision-integral baseline.
+        """
+        rho_local = y_flat.reshape(2, nc, Ny)
+        drho_vec = np.zeros((2, nc, Ny))
+        for s in range(2):
+            rho_mat = solver._to_mat(rho_local[s])
+            H = H_list_frozen[s]
+            if s == 0:
+                comm = (np.einsum('iab,ibc->iac', H, rho_mat)
+                        - np.einsum('iab,ibc->iac', rho_mat, H))
+                drho_eV = -1j * comm
+            else:
+                H_T = H.swapaxes(-1, -2)
+                comm = (np.einsum('iab,ibc->iac', H_T, rho_mat)
+                        - np.einsum('iab,ibc->iac', rho_mat, H_T))
+                drho_eV = +1j * comm
+            # Off-diagonal pair damping -D_off ⊙ rho (same convention
+            # _build_L_list uses; D_off has zero diagonal).
+            damp = D_off_eV.transpose(2, 0, 1) * rho_mat  # (Ny, N, N)
+            drho_eV = drho_eV - damp
+            drho_vec[s] = solver._to_vec(drho_eV * eV_to_s)
+        return drho_vec.ravel()
+
+    J_analytic = solver._lsoda_jacobian_dense(rho_all, a, Tg)
+    n_dof = 2 * nc * Ny
+    assert J_analytic.shape == (n_dof, n_dof)
+
+    # FD on f_lin. f_lin is exactly linear so any h in the FP-safe
+    # range gives the exact slope; pick h=1e-3 for headroom against
+    # roundoff at the scale of the linear values (~1e11 in s^-1).
+    y0 = rho_all.ravel().copy()
+    h = 1.0e-3
+    J_fd = np.zeros((n_dof, n_dof))
+    e = np.zeros(n_dof)
+    for k in range(n_dof):
+        e[:] = 0.0
+        e[k] = h
+        f_plus = f_lin(y0 + e)
+        f_minus = f_lin(y0 - e)
+        J_fd[:, k] = (f_plus - f_minus) / (2.0 * h)
+
+    abs_diff = np.max(np.abs(J_analytic - J_fd))
+    scale = np.max(np.abs(J_fd))
+    rel = abs_diff / max(scale, 1.0e-30)
+    assert rel < 1.0e-10, (
+        f"_lsoda_jacobian_dense vs FD on f_lin: rel = {rel:.3e} "
+        f"(want < 1e-10); abs={abs_diff:.3e}, scale={scale:.3e}")
+
+
+def test_lsoda_banded_jacobian_matches_dense():
+    """Sprint 15: _lsoda_jacobian_banded reconstructs to the same matrix
+    as _lsoda_jacobian_dense after the (s,c,i) → (i,s,c) layout change.
+
+    The banded Jacobian is what evolve_step_lsoda actually hands to
+    scipy when qke_lsoda_jac_band_flag is on (default), so its
+    correctness is gated by this test rather than by the dense FD test.
+    Dense LU at n_dof = 3200 makes the dense path infeasible for
+    Hannestad Point C; banded LU at bandwidth = n_components - 1 brings
+    it back into budget.
+    """
+    import numpy as np
+    import PRyM.PRyM_init as PRyMini
+    import PRyM.PRyM_boltzmann as PRyM_boltzmann
+
+    _reset_flags()
+    PRyMini.general_nu_flag = True
+    PRyMini.boltzmann_nu_flag = True
+    PRyMini.qke_density_matrix_flag = True
+    PRyMini.qke_full_ode_flag = True
+    PRyMini.qke_ode_etdrk2_flag = True
+
+    solver = PRyM_boltzmann.DensityMatrixSolver()
+    Ny = solver.Ny
+    nc = solver.n_components
+
+    Tnu = 2.0
+    a = 1.0
+    Tg = Tnu
+    rho_all = solver.initial_conditions(Tnu, a)
+    rng = np.random.default_rng(0)
+    rho_all = rho_all + 1.0e-3 * rng.standard_normal(rho_all.shape)
+
+    # Dense Jacobian under the (s, c, i) layout (default rho_all.ravel()).
+    J_dense_sci = solver._lsoda_jacobian_dense(rho_all, a, Tg)
+
+    # Build a permutation that takes the (s, c, i) ordering used by
+    # _lsoda_jacobian_dense to the (i, s, c) ordering used by
+    # _lsoda_jacobian_banded. perm[k_isc] = k_sci, where
+    # k_isc = i * 2*nc + s*nc + c   (banded layout)
+    # k_sci = s * nc * Ny + c * Ny + i  (dense layout)
+    n_dof = 2 * nc * Ny
+    perm = np.empty(n_dof, dtype=int)
+    for i in range(Ny):
+        for s in range(2):
+            for c in range(nc):
+                k_isc = i * 2 * nc + s * nc + c
+                k_sci = s * nc * Ny + c * Ny + i
+                perm[k_isc] = k_sci
+
+    # Permute J_dense_sci into the banded layout for direct comparison
+    # (J_isc[i, j] = J_sci[perm[i], perm[j]]).
+    J_dense_isc = J_dense_sci[np.ix_(perm, perm)]
+
+    # Now build the banded Jacobian and reconstruct the full matrix.
+    J_band, bw = solver._lsoda_jacobian_banded(rho_all, a, Tg)
+    assert bw == nc - 1, (
+        f"unexpected bandwidth {bw}; expected nc-1 = {nc-1}")
+    # ODEPACK banded shape for jt=4: (2*lband + uband + 1, n_dof) =
+    # (3*bw + 1, n_dof). User band data lives at rows [bw, 3*bw].
+    assert J_band.shape == (3 * bw + 1, n_dof)
+
+    # Reconstruct: J_full[i, j] = J_band[2*bw + i - j, j] for entries
+    # within the band (offset = lband + uband = 2*bw).
+    offset = 2 * bw
+    J_recon = np.zeros((n_dof, n_dof))
+    for j in range(n_dof):
+        i_lo = max(0, j - bw)
+        i_hi = min(n_dof, j + bw + 1)
+        for i in range(i_lo, i_hi):
+            J_recon[i, j] = J_band[offset + i - j, j]
+
+    abs_diff = np.max(np.abs(J_recon - J_dense_isc))
+    scale = max(np.max(np.abs(J_dense_isc)), 1.0e-30)
+    rel = abs_diff / scale
+    assert rel < 1.0e-12, (
+        f"banded Jacobian disagrees with dense (after permutation): "
+        f"rel = {rel:.3e}; abs={abs_diff:.3e}, scale={scale:.3e}")
+
+    # Smoke test: scipy's LSODA should accept the banded Jacobian on a
+    # one-step integration without error.
+    from scipy.integrate import solve_ivp
+    y0 = rho_all.transpose(2, 0, 1).ravel().copy()
+
+    def rhs(t, y):
+        # Trivial linear RHS that mirrors the banded Jacobian's action,
+        # so the smoke test exercises only the LSODA wiring (not the
+        # full QKE RHS — the f-vs-jac inconsistency would otherwise
+        # confuse LSODA's stiffness estimator).
+        return np.zeros_like(y)
+    sol = solve_ivp(rhs, [0.0, 1.0e-8], y0, method="LSODA",
+                    jac=lambda t, y: J_band, lband=bw, uband=bw,
+                    rtol=1.0e-6, atol=1.0e-10)
+    assert sol.success, f"LSODA smoke test failed: {sol.message}"
+
+
 # --- Slow sterile (3+1) tests ------------------------------------------
 
 def _run_qke_with_rho(configure):

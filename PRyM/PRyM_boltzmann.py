@@ -4750,6 +4750,153 @@ class DensityMatrixSolver(object):
 
         return Phi0, Phi1, Phi2
 
+    def _etdrk_expm_phi_4(self, L, dt_nat, H_sector=None):
+        """Stage E.2 sprint 16: Al-Mohy & Higham augmented expm extended to phi_3.
+
+        Returns (Phi0, Phi1, Phi2, Phi3) per mode for the ETDRK4 corrector.
+        Convention: each Phi_k carries the dt-prefactor consumed by the
+        corrector formula written in the literature (Cox-Matthews / Krogstad):
+
+            Phi0 = exp(L dt)              (dimensionless)
+            Phi1 = dt · phi_1(L dt)       (1/eV)
+            Phi2 = dt · phi_2(L dt)       (1/eV)
+            Phi3 = dt · phi_3(L dt)       (1/eV)
+
+        where phi_0(z) = e^z, phi_{k+1}(z) = (phi_k(z) - 1/k!) / z.
+
+        This is the CORRECT convention for the standard ETDRK predictor
+        rho(t+dt) = Phi0·rho + Phi1·N. Note that the existing
+        _etdrk2_expm_phi helper (used by evolve_step_ode_etdrk2) uses an
+        internally inconsistent convention between its Al-Mohy and
+        eigendecomp branches; this helper is kept self-consistent so the
+        ETDRK4 driver can apply the literature formulas directly.
+
+        Construction: the bare 4N² augmented matrix exponential gives the
+        bare phi_k(L·dt) functions:
+            M = [[L*dt, I, 0, 0],
+                 [0,    0, I, 0],
+                 [0,    0, 0, I],
+                 [0,    0, 0, 0]]
+            exp(M)[0:N², k·N²:(k+1)·N²] = phi_k(L·dt)   (k = 0, 1, 2, 3)
+        We multiply each k>=1 block by dt_nat to recover the literature
+        convention dt·phi_k.
+
+        Sprint-11 narrow-mixing fallback: same gate as _etdrk2_expm_phi
+        (PRyMini.qke_expm_fallback_near_degeneracy + per-mode H_sector)
+        routes affected modes through eigendecomposition of L·dt, with the
+        phi_3 closed form phi_3(λ) = (phi_2(λ) − 1/2)/λ and a Taylor branch
+        around λ=0 (1/6 + λ/24 + λ²/120 + λ³/720).
+
+        Parameters
+        ----------
+        L : (Ny, N², N²) complex, in eV
+            Vectorised Liouvillian for one sector (same input as _etdrk2_expm_phi).
+        dt_nat : float
+            Time step in inverse-eV units (dt_seconds * _eV_to_secm1). Pass
+            dt_nat/2 to obtain the half-step Phi functions used by Krogstad's
+            stages A, B, C.
+        H_sector : (Ny, N, N) complex, in eV, optional
+            Per y-mode Hamiltonian for the same sector. When None, the
+            narrow-mixing fallback never fires (every mode uses Al-Mohy).
+
+        Returns
+        -------
+        Phi0, Phi1, Phi2, Phi3 : (Ny, N², N²) complex
+            Phi0 dimensionless; Phi1, Phi2, Phi3 in 1/eV.
+        """
+        Ny = L.shape[0]
+        Nsq = L.shape[1]
+        I_Nsq = np.eye(Nsq, dtype=complex)
+
+        Phi0 = np.zeros_like(L)
+        Phi1 = np.zeros_like(L)
+        Phi2 = np.zeros_like(L)
+        Phi3 = np.zeros_like(L)
+
+        M = np.zeros((4 * Nsq, 4 * Nsq), dtype=complex)
+        M[:Nsq, Nsq:2 * Nsq] = I_Nsq
+        M[Nsq:2 * Nsq, 2 * Nsq:3 * Nsq] = I_Nsq
+        M[2 * Nsq:3 * Nsq, 3 * Nsq:4 * Nsq] = I_Nsq
+
+        use_fallback = (
+            bool(getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False))
+            and H_sector is not None
+            and self.n_flavor >= 2
+        )
+        if use_fallback:
+            eps_cross = float(getattr(
+                PRyMini, "qke_expm_fallback_eps_cross", 1.0e-3))
+            N = self.n_flavor
+            sterile = N - 1
+            H_diag = H_sector.diagonal(axis1=1, axis2=2).real
+            H_off_as = np.abs(H_sector[:, :sterile, sterile])
+            gap_as_per_alpha = np.abs(
+                H_diag[:, :sterile] - H_diag[:, sterile:sterile + 1])
+            arg_min_alpha = np.argmin(gap_as_per_alpha, axis=1)
+            iy = np.arange(Ny)
+            gap_min = gap_as_per_alpha[iy, arg_min_alpha]
+            coupling_at_min = H_off_as[iy, arg_min_alpha]
+            spread_full = np.abs(
+                H_diag[:, :, None] - H_diag[:, None, :]).max(axis=(1, 2))
+            spread_full = np.maximum(spread_full, 1.0e-30)
+            needs_fallback = (
+                ((gap_min / spread_full) < eps_cross)
+                & (coupling_at_min > 0.0)
+            )
+        else:
+            needs_fallback = np.zeros(Ny, dtype=bool)
+
+        for i in range(Ny):
+            if needs_fallback[i]:
+                Z = L[i] * dt_nat
+                lam, V = np.linalg.eig(Z)
+                kappa = np.linalg.cond(V)
+                if kappa > 1.0e8:
+                    self._expm_fallback_kappa_high_count = 1 + getattr(
+                        self, "_expm_fallback_kappa_high_count", 0)
+                    M[:Nsq, :Nsq] = Z
+                    E = expm(M)
+                    Phi0[i] = E[:Nsq, :Nsq]
+                    Phi1[i] = dt_nat * E[:Nsq, Nsq:2 * Nsq]
+                    Phi2[i] = dt_nat * E[:Nsq, 2 * Nsq:3 * Nsq]
+                    Phi3[i] = dt_nat * E[:Nsq, 3 * Nsq:4 * Nsq]
+                    continue
+                V_inv = np.linalg.solve(V, np.eye(Nsq, dtype=complex))
+                small = np.abs(lam) < 1.0e-4
+                lam_safe = np.where(small, 1.0 + 0.0j, lam)
+                exp_lam = np.exp(lam)
+                phi1_formula = (exp_lam - 1.0) / lam_safe
+                phi1_taylor = (1.0 + lam / 2.0
+                               + lam * lam / 6.0
+                               + lam * lam * lam / 24.0)
+                phi1_lam = np.where(small, phi1_taylor, phi1_formula)
+                phi2_formula = (phi1_lam - 1.0) / lam_safe
+                phi2_taylor = (0.5 + lam / 6.0
+                               + lam * lam / 24.0
+                               + lam * lam * lam / 120.0)
+                phi2_lam = np.where(small, phi2_taylor, phi2_formula)
+                phi3_formula = (phi2_lam - 0.5) / lam_safe
+                phi3_taylor = (1.0 / 6.0
+                               + lam / 24.0
+                               + lam * lam / 120.0
+                               + lam * lam * lam / 720.0)
+                phi3_lam = np.where(small, phi3_taylor, phi3_formula)
+                Phi0[i] = (V * exp_lam) @ V_inv
+                Phi1[i] = dt_nat * ((V * phi1_lam) @ V_inv)
+                Phi2[i] = dt_nat * ((V * phi2_lam) @ V_inv)
+                Phi3[i] = dt_nat * ((V * phi3_lam) @ V_inv)
+                self._expm_fallback_eig_count = 1 + getattr(
+                    self, "_expm_fallback_eig_count", 0)
+            else:
+                M[:Nsq, :Nsq] = L[i] * dt_nat
+                E = expm(M)
+                Phi0[i] = E[:Nsq, :Nsq]
+                Phi1[i] = dt_nat * E[:Nsq, Nsq:2 * Nsq]
+                Phi2[i] = dt_nat * E[:Nsq, 2 * Nsq:3 * Nsq]
+                Phi3[i] = dt_nat * E[:Nsq, 3 * Nsq:4 * Nsq]
+
+        return Phi0, Phi1, Phi2, Phi3
+
     def _energy_snapshot(self, rho_all, a, Tg, label):
         """Stage E.2 sprint 8: append per-(sector, active-sterile pair) N/E/C
         integrals for the current rho_all to self._energy_hist.
@@ -5243,6 +5390,231 @@ class DensityMatrixSolver(object):
         # Stage E.2 sprint 9: post-clip MSW-passage snapshot.
         if _msw_on:
             self._msw_snapshot(rho_all, a, Tg, label="post_clip")
+
+    # ------------------------------------------------------------------
+    # Stage E.2 sprint 16: Krogstad ETDRK4 driver (qke_etdrk4_flag)
+    # ------------------------------------------------------------------
+    # Parallel path to evolve_step_ode_etdrk2. Higher-order (4 stages,
+    # phi_0..phi_3) exponential time-differencing corrector. Built as a
+    # falsifier for Suspect 7 (ETDRK2 order-2 truncation over-pumping the
+    # MSW resonance). Reuses _build_L_list / _assemble_collision_N kernels;
+    # the only differences are (1) two augmented expm calls per sector
+    # (half-step + full-step phi functions) and (2) Krogstad's 4-stage
+    # composition on the off-diagonal coherence space. ETDRK2 stays untouched.
+
+    def evolve_step_ode_etdrk4(self, rho_all, dt, phi1_dt, a, Tg):
+        """Stage E.2 sprint 16: Strang-symmetric diagonal split + Krogstad ETDRK4.
+
+        Outer scaffolding mirrors evolve_step_ode_etdrk2 (Stage D.7.1):
+        half-diag exp-Euler regulariser at start and end of the outer step,
+        with the off-diagonal coherence stepped via Krogstad's 4-stage
+        ETDRK4 in between. Order-4 corrector tests whether ETDRK2's
+        order-2 truncation over-integrates the resonance crossing
+        (Suspect 7) without changing the underlying physics kernels.
+
+        Krogstad ETDRK4 (off-diagonal coherence u = vec(rho_off)):
+
+            A_n = exp(L·dt/2)·u_n + (dt/2)·phi_1(L·dt/2)·N(u_n)
+            B_n = exp(L·dt/2)·u_n + (dt/2)·phi_1(L·dt/2)·N(A_n)
+            C_n = exp(L·dt/2)·A_n + (dt/2)·phi_1(L·dt/2)·(2·N(B_n) - N(u_n))
+            u_{n+1} = exp(L·dt)·u_n
+                     + dt·[phi_1 - 3·phi_2 + 4·phi_3]·N(u_n)
+                     + dt·[2·phi_2 - 4·phi_3]·(N(A_n) + N(B_n))
+                     + dt·[-phi_2 + 4·phi_3]·N(C_n)
+
+        Helper convention (_etdrk_expm_phi_4):
+            Phi0 = exp(L·dt)         (dimensionless)
+            Phi_k = dt · phi_k(L·dt) for k = 1, 2, 3   (1/eV)
+
+        so the literature formulas above translate directly to einsums of
+        Phi_k against vectorised N_off blocks, no extra dt scaling needed.
+
+        Cost vs ETDRK2: 4 _build_L_list calls (vs 2) and 2 augmented expm
+        per sector (half-step + full-step, vs 1). Total ~3× ETDRK2
+        wall-clock per outer step.
+
+        Parameters
+        ----------
+        phi1_dt : scalar or (3, Ny)
+            Ignored (sibling-driver signature stability). Same as ETDRK2.
+        """
+        N = self.n_flavor
+        Ny = self.Ny
+        _ = phi1_dt  # ignored; half-step regulariser computed locally
+
+        # 1. L, gain-only N, I_total at rho_n.
+        L_list, N_gain_n, I_total_n = self._build_L_list(rho_all, a, Tg)
+        dt_nat = dt * self._eV_to_secm1
+        half_dt_nat = 0.5 * dt_nat
+
+        # H is needed for the sprint-11 narrow-mixing fallback gate when
+        # the flag is on; otherwise None.
+        if getattr(PRyMini, "qke_expm_fallback_near_degeneracy", False):
+            H_list_n = self._build_H_list(rho_all, a, Tg)
+        else:
+            H_list_n = (None, None)
+
+        # Half-step diagonal regulariser phi_1(Γ_α · dt/2) · (dt/2).
+        # Identical to evolve_step_ode_etdrk2 lines ~5160-5180.
+        half_dt = 0.5 * dt
+        GF2_secm1 = PRyMini.GF**2 * PRyMini.MeV_to_secm1
+        rate_base_h = GF2_secm1 * Tg**4 / a * half_dt
+        C_D_chan = np.array([self.C_D[0], self.C_D[0], self.C_D[1]])
+        z_h = np.outer(C_D_chan, self.y_grid) * rate_base_h
+        z_h = np.maximum(z_h, 1.0e-15)
+        phi1_h = np.where(z_h < 1.0e-4,
+                          1.0 - 0.5 * z_h + z_h * z_h / 6.0,
+                          (1.0 - np.exp(-z_h)) / z_h)
+        phi_half = phi1_h * half_dt
+
+        # 2. Phi caches at L(rho_n). Half-step only needs (Phi0_h, Phi1_h);
+        # full-step needs all four (Phi0_f, Phi1_f, Phi2_f, Phi3_f).
+        Phi_half = [self._etdrk_expm_phi_4(L_list[s], half_dt_nat, H_list_n[s])
+                    for s in (0, 1)]
+        Phi_full = [self._etdrk_expm_phi_4(L_list[s], dt_nat, H_list_n[s])
+                    for s in (0, 1)]
+
+        # 3. Half-diag #1 with I_total(rho_n).
+        rho_all[0, 0] += phi_half[0] * I_total_n[0]
+        rho_all[1, 0] += phi_half[1] * I_total_n[1]
+        rho_all[0, 1] += phi_half[2] * I_total_n[2]
+        rho_all[0, 2] += phi_half[2] * I_total_n[2]
+        rho_all[1, 1] += phi_half[2] * I_total_n[2]
+        rho_all[1, 2] += phi_half[2] * I_total_n[2]
+
+        # Snapshot the off-diagonal vec at u_n for later "Phi0_f · u_n" and
+        # "Phi0_h · u_n" propagation. Diagonals stay at the post-half_diag_1
+        # state throughout the off-diagonal stages (collision integrals
+        # don't get re-evaluated until half-diag #2).
+        rho_n_off_vec = [None, None]
+        N_n_off_vec = [None, None]
+        for s in range(2):
+            rho_mat = self._to_mat(rho_all[s])
+            v = rho_mat.reshape(Ny, N * N).copy()
+            N_n = N_gain_n[s].reshape(Ny, N * N).copy()
+            for alpha in range(N):
+                N_n[:, alpha * N + alpha] = 0.0
+            rho_n_off_vec[s] = v
+            N_n_off_vec[s] = N_n
+
+        # 4. Stage A: A_n = Phi0_h · u_n + Phi1_h · N(u_n)
+        A_off_vec = [None, None]
+        for s in range(2):
+            Phi0_h, Phi1_h, _, _ = Phi_half[s]
+            A_vec = (np.einsum('ijk,ik->ij', Phi0_h, rho_n_off_vec[s])
+                     + np.einsum('ijk,ik->ij', Phi1_h, N_n_off_vec[s]))
+            A_mat = A_vec.reshape(Ny, N, N)
+            A_mat = 0.5 * (A_mat + A_mat.conj().swapaxes(-1, -2))
+            A_off_vec[s] = A_mat.reshape(Ny, N * N)
+            rho_all[s] = self._to_vec(A_mat)
+
+        # Re-evaluate N at rho_all (off-diagonals = A_n; diagonals from half_diag_1).
+        _, N_gain_A, _ = self._build_L_list(rho_all, a, Tg)
+        N_A_off_vec = [None, None]
+        for s in range(2):
+            v = N_gain_A[s].reshape(Ny, N * N).copy()
+            for alpha in range(N):
+                v[:, alpha * N + alpha] = 0.0
+            N_A_off_vec[s] = v
+
+        # 5. Stage B: B_n = Phi0_h · u_n + Phi1_h · N(A_n)
+        B_off_vec = [None, None]
+        for s in range(2):
+            Phi0_h, Phi1_h, _, _ = Phi_half[s]
+            B_vec = (np.einsum('ijk,ik->ij', Phi0_h, rho_n_off_vec[s])
+                     + np.einsum('ijk,ik->ij', Phi1_h, N_A_off_vec[s]))
+            B_mat = B_vec.reshape(Ny, N, N)
+            B_mat = 0.5 * (B_mat + B_mat.conj().swapaxes(-1, -2))
+            B_off_vec[s] = B_mat.reshape(Ny, N * N)
+            rho_all[s] = self._to_vec(B_mat)
+
+        _, N_gain_B, _ = self._build_L_list(rho_all, a, Tg)
+        N_B_off_vec = [None, None]
+        for s in range(2):
+            v = N_gain_B[s].reshape(Ny, N * N).copy()
+            for alpha in range(N):
+                v[:, alpha * N + alpha] = 0.0
+            N_B_off_vec[s] = v
+
+        # 6. Stage C: C_n = Phi0_h · A_n + Phi1_h · (2·N(B_n) - N(u_n))
+        C_off_vec = [None, None]
+        for s in range(2):
+            Phi0_h, Phi1_h, _, _ = Phi_half[s]
+            forcing = 2.0 * N_B_off_vec[s] - N_n_off_vec[s]
+            C_vec = (np.einsum('ijk,ik->ij', Phi0_h, A_off_vec[s])
+                     + np.einsum('ijk,ik->ij', Phi1_h, forcing))
+            C_mat = C_vec.reshape(Ny, N, N)
+            C_mat = 0.5 * (C_mat + C_mat.conj().swapaxes(-1, -2))
+            C_off_vec[s] = C_mat.reshape(Ny, N * N)
+            rho_all[s] = self._to_vec(C_mat)
+
+        _, N_gain_C, _ = self._build_L_list(rho_all, a, Tg)
+        N_C_off_vec = [None, None]
+        for s in range(2):
+            v = N_gain_C[s].reshape(Ny, N * N).copy()
+            for alpha in range(N):
+                v[:, alpha * N + alpha] = 0.0
+            N_C_off_vec[s] = v
+
+        # 7. Final assembly.
+        for s in range(2):
+            Phi0_f, Phi1_f, Phi2_f, Phi3_f = Phi_full[s]
+            # Coefficient operators in the Krogstad formula:
+            #   c_n = Phi1_f - 3·Phi2_f + 4·Phi3_f       (multiplies N(u_n))
+            #   c_AB = 2·Phi2_f - 4·Phi3_f               (multiplies N(A) + N(B))
+            #   c_C = -Phi2_f + 4·Phi3_f                 (multiplies N(C))
+            c_n = Phi1_f - 3.0 * Phi2_f + 4.0 * Phi3_f
+            c_AB = 2.0 * Phi2_f - 4.0 * Phi3_f
+            c_C = -Phi2_f + 4.0 * Phi3_f
+            u_new = (np.einsum('ijk,ik->ij', Phi0_f, rho_n_off_vec[s])
+                     + np.einsum('ijk,ik->ij', c_n, N_n_off_vec[s])
+                     + np.einsum('ijk,ik->ij', c_AB,
+                                 N_A_off_vec[s] + N_B_off_vec[s])
+                     + np.einsum('ijk,ik->ij', c_C, N_C_off_vec[s]))
+            u_mat = u_new.reshape(Ny, N, N)
+            u_mat = 0.5 * (u_mat + u_mat.conj().swapaxes(-1, -2))
+            rho_all[s] = self._to_vec(u_mat)
+
+        # 8. Re-evaluate I_total at the post-corrector rho_all and apply
+        #    half-diag #2.
+        _, I_total_post = self._assemble_collision_N(rho_all, a, Tg)
+        rho_all[0, 0] += phi_half[0] * I_total_post[0]
+        rho_all[1, 0] += phi_half[1] * I_total_post[1]
+        rho_all[0, 1] += phi_half[2] * I_total_post[2]
+        rho_all[0, 2] += phi_half[2] * I_total_post[2]
+        rho_all[1, 1] += phi_half[2] * I_total_post[2]
+        rho_all[1, 2] += phi_half[2] * I_total_post[2]
+
+        # 9. Off-diagonal magnitude clamp + diagonal NaN-safe clip
+        #    (verbatim from evolve_step_ode_etdrk2 lines ~5340-5385).
+        for sector in range(2):
+            for p_idx, (alpha, beta) in enumerate(self._all_pair_flavors):
+                re_idx, im_idx = self._all_pair_write[p_idx]
+                rho_ab = rho_all[sector, re_idx] + 1j * rho_all[sector, im_idx]
+                rho_aa = rho_all[sector, alpha]
+                rho_bb = rho_all[sector, beta]
+                ab_mag = np.abs(rho_ab)
+                rho_ab = np.where(np.isfinite(ab_mag), rho_ab, 0.0 + 0.0j)
+                ab_mag = np.abs(rho_ab)
+                max_mag = np.minimum(
+                    0.5,
+                    np.sqrt(np.maximum(rho_aa * rho_bb, 0.0)) + 1e-10)
+                scale = np.where(
+                    ab_mag > max_mag,
+                    max_mag / np.maximum(ab_mag, 1e-30),
+                    1.0)
+                rho_ab = rho_ab * scale
+                rho_all[sector, re_idx] = rho_ab.real
+                rho_all[sector, im_idx] = rho_ab.imag
+
+        f_min = 1.0e-30
+        f_max = 1.0 - f_min
+        for sector in range(2):
+            for d in range(self.n_flavor):
+                rho_all[sector, d] = np.clip(
+                    np.nan_to_num(rho_all[sector, d],
+                                  nan=f_min, posinf=f_max, neginf=f_min),
+                    f_min, f_max)
 
     # ------------------------------------------------------------------
     # Stage E.2 sprint 14: LSODA reference driver (qke_lsoda_driver_flag)

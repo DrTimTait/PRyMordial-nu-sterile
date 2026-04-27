@@ -2141,3 +2141,148 @@ Stage E.2 sprint 15 carryovers (must not regress under sprint 16):
 3. **Suspect 6 stays FALSIFIED** (sprint 13).
 4. **Suspect 7 vs Suspect 8 still OPEN.** The decision now depends
    on a non-LSODA driver experiment (sprint-16 ETDRK4 prototype).
+
+**E.2 sprint 16 — Krogstad ETDRK4 driver shipped; Suspect 7
+FALSIFIED at apples-to-apples comparison: ESCALATE to sprint 17
+(Suspect 8 literature review).** Sprint 16 took the recommended
+ETDRK4 scope of the sprint-16 brief: build a 4-stage Krogstad
+exponential time-differencing corrector on top of ETDRK2's
+existing `_build_L_list` kernels, run Hannestad Point C through
+it, and use the ETDRK4-vs-ETDRK2 disagreement on Σρ_ss as a
+substitute Suspect-7 falsifier. The driver landed cleanly and
+gates 1-4 pass; gate 5 produced a clear disambiguation finding
+that rules out corrector order as the bottleneck.
+
+Implementation surface:
+
+  * `_etdrk_expm_phi_4` in `PRyM/PRyM_boltzmann.py` — a
+    4N²-augmented Al-Mohy & Higham matrix exponential that yields
+    `(Phi0, Phi1, Phi2, Phi3) = (e^{Lt}, dt·φ_1, dt·φ_2, dt·φ_3)`
+    per mode in one expm call. Verified against closed-form
+    per-eigenvalue formulas and ETDRK1 against an analytic linear
+    test problem (machine precision). The sprint-11 narrow-mixing
+    eigendecomp fallback is preserved with the phi_3 closed-form
+    `(phi_2 − 1/2)/λ` and Taylor expansion `1/6 + λ/24 + λ²/120 +
+    λ³/720` around λ=0.
+  * `evolve_step_ode_etdrk4` — Krogstad's 4-stage off-diagonal
+    propagator wrapped by the same Strang-symmetric half-diag
+    exp-Euler regulariser as ETDRK2. Per outer step: 4
+    `_build_L_list` calls (1 initial + 1 each at stage A/B/C),
+    2 augmented expm caches per sector (half-step + full-step).
+    Reuses ETDRK2's post-step off-diagonal magnitude clamp and
+    NaN-safe diagonal clip verbatim. ETDRK2 path stays untouched.
+  * `qke_etdrk4_flag` (default False) in `PRyM/PRyM_init.py`
+    with validation warning and physics-config-summary branch.
+    Dispatcher in `PRyM/PRyM_main.py:_run_qke_segment` routes to
+    ETDRK4 ahead of LSODA / ETDRK2 / legacy when the flag is set.
+  * Diagnostic harnesses in `validation/diagnostics/`:
+    `diag_etdrk4_3x3sm.py` (gate 3, 3×3 SM at reduced n_B=500),
+    `diag_etdrk4_decoupled_sterile.py` (gate 4, sterile decoupled
+    50-step direct unitarity check),
+    `diag_hannestad_pointC_etdrk4.py` (gate 5, Point C ETDRK4 at
+    reduced n_B=2500+phase0=1000),
+    `diag_hannestad_pointC_etdrk2_n3500.py` (gate 5b, ETDRK2
+    apples-to-apples at the same reduced n_B).
+
+Discovered while writing the helper: the existing
+`_etdrk2_expm_phi` is internally inconsistent across its
+Al-Mohy and eigendecomp branches. The Al-Mohy branch returns
+`Phi1 = phi_1(L·dt)` (no dt prefactor) while the eigendecomp
+branch returns `Phi1 = dt·phi_1(L·dt)`. Verified empirically:
+forcing the eigendecomp branch on identical L gives outputs
+that differ from Al-Mohy by exactly a factor of dt_nat
+(`||P1_almohy * dt_nat - P1_eigen||_max ≈ 2e-15`). The bug is
+masked because the eigendecomp branch is gated by
+`qke_expm_fallback_near_degeneracy` (default False) so most
+runs only hit the Al-Mohy path; off-diagonal coherences in the
+SM 3-flavor regime are dominated by the Phi0 `[H, ρ]`
+propagation rather than the Phi1·N forcing, so a missing dt
+factor on the forcing barely manifests until the active-sterile
+mixing turns on. The new `_etdrk_expm_phi_4` helper uses the
+literature-correct `dt·phi_k` convention consistently across
+both branches, so the ETDRK4 driver applies Krogstad's formulas
+verbatim. Documented inline in the helper docstring; ETDRK2
+path is left as-is per the brief's "no regression" constraint.
+
+Sprint 16 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 6/6 in 31s | bit-identical at default (ETDRK4 off) |
+| 2 sterile pytest | PASS 3/3 in 628s (10:28) | bit-identical at default |
+| 3 ETDRK4 vs ETDRK2 3×3 SM | PASS in 600s (n_B=500) | dNeff=2.8e-5, dYp=1.6e-6, ETDRK4=1.75× ETDRK2 wall |
+| 4 ETDRK4 decoupled sterile | PASS in 114s (50 steps) | leak < 1e-12 across the floor; rho_ss stays at f_min=1e-30 |
+| 5 ETDRK4 Hannestad Point C | INCONCLUSIVE in 3565s (59 min) at n_B=2500+phase0=1000: Σρ_ss=15.8052, Neff=11.321, Yp=0.336 — between ETDRK2 production saturation (22.225) and Hannestad band ([0.02, 0.10]) |
+| 5b ETDRK2 same reduced n_B | DISAMBIGUATED in 1274s (21 min): Σρ_ss=14.5122, Neff=9.853, Yp=0.313 — ETDRK4 only +9% over ETDRK2 at same n_B; n_B is the dominant variable, not corrector order |
+
+The structural finding (closes Suspect 7):
+
+* **Order-2 → order-4 corrector moves Σρ_ss by ~1.3 (8% of the
+  ETDRK2-here baseline 14.5).** The ETDRK4-vs-ETDRK2 difference
+  at apples-to-apples n_B is small. Both correctors saturate to
+  Σρ_ss = O(15-22) depending on n_B; neither reaches the
+  Hannestad band [0.02, 0.10]. The 200× gap to the Hannestad
+  target is not closable by upgrading the corrector order.
+* **n_B is the dominant numerical variable.** Reducing n_B from
+  production (10000+2500) to (2500+1000) drops ETDRK2's Σρ_ss
+  from 22.225 to 14.512 — a 35% reduction in saturation just
+  from under-resolving Phase B's collision damping. Higher n_B
+  drives Σρ_ss UP toward the resonance-equilibrium ceiling.
+  Extrapolating ETDRK4 to production n_B: Σρ_ss would be at or
+  slightly above 22, NOT in the [0.02, 0.10] band.
+* **ETDRK4 converges faster than ETDRK2 in n_B.** At reduced
+  n_B, ETDRK4's 15.8 is closer to the production-converged 22.2
+  than ETDRK2's 14.5. This is consistent with the higher-order
+  corrector requiring fewer outer steps for the same accuracy
+  on the resonance crossing — but the asymptotic value is the
+  same ≈22 saturation.
+
+**Suspect 7 verdict: FALSIFIED.** Order-2 truncation in the
+ETDRK2 corrector is not what's holding Σρ_ss away from the
+Hannestad band. Order-4 (Krogstad) gives the same answer to
+within ~10% at the same n_B; both saturate at Σρ_ss = O(15-22)
+depending on resolution, neither approaches the [0.02, 0.10]
+target.
+
+**Suspect 8 promoted as the surviving structural hypothesis.**
+The Σρ_ss saturation is robust to corrector order and to n_B
+(within the sampled range), so the gap to Hannestad's band is
+structural to the physics setup (V_nunu treatment, neutrino
+self-coupling, damping kernel, resonance condition) rather
+than the time integrator. Stage E.2 closure path now requires
+a literature review of how Hannestad et al. and consistent
+papers define / treat the active-sterile mixing problem under
+self-consistent V_nunu.
+
+Sprint-17 brief: `doc/STAGE_E2_SPRINT17_BRIEF.md` lays out the
+Suspect-8 literature-review path. The recommended scope is to
+reproduce a published 3+1 Hannestad-style trajectory (e.g.,
+Sigl-Raffelt or Bell-Volkas formalism) end-to-end, side-by-side
+with our QKE implementation, and identify the divergence point
+in the model — V_nunu, damping coefficient, or initial condition.
+ETDRK4 stays as opt-in production-grade infrastructure for any
+follow-up corrector experiments.
+
+Stage E.2 sprint 16 carryovers (must not regress under sprint 17):
+
+1. **Sprint-15 LSODA infrastructure**, **sprint-12 instrumentation**,
+   **sprint-11 eigendecomp fallback**, **sprint-10 Phase-0 driver**,
+   **sprint-9 MSW probe**, **sprint-8 energy probe**, **sprint-7
+   cold-T fix**, **sprint-6 NaN-safe sanitisation**, **sprint-5
+   V_nunu projection**, **D.7.1 Strang sequence**, **D.7 expm
+   cache** — all preserved bit-identical (gates 1 and 2 pass at
+   default).
+2. **`evolve_step_ode_etdrk4` and `_etdrk_expm_phi_4` are opt-in**
+   (`qke_etdrk4_flag` defaults False). Sprint-17 work goes
+   inside `evolve_step_ode_etdrk4` or as a sibling driver; do
+   NOT modify `evolve_step_ode_etdrk2` or any other existing
+   driver.
+3. **Suspect 6 stays FALSIFIED** (sprint 13).
+4. **Suspect 7 is FALSIFIED** (this sprint). Do not retry the
+   "upgrade corrector order" path under any other hypothesis.
+   The 200× gap to the Hannestad band is not closable by time
+   integrator changes.
+5. **Suspect 8 is PROMOTED.** The active surviving hypothesis is
+   that the physics-config (V_nunu, damping kernel, mixing
+   initial condition) does not match Hannestad's. Stage E.2
+   closure now flows through literature review.

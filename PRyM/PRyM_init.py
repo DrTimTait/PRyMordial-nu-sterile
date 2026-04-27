@@ -318,6 +318,22 @@ qke_lsoda_jac_band_flag = True
 # under suspicion (Suspect 7) restores ETDRK2's bulk wall-clock.
 qke_lsoda_window_Tg_max_MeV = 0.0
 qke_lsoda_window_Tg_min_MeV = 0.0
+# Stage E.2 sprint 16: opt-in Krogstad ETDRK4 driver. When True (and
+# qke_full_ode_flag is True), the QKE per-outer-step dispatcher routes
+# through DensityMatrixSolver.evolve_step_ode_etdrk4 — a 4-stage
+# exponential time-differencing corrector built on the same
+# _build_L_list / _assemble_collision_N kernels as ETDRK2 but with
+# phi_0..phi_3 functions, a half-step + full-step augmented expm cache,
+# and the literature dt·phi_k convention. Cost ~3× ETDRK2 wall-clock.
+# Built as a falsifier for Suspect 7 (ETDRK2 order-2 truncation
+# over-pumping the resonance crossing): if Hannestad Point C Σρ_ss
+# collapses toward the [0.02, 0.10] band when the corrector order is
+# upgraded from 2 to 4, the order-2 truncation was the source. If
+# Σρ_ss stays ≈ 22, Suspect 8 wins (Hannestad target incompatible
+# with self-consistent V_nunu setup). ETDRK4 takes precedence over
+# qke_lsoda_driver_flag and qke_ode_etdrk2_flag in the dispatcher
+# when set. Default False: production path stays on ETDRK2.
+qke_etdrk4_flag = False
 # Comoving momentum grid for Boltzmann evolution (y = p*a)
 y_max_boltz = 100.0 # MeV, maximum comoving momentum
 Ny_boltz = 100 # number of evenly-spaced grid points
@@ -836,6 +852,12 @@ def validate_configuration():
             "the LSODA reference driver will be inactive. Set both or neither.",
             stacklevel=2,
         )
+    if qke_etdrk4_flag and not qke_full_ode_flag:
+        _warnings.warn(
+            "PRyMini.qke_etdrk4_flag=True requires qke_full_ode_flag=True; "
+            "the ETDRK4 driver will be inactive. Set both or neither.",
+            stacklevel=2,
+        )
     if qke_full_ode_flag and not qke_density_matrix_flag:
         _warnings.warn(
             "PRyMini.qke_full_ode_flag=True requires qke_density_matrix_flag=True; "
@@ -982,7 +1004,9 @@ def _print_physics_config_summary():
 
     # Evolution driver
     if qke_density_matrix_flag:
-        if qke_lsoda_driver_flag and qke_full_ode_flag:
+        if qke_etdrk4_flag and qke_full_ode_flag:
+            driver = "QKE density-matrix, Stage E.2 sprint 16 Krogstad ETDRK4 driver"
+        elif qke_lsoda_driver_flag and qke_full_ode_flag:
             driver = "QKE density-matrix, Stage E.2 sprint 14 LSODA reference driver"
         elif qke_ode_etdrk2_flag and qke_full_ode_flag:
             driver = "QKE density-matrix, Stage D.7 ETDRK2 driver"

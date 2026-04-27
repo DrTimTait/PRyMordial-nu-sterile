@@ -1,0 +1,10 @@
+========================================================================================================
+Stage E.2 sprint 16 gate 5b: ETDRK2 at SAME reduced n_B as gate 5 (apples-to-apples)
+  ETDRK4 result (gate 5): Σρ_ss=15.8052, Neff=11.32125, Yp=0.33569 at n_B=2500+phase0=1000
+  ETDRK2 production: Σρ_ss=22.225, Neff=8.52219, Yp=0.27209 at n_B=10000+phase0=2500
+Disambiguation: ETDRK2-here ≈ 22 → order matters (Suspect 7 partial); ETDRK2-here ≈ 16 → n_B does
+========================================================================================================
+
+  ETDRK2 @ reduced n_B: Neff=9.85335  ΔNeff=6.8530  Yp=0.31284  D/H=4.7790  Σρ_ss=14.5122  (1274s)
+
+  VERDICT: ETDRK2-here = 14.512 matches neither ETDRK4-here (15.805) nor ETDRK2-production (22.225). Both n_B and corrector order matter; results not separable from this run alone.

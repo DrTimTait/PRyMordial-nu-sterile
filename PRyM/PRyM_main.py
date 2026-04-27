@@ -440,12 +440,15 @@ class PRyMclass(object):
                           E_com_pre = np.sum(_y3_grid * _diag_sum_pre) * _dy_2pi2
 
                           if PRyMini.qke_full_ode_flag:
-                              # Sprint 15 option (c): segment-only LSODA. If
-                              # both window endpoints are set, use LSODA only
-                              # when Tg_mid is inside the window; outside the
-                              # window fall through to ETDRK2 for ETDRK2-speed
-                              # bulk integration. With both endpoints zero the
-                              # window is disabled (sprint-14 behaviour).
+                              # Sprint 16: ETDRK4 takes precedence over LSODA / ETDRK2 /
+                              # legacy when its flag is set. Sprint 15 option (c):
+                              # segment-only LSODA. If both window endpoints are set,
+                              # use LSODA only when Tg_mid is inside the window;
+                              # outside the window fall through to ETDRK2 for
+                              # ETDRK2-speed bulk integration. With both endpoints
+                              # zero the window is disabled (sprint-14 behaviour).
+                              _use_etdrk4 = getattr(
+                                  PRyMini, "qke_etdrk4_flag", False)
                               _use_lsoda = getattr(
                                   PRyMini, "qke_lsoda_driver_flag", False)
                               if _use_lsoda:
@@ -455,7 +458,9 @@ class PRyMclass(object):
                                       PRyMini, "qke_lsoda_window_Tg_min_MeV", 0.0))
                                   if _Tg_max_w > 0.0 and _Tg_min_w > 0.0:
                                       _use_lsoda = (_Tg_min_w <= Tg_mid <= _Tg_max_w)
-                              if _use_lsoda:
+                              if _use_etdrk4:
+                                  dm_solver.evolve_step_ode_etdrk4(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
+                              elif _use_lsoda:
                                   dm_solver.evolve_step_lsoda(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)
                               elif PRyMini.qke_ode_etdrk2_flag:
                                   dm_solver.evolve_step_ode_etdrk2(rho_loc, dt, _phi1_mode * dt, a_mid, Tg_mid)

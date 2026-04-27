@@ -1,0 +1,10 @@
+========================================================================================================
+Stage E.2 sprint 16 Point C: ETDRK4 driver, sin²(2θ)=1e-4, δm²=0.93 eV²
+Decision: Σρ_ss ∈ [0.02, 0.10] → Suspect 7; Σρ_ss ≈ 22 → Suspect 8.
+ETDRK2 baseline (n_B=10000): Neff(C)=8.52219, Σρ_ss=22.225
+========================================================================================================
+
+  Point C  Neff=11.32125  ΔNeff=8.3209  Yp=0.33569  D/H=6.1640  Σρ_ss=15.8052  (3565s)
+  Hannestad Σρ_ss band: [0.02, 0.10]
+
+  VERDICT: inconclusive — Σρ_ss=15.805 matches neither Hannestad band nor ETDRK2 saturation. Investigate.

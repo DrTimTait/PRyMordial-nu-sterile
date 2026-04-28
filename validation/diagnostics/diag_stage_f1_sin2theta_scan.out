@@ -1,0 +1,26 @@
+==============================================================================================================
+Stage F sprint 1: sin²2θ_24 saturation-curve scan at fixed δm²=0.93 eV²
+  Cure flags: [('qke_post_phaseB_clamp_flag', True)]
+  Closure config: damping='symmetric', active_only=True, qke_phase0_flag=False, n_B=12000
+  Phase B from T=100 MeV to T=0.005 MeV
+  Active health gates per point: Neff ≤ 4.0, Yp ≤ 0.255
+  Probing the strong-mixing-plateau hypothesis from sprint-19-part-2 §8.5
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 1 sin²2θ saturation-curve results
+==============================================================================================================
+  [OK              ] s1 (sub-saturation, sin²2θ=0.01)            δNeff_ss=0.9765  Neff=2.394  Yp=0.2443  sum_ss(raw)=52.382  (4921s)
+  [OK              ] s2 (proposed onset, sin²2θ=0.05)            δNeff_ss=1.0723  Neff=2.250  Yp=0.2400  sum_ss(raw)=62.889  (4923s)
+  [OK              ] s3 (gate-5 Point A cross-check, sin²2θ=0.1)  δNeff_ss=0.9151  Neff=2.271  Yp=0.2386  sum_ss(raw)=47.330  (5309s)
+  [OK              ] s4 (extreme strong mixing, sin²2θ=0.5)      δNeff_ss=1.0157  Neff=2.635  Yp=0.2443  sum_ss(raw)=57.992  (4865s)
+
+  Saturation ratios (δNeff_ss[i+1] / δNeff_ss[i]):
+    sin²2θ 0.01 → 0.05: ratio = 1.0981
+    sin²2θ 0.05 → 0.1: ratio = 0.8534
+    sin²2θ 0.1 → 0.5: ratio = 1.1100
+
+  Stage F sprint 1 verdict: SATURATION FALSIFIED
+    Upper ratios [0.8533738368377678, 1.1099575771226098] include rise > 1.1: δNeff_ss continues to grow with sin²2θ across the upper scan range. Strong-mixing-plateau hypothesis is wrong. Stage F sprint 1b should re-open Suspect 8 (HTT 2012 target band incompatible with V_nunu setup) or re-investigate the cure's interaction with strong-mixing dynamics.
+
+  Total wall-clock: 20021s (333.7 min)

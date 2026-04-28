@@ -2731,3 +2731,128 @@ Stage E.2 sprint 19 carryovers (must not regress under sprint 20
    sterile- and active-sector divergences from HTT 2012. The
    global-fit-NH outlier indicates a different mechanism
    (lepton asymmetry / resonance) — not a Suspect-8 instance.
+
+## Stage F: post-Stage-E.2 follow-ups
+
+**F sprint 1 — sin²2θ_24 saturation-curve scan refines the
+strong-mixing-plateau picture; brief's 0.05 onset hypothesis
+falsified, but the underlying saturation finding is REINFORCED:
+the L=0 NH non-resonant QKE produces a flat-to-±10% δNeff_ss
+plateau across two decades of mixing strength sin²2θ_24 ∈
+[0.01, 0.5].** Sprint-19 part-2 closed Stage E.2 substantially
+with 3/4 Hannestad benchmark points in HTT 2012 bands; the
+global-fit-NH point (sin²2θ=0.089, NH) overshot its expected
+δNeff_ss=0.55 by ~70% (landing at 0.944, near Point A's 0.915).
+Stage F brief §"sprint 1" hypothesised that the project's QKE
+saturates at the strong-mixing plateau for sin²2θ ≳ 0.05, which
+would explain the global-fit/Point-A degeneracy. Stage F sprint
+1 (this record) tests that hypothesis directly with a fixed-δm²
+sin²2θ scan at production n_B=12000 under the cured config.
+
+Implementation surface (additive, opt-in, default-off bit-identical):
+
+  * `validation/diagnostics/diag_stage_f1_sin2theta_scan.{py,out,npz}`
+    — new harness modelled on `diag_sprint19_hannestad_scan.py`.
+    Scans sin²2θ_24 ∈ {0.01, 0.05, 0.1, 0.5} at fixed δm²=0.93
+    eV² with the cured closure config (`qke_phase0_flag=False`,
+    `qke_damping_formula='symmetric'`, `qke_post_phaseB_clamp_flag=True`,
+    `qke_v_nunu_active_only=True`, n_B=12000). Computes
+    saturation ratios δNeff_ss[i+1]/δNeff_ss[i] and emits a
+    SATURATION CONFIRMED / FALSIFIED / PARTIAL verdict.
+    Wall-clock: 333.7 min (5.6 h) sequential. No production-code
+    changes.
+
+Sprint F1 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F1.0 fast pytest | PASS 6/6 in 31s | bit-identical at default (no production-code changes since sprint-19 part 2). |
+| F1.1 sterile pytest | PASS 3/3 in 758s | bit-identical at default. |
+| F1.2 scan completion | PASS | 4/4 points completed; 333.7 min wall-clock; `.out`/`.npz` written. |
+| F1.3 active-sector health | PASS 4/4 | All points: Neff ∈ [2.25, 2.64] (≤ 4.0 ✓), Yp ∈ [0.239, 0.244] (≤ 0.255 ✓). Cure remains effective across the scan. |
+| F1.4 saturation-ratio verdict | "SATURATION FALSIFIED" (label) — but see findings below for the practical reading. |
+
+Per-point results (combined with gate-5 Hannestad data for the full curve):
+
+| sin²2θ_24 | δNeff_ss | Source |
+|---|---|---|
+| 1e-4    | 0.0947 | gate-5 Point C |
+| 2.26e-3 | 0.6454 | gate-5 Point B |
+| 0.01    | **0.9765** | F1 s1 |
+| 0.05    | **1.0723** | F1 s2 (curve max) |
+| 0.089   | 0.9445 | gate-5 global-fit (NH) |
+| 0.1     | **0.9151** | F1 s3 (matches gate-5 Point A 0.9151 ✓) |
+| 0.5     | **1.0157** | F1 s4 |
+
+Saturation ratios (F1 only): s1→s2 = 1.098; s2→s3 = 0.853;
+s3→s4 = 1.110.
+
+The four structural findings:
+
+* **The brief's hypothesis "saturation onset at sin²2θ ≳ 0.05"
+  is FALSIFIED in two ways simultaneously, but the broader
+  saturation finding is REINFORCED.** First, saturation onsets
+  much earlier than 0.05: at sin²2θ=0.01, δNeff_ss is already
+  0.977 — within 7% of Point A's 0.915. Second, the curve is
+  not strictly flat above 0.05 — it has a peak at sin²2θ=0.05
+  (1.072) and falls to a local minimum at 0.1 (0.915). But the
+  practical content of the result still matches the saturation
+  picture: across two decades of mixing strength sin²2θ_24 ∈
+  [0.01, 0.5], δNeff_ss varies only between 0.92 and 1.07 — a
+  ~17% spread — while in the unsaturated regime sin²2θ_24 ∈
+  [1e-4, 2.26e-3] it varies by 7×. The QKE driver does not
+  meaningfully discriminate sin²2θ above ~0.01.
+* **The verdict label "SATURATION FALSIFIED" is misleading;
+  the practical reading is "saturation is broader and earlier
+  than hypothesised".** The harness emitted FALSIFIED because
+  the s3→s4 ratio (1.110) just nicked the strict > 1.10
+  threshold. But the verdict-text claim that "δNeff_ss
+  continues to grow with sin²2θ across the upper scan range"
+  is incorrect — the curve is non-monotonic with a peak at
+  sin²2θ=0.05, a dip at 0.1, and a partial recovery at 0.5.
+  Future scans should use a non-monotonic-aware metric (e.g.
+  range/mean of the upper half) instead of pairwise ratios.
+* **Reproducibility confirmed**: F1 s3 (sin²2θ=0.1) gave
+  δNeff_ss = 0.9151 — bit-matching gate-5 Point A's 0.9151
+  to four decimals. The cure is deterministic between runs and
+  the harness inherits gate-5's caching behaviour cleanly.
+* **Active-sector health is uniform across the scan**: Neff
+  ∈ [2.25, 2.64], Yp ∈ [0.239, 0.244], sum_ss(raw) ∈
+  [47, 63]. The cure does not regress at any sin²2θ in the
+  scan range; the active-sector dynamics remain in the
+  near-SM regime even at extreme strong mixing (sin²2θ=0.5).
+
+**Stage F sprint 1 conclusion.** The hypothesis-as-stated in the
+brief is falsified, but the underlying physics interpretation is
+strengthened: the project's L=0 NH non-resonant QKE produces a
+broad, early, weakly-structured saturation plateau in sin²2θ_24
+that prevents the driver from differentiating the global-fit
+(0.089) from Point A (0.1) — and indeed prevents differentiation
+across two full decades. The brief's proposed sprint-1b paths
+remain the right next steps: either lepton-asymmetry seeding
+(HTT 2012 §4) or resonance-aware Phase-0. Sprint 1b should NOT
+be a finer-grained sin²2θ scan — the curve is too flat for finer
+resolution to add information.
+
+Stage F sprint 1 carryovers (must not regress):
+
+1. **The Stage E.2 substantial-closure config remains valid**
+   at every sin²2θ in the scan. Cure flags
+   (`qke_post_phaseB_clamp_flag=True`,
+   `qke_phase0_flag=False`, `qke_damping_formula='symmetric'`,
+   `qke_v_nunu_active_only=True`) are robust across mixing
+   strength.
+2. **The F1 saturation-curve `.out`/`.npz`** is the canonical
+   reference for the strong-mixing-regime QKE response; do NOT
+   regenerate without explicit reason. Future Stage F sprints
+   that change Phase-0 or asymmetry handling should add new
+   harnesses, not overwrite this one.
+3. **Suspects 6, 7, 8** remain at their sprint-13/16/19 statuses
+   (FALSIFIED / FALSIFIED / CHARACTERISED). The F1 finding does
+   not introduce a new Suspect — it characterises the breadth
+   of the L=0 NH non-resonant saturation, which is exactly the
+   Suspect-8 follow-up sprint-19 already identified.
+4. **The verdict-logic threshold lesson**: pairwise ratio tests
+   with a strict > 1.10 cutoff fire on borderline non-monotonic
+   structure even when the curve is practically flat. Future
+   saturation tests should use range/mean or trend-line metrics.

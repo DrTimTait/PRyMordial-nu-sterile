@@ -1,0 +1,52 @@
+==============================================================================================================
+Stage E.2 sprint 19 part 2: post-Phase-B pipeline trace
+  Config: damping='symmetric', active_only=True, qke_phase0_flag=False
+  Phase B from T=100 MeV to T=0.005 MeV
+  Sprint-19 part 1 references (post-driver, pre-cure):
+    Production n_B=12000: Neff=417.1947  Yp=0.36186  δNeff_ss=0.0542
+    Reduced n_B=3500: Neff=3.9090  Yp=0.24850  δNeff_ss=0.0304
+  Trace pipeline: f_grids → f_samples → Tg_C trajectory → integrand at Tg_final
+==============================================================================================================
+
+==============================================================================================================
+Sprint 19 part 2 post-Phase-B trace result
+==============================================================================================================
+  Run A (n_B=12000, production):  Neff=417.1947  Yp=0.36186  δNeff_ss=0.0542  (4921s)
+  Run B (n_B=3500, reduced):  Neff=3.9090  Yp=0.24850  δNeff_ss=0.0304  (1224s)
+
+  Tg_trace (Tg_C[-1]):  prod=1.323375e-04 MeV  red=3.529195e-04 MeV
+  a_B_end:  prod=2.802421e+04  red=2.808246e+04
+
+  Per-stage max relative deviation (production vs reduced):
+    ⚠f_grid:f_nue                      max_dev=314.3841%  (tol 5.0%)
+    ⚠f_grid:f_nuebar                   max_dev=1033.3564%  (tol 5.0%)
+    ⚠f_grid:f_numu                     max_dev=77.8852%  (tol 5.0%)
+    ⚠f_grid:f_numubar                  max_dev=175.4523%  (tol 5.0%)
+    ⚠f_grid:f_nutau                    max_dev=68.3634%  (tol 5.0%)
+    ⚠f_grid:f_nutaubar                 max_dev=211.8638%  (tol 5.0%)
+    ⚠f_sample:f_nue_general            max_dev=1761.0123%  (tol 5.0%)
+    ⚠f_sample:f_nuebar_general         max_dev=633.0630%  (tol 5.0%)
+    ⚠f_sample:f_numu_general           max_dev=1053.1679%  (tol 5.0%)
+    ⚠f_sample:f_numubar_general        max_dev=173.8142%  (tol 5.0%)
+    ⚠f_sample:f_nutau_general          max_dev=1158.2692%  (tol 5.0%)
+    ⚠f_sample:f_nutaubar_general       max_dev=197.1952%  (tol 5.0%)
+    ⚠Tg_C trajectory                   max_dev=62.5318%  (tol 1.0%)
+    ⚠integrand:f_nue_general           max_dev=9448753.2778%  (tol 1.0%)
+    ⚠rho_scalar:f_nue_general          rho_p=1.5783e-14  rho_r=4.6067e-15  Δ=+242.62%  (tol 1.0%)
+    ⚠integrand:f_nuebar_general        max_dev=94.8449%  (tol 1.0%)
+    ⚠rho_scalar:f_nuebar_general       rho_p=2.8053e-17  rho_r=1.0823e-15  Δ=+97.41%  (tol 1.0%)
+    ⚠integrand:f_numu_general          max_dev=1092611.2272%  (tol 1.0%)
+    ⚠rho_scalar:f_numu_general         rho_p=1.3846e-15  rho_r=9.6857e-16  Δ=+42.95%  (tol 1.0%)
+    ⚠integrand:f_numubar_general       max_dev=95.8581%  (tol 1.0%)
+    ⚠rho_scalar:f_numubar_general      rho_p=2.1727e-17  rho_r=5.8572e-16  Δ=+96.29%  (tol 1.0%)
+    ⚠integrand:f_nutau_general         max_dev=1414407.1300%  (tol 1.0%)
+    ⚠rho_scalar:f_nutau_general        rho_p=1.8794e-15  rho_r=1.1751e-15  Δ=+59.94%  (tol 1.0%)
+    ⚠integrand:f_nutaubar_general      max_dev=95.6515%  (tol 1.0%)
+    ⚠rho_scalar:f_nutaubar_general     rho_p=2.2597e-17  rho_r=6.3957e-16  Δ=+96.47%  (tol 1.0%)
+
+  VERDICT: first divergence at Stage 1: raw f_α grids
+           f_grid:f_nue: 314.3841% > tol 5.0%
+
+  CURE PATTERN (cure_design §4.2): tighten interpolator construction in update_thermo_distributions behind a qke_post_phaseB_clamp_flag.
+
+  Total wall-clock: 6146s (102.4 min)

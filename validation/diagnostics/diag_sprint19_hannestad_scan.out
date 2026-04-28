@@ -1,0 +1,20 @@
+==============================================================================================================
+Stage E.2 sprint 19 part 2: four-Hannestad-point benchmark scan
+  Cure flags: [('qke_post_phaseB_clamp_flag', True)]
+  Closure config: damping='symmetric', active_only=True, qke_phase0_flag=False, n_B=12000
+  Phase B from T=100 MeV to T=0.005 MeV
+  Active health gates per point: Neff ≤ 4.0, Yp ≤ 0.255
+==============================================================================================================
+
+==============================================================================================================
+Sprint 19 part 2 four-point Hannestad scan results
+==============================================================================================================
+  [PASS] A (strong mixing)                       δNeff_ss=0.9151 (expected 1.00, band [0.90, 1.10])  Neff=2.271  Yp=0.2386  (4315s)
+  [PASS] B (mid mixing)                          δNeff_ss=0.6454 (expected 0.50, band [0.30, 0.70])  Neff=2.567  Yp=0.2399  (4262s)
+  [PASS] C (narrow mixing — sprint 18 in-band)   δNeff_ss=0.0947 (expected 0.03, band [0.02, 0.10])  Neff=1.834  Yp=0.2313  (4916s)
+  [FAIL] Global-fit (NH)                         δNeff_ss=0.9445 (expected 0.55, band [0.40, 0.70])  Neff=2.461  Yp=0.2443  (4896s)
+
+  Stage E.2 verdict: SUBSTANTIAL Stage E.2 closure (one outlier)
+    3/4 points pass; outlier: Global-fit (NH)
+
+  Total wall-clock: 18390s (306.5 min)

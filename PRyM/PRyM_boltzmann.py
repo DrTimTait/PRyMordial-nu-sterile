@@ -2711,7 +2711,17 @@ class BoltzmannSolver(object):
                 tail_l = np.array(tail_l)
                 coeffs = np.polyfit(tail_y, tail_l, 1)
                 _tail_b, _tail_a = coeffs[0], coeffs[1]
-                if _tail_b <= 0:
+                # Stage E.2 sprint 19 part 2 cure: when on, also reject
+                # polyfits that produce a tail decay rate slower than
+                # 1/y_grid[-1] (the FD-equivalent slope for the initial
+                # T_nu_com ~ y_max_grid). Without the cure, a noisy 10-point
+                # tail with ~constant f near 0.27 produces _tail_b ~ 1e-3,
+                # which extrapolated to y ~ 4000 (the y range probed by
+                # rho_nu_from_f at low Tg) gives f ~ 0.02 instead of the
+                # physical exp(-40) ≈ 0, inflating Neff to 417.
+                if (_tail_b <= 0
+                        or (getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
+                            and _tail_b < 1.0 / y_grid[-1])):
                     _tail_b = 1.0 / y_grid[-1]
                     _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
             else:
@@ -2780,6 +2790,43 @@ class BoltzmannSolver(object):
             PRyMthermo.f_nutau_general = _make_f_callable(f_nutau_grid, current_a, a_func)
             PRyMthermo.f_nutaubar_general = _make_f_callable(f_nutaubar_grid, current_a, a_func)
 
+        # Stage E.2 sprint 19 part 2: post-Phase-B trace capture (zero overhead
+        # when the flag is off). Stashes the raw f_α grids that the
+        # interpolators were built from, plus the constructed callables, onto
+        # PRyMthermo module attributes so the trace harness can probe them
+        # directly. Run-pair semantics: the harness reloads PRyMthermo between
+        # runs, so the stash is always for the most recent run.
+        if getattr(PRyMini, "qke_post_phaseB_trace_flag", False):
+            grids = {
+                "y_grid": np.array(y_grid, dtype=float),
+                "current_a": float(current_a),
+                "f_nue": np.array(f_nue_grid, dtype=float),
+                "f_nuebar": np.array(f_nuebar_grid, dtype=float),
+                "f_numu": np.array(f_numu_grid, dtype=float),
+            }
+            if self.n_species == 4:
+                grids["f_nutau"] = np.array(f_nutau_grid, dtype=float)
+            elif self.n_species == 6:
+                grids["f_numubar"] = np.array(f_numubar_grid, dtype=float)
+                grids["f_nutau"] = np.array(f_nutau_grid, dtype=float)
+                grids["f_nutaubar"] = np.array(f_nutaubar_grid, dtype=float)
+            PRyMthermo._post_phaseB_trace_grids = grids
+            PRyMthermo._post_phaseB_trace_callables = {
+                "f_nue_general": PRyMthermo.f_nue_general,
+                "f_nuebar_general": PRyMthermo.f_nuebar_general,
+                "f_numu_general": PRyMthermo.f_numu_general,
+                "f_numubar_general": PRyMthermo.f_numubar_general,
+                "f_nutau_general": PRyMthermo.f_nutau_general,
+                "f_nutaubar_general": PRyMthermo.f_nutaubar_general,
+            }
+            PRyMthermo._post_phaseB_trace_meta = {
+                "n_species": int(self.n_species),
+                "Ny": int(len(y_grid)),
+                "y_max_grid": float(y_grid[-1]),
+                "current_a": float(current_a),
+                "called_from": "BoltzmannSolver.update_thermo_distributions",
+            }
+
     def make_f_callable(self, f_grid, a, a_of_T_func=None):
         """Public interface to create a f(p, Tg) callable from a grid array.
 
@@ -2804,7 +2851,10 @@ class BoltzmannSolver(object):
             tail_l = np.array(tail_l)
             coeffs = np.polyfit(tail_y, tail_l, 1)
             _tail_b, _tail_a = coeffs[0], coeffs[1]
-            if _tail_b <= 0:
+            # Stage E.2 sprint 19 part 2 cure: see _make_f_callable comment.
+            if (_tail_b <= 0
+                    or (getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
+                        and _tail_b < 1.0 / y_grid[-1])):
                 _tail_b = 1.0 / y_grid[-1]
                 _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
         else:
@@ -5949,3 +5999,39 @@ class DensityMatrixSolver(object):
             f_nusbar = rho_all[1, 3].copy()
             PRyMthermo.f_nus_general = self._boltz.make_f_callable(f_nus, a, a_of_T_func)
             PRyMthermo.f_nusbar_general = self._boltz.make_f_callable(f_nusbar, a, a_of_T_func)
+
+        # Stage E.2 sprint 19 part 2: post-Phase-B trace capture (zero overhead
+        # when the flag is off). DensityMatrixSolver path used by the QKE
+        # closure config (qke_density_matrix_flag=True). Stashes the raw
+        # density-matrix-extracted f_α grids and the resulting callables so
+        # the trace harness can probe them.
+        if getattr(PRyMini, "qke_post_phaseB_trace_flag", False):
+            grids = {
+                "y_grid": np.array(self._boltz.y_grid, dtype=float),
+                "current_a": float(a),
+                "f_nue": np.array(f_nue, dtype=float),
+                "f_nuebar": np.array(f_nuebar, dtype=float),
+                "f_numu": np.array(f_numu, dtype=float),
+                "f_numubar": np.array(f_numubar, dtype=float),
+                "f_nutau": np.array(f_nutau, dtype=float),
+                "f_nutaubar": np.array(f_nutaubar, dtype=float),
+            }
+            if self.n_flavor == 4:
+                grids["f_nus"] = np.array(rho_all[0, 3], dtype=float)
+                grids["f_nusbar"] = np.array(rho_all[1, 3], dtype=float)
+            PRyMthermo._post_phaseB_trace_grids = grids
+            PRyMthermo._post_phaseB_trace_callables = {
+                "f_nue_general": PRyMthermo.f_nue_general,
+                "f_nuebar_general": PRyMthermo.f_nuebar_general,
+                "f_numu_general": PRyMthermo.f_numu_general,
+                "f_numubar_general": PRyMthermo.f_numubar_general,
+                "f_nutau_general": PRyMthermo.f_nutau_general,
+                "f_nutaubar_general": PRyMthermo.f_nutaubar_general,
+            }
+            PRyMthermo._post_phaseB_trace_meta = {
+                "n_flavor": int(self.n_flavor),
+                "Ny": int(self._boltz.Ny),
+                "y_max_grid": float(self._boltz.y_grid[-1]),
+                "current_a": float(a),
+                "called_from": "DensityMatrixSolver.update_thermo_distributions",
+            }

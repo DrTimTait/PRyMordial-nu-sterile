@@ -720,6 +720,50 @@ class PRyMclass(object):
                   np.array([PRyMthermo.Tnu_eff_e(T) for T in Tg_B[1:]]),
                   np.array([PRyMthermo.Tnu_eff_e(T) for T in Tg_C[1:]])])
 
+              # Stage E.2 sprint 19 part 2 post-Phase-B trace capture. Records
+              # the Phase-C trajectory and a per-flavor integrand snapshot at
+              # the Tg fed to N_eff (= Tg_C[-1] = Tg_vec[-1]). Combined with
+              # PRyMthermo._post_phaseB_trace_grids/_callables stashed by
+              # update_thermo_distributions, the trace harness can identify
+              # which post-Phase-B quantity diverges between n_B settings.
+              if getattr(PRyMini, "qke_post_phaseB_trace_flag", False):
+                  Tg_trace = float(Tg_C[-1])
+                  flavors = ("f_nue_general", "f_nuebar_general",
+                             "f_numu_general", "f_numubar_general",
+                             "f_nutau_general", "f_nutaubar_general")
+                  integrand_data = {}
+                  for fname in flavors:
+                      f_call = getattr(PRyMthermo, fname)
+                      p_nodes, f_vals, integrand, weights, rho = \
+                          PRyMthermo.rho_nu_from_f_trace(f_call, Tg_trace)
+                      integrand_data[fname] = {
+                          "p_nodes": np.array(p_nodes, dtype=float),
+                          "f_vals": np.array(f_vals, dtype=float),
+                          "integrand": np.array(integrand, dtype=float),
+                          "weights": np.array(weights, dtype=float),
+                          "rho_scalar": float(rho),
+                      }
+                  if getattr(PRyMini, "sterile_flag", False):
+                      for fname in ("f_nus_general", "f_nusbar_general"):
+                          f_call = getattr(PRyMthermo, fname)
+                          p_nodes, f_vals, integrand, weights, rho = \
+                              PRyMthermo.rho_nu_from_f_trace(f_call, Tg_trace)
+                          integrand_data[fname] = {
+                              "p_nodes": np.array(p_nodes, dtype=float),
+                              "f_vals": np.array(f_vals, dtype=float),
+                              "integrand": np.array(integrand, dtype=float),
+                              "weights": np.array(weights, dtype=float),
+                              "rho_scalar": float(rho),
+                          }
+                  self._post_phaseB_trace = {
+                      "t_C": np.array(t_C, dtype=float),
+                      "Tg_C": np.array(Tg_C, dtype=float),
+                      "Tg_trace": Tg_trace,
+                      "Tg_B_end": float(Tg_B[-1]),
+                      "a_B_end": float(_a_B_arr[-1]),
+                      "integrand_snapshot": integrand_data,
+                  }
+
           elif(PRyMini.general_nu_flag):
               # 1-variable ODE: only Tg (neutrino sector described by f_nu(p, Tg))
               tini = 1./(2.*Hubble(Tstart_MeV)) # [s]

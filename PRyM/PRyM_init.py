@@ -98,6 +98,38 @@ qke_phase0_diag_flag = False
 # closure config (Neff=417, Yp=0.36 at n_B=12000 vs Neff=3.91, Yp=0.249 at
 # n_B=3500). Default False: zero overhead, no allocation.
 qke_active_probe_flag = False
+# Stage E.2 sprint 19 part 2 post-Phase-B trace: capture the post-Phase-B
+# pipeline state to localise the active-sector pathology to one of three
+# downstream paths (interpolator construction in update_thermo_distributions /
+# Phase-C solve_ivp / rho_nu_from_f quadrature). Sprint-19 part 1 already
+# exonerated the QKE driver itself (end-of-Phase-B m3_α agree to ~1.77% across
+# n_B=12000 vs 3500), but downstream Neff differs by 107x. When True,
+# update_thermo_distributions stashes the raw f_α grids and the constructed
+# callables on PRyMthermo._post_phaseB_trace_grids /
+# PRyMthermo._post_phaseB_trace_callables; PRyMclass attaches
+# _post_phaseB_trace = {t_C, Tg_C, p_nodes_alpha, integrand_alpha} after
+# Phase C / N_eff readout. Used by
+# validation/diagnostics/diag_sprint19_post_phaseB_trace.py. Default False:
+# zero overhead, no allocation.
+qke_post_phaseB_trace_flag = False
+# Stage E.2 sprint 19 part 2 cure: tighten the FD-tail extrapolation in
+# BoltzmannSolver._make_f_callable / make_f_callable. The default code uses
+# polyfit on the last 10 in-range grid points to estimate the tail decay
+# rate _tail_b, falling back to 1/y_grid[-1] only when _tail_b <= 0. For
+# QKE-evolved distributions the last-10 tail is dominated by initial-condition
+# FD plateau (f ~ 0.27 at y ~ 99 for Tstart_MeV = 105) with small fluctuations,
+# so polyfit returns a tiny but POSITIVE _tail_b ~ 1e-3 (vs the physical
+# FD slope ~1/Tstart_MeV ~ 0.01). The shallow tail then survives the y → ~4200
+# extrapolation needed by rho_nu_from_f at low Tg, contaminating rho_3nu by
+# ~100x and inflating Neff to 417 at production n_B (sprint-18 closure config).
+# When True, the fallback condition is extended to _tail_b < 1/y_grid[-1],
+# clamping the polyfit to at least the physical FD-equivalent decay rate.
+# Sprint-19 part 2 trace data (validation/diagnostics/diag_sprint19_post_phaseB_trace)
+# verifies: cure brings Neff at end-of-BBN from 417 → 2.88 (production) and
+# 3.91 → 2.40 (reduced n_B=3500), preserving the sterile-sector closure
+# δNeff_ss in HTT 2012 band [0.02, 0.10]. Default False: zero overhead,
+# bit-identical to pre-cure when off.
+qke_post_phaseB_clamp_flag = False
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

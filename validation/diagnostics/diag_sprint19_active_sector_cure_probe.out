@@ -1,0 +1,28 @@
+==============================================================================================================
+Stage E.2 sprint 19 part 2 cure verification (gate 4)
+  Config: damping='symmetric', active_only=True, qke_phase0_flag=False, qke_post_phaseB_clamp_flag=True (CURE ON)
+  Phase B from T=100 MeV to T=0.005 MeV
+  Pre-cure references (sprint-19 part 1):
+    Production n_B=12000: Neff=417.1947  Yp=0.36186  δNeff_ss=0.0542
+    Reduced n_B=3500: Neff=3.9090  Yp=0.24850  δNeff_ss=0.0304
+  Gate 4 targets: Neff ≤ 4.0, Yp ≤ 0.255, δNeff_ss ∈ (0.02, 0.1)
+==============================================================================================================
+
+==============================================================================================================
+Sprint 19 part 2 cure verification result
+==============================================================================================================
+  [PASS] Run A (production)        n_B=12000: Neff=1.8340 (✓)  Yp=0.23126 (✓)  δNeff_ss=0.0947 (✓)  sum_raw=7.7783  (4400s)
+  [PASS] Run B (reduced)           n_B=3500: Neff=1.3397 (✓)  Yp=0.23181 (✓)  δNeff_ss=0.0466 (✓)  sum_raw=5.8785  (1246s)
+
+  Gate 4 verdict: PASS
+
+  Pre/post comparison (production n_B=12000):
+    Neff: 417.1947 → 1.8340
+    Yp:   0.36186 → 0.23126
+  Pre/post comparison (reduced n_B=3500):
+    Neff: 3.9090 → 1.3397
+    Yp:   0.24850 → 0.23181
+
+  n_B convergence: prod Neff / red Neff = 1.369  (target ~1.0)
+
+  Total wall-clock: 5647s (94.1 min)

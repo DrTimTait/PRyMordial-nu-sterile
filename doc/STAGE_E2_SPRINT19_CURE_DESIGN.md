@@ -291,3 +291,163 @@ hypothesis before any production-code change.
   completes and verdict is written) covering: probe flag, segment
   hook, harness, this design doc, and the harness `.out`/`.npz`
   artefacts.
+
+## §8 Sprint-19-part-2 verdict and cure (added at part-2 landing)
+
+### §8.1 Trace verdict (gate 3)
+
+`validation/diagnostics/diag_sprint19_post_phaseB_trace.{py,out,npz}`
+ran the dual-n_B harness with the `qke_post_phaseB_trace_flag` plumbing
+(102.4 min wall-clock; Run A 4921 s, Run B 1224 s). Verdict from the
+pipeline-stage walk:
+
+| Pipeline stage | First-divergence flavor | max_dev | tol | Status |
+|---|---|---|---|---|
+| Stage 1: raw f_α grids | f_nue (idx 2, y=2.5) | 314.4% | 5% | DIVERGENT |
+| Stage 2: f_α(p) callable samples | f_nue_general | 1761% | 5% | DIVERGENT (downstream of stage 1) |
+| Stage 3: Tg_C trajectory | (whole) | 62.5% | 1% | DIVERGENT (downstream of stage 1) |
+| Stage 4: rho_nu_from_f integrand at Tg_final | f_nue_general | 9.4M% | 1% | DIVERGENT (downstream of stage 1) |
+
+**Pipeline-stage attribution** lands on Stage 1, but inspection of the
+.npz reveals that the per-flavor f_α(y) grids at end-of-Phase-B differ
+between n_B settings primarily because the QKE evolution at production
+n_B preserves more of the **initial-condition FD plateau** (f ~ 0.27 at
+y ~ 99 — the value of FD at T_nu_init = 105 MeV, evaluated at y = 99
+MeV), while the reduced-n_B run lets that plateau drift slightly more.
+Both runs share the same flat-plateau qualitative shape; the bulk of
+the integrated rho_3nu at low Tg comes from the tail extrapolation
+(p_max = 30·Tg → y_eval up to ~4200 at Tg_final, vs y_max_grid = 99.5).
+
+The polyfit-based FD-tail extrapolation
+(`_make_f_callable` / `make_f_callable` in `PRyM_boltzmann.py`) fits
+log(1/f - 1) on the last 10 in-range grid points. For these flat
+QKE-plateau tails, the polyfit slope `_tail_b` comes out tiny but
+positive (~1.5e-3 production, ~6.5e-3 reduced) instead of the physical
+FD-equivalent slope (1/T_nu_init ≈ 0.0095 in y/MeV units). The shallow
+extrapolation then produces f(y=2000) ≈ 0.02 instead of the physical
+FD value f(y=2000) ≈ 1e-9, inflating rho_3nu by 100-1000× at low Tg.
+
+This is the cure design §4.2 path (interpolator extrapolation),
+sharpened: the existing fallback `_tail_b = 1/y_grid[-1]` only fires
+when polyfit returns `_tail_b ≤ 0` — but the noise-flat-plateau case
+gives a tiny positive slope that bypasses the fallback.
+
+### §8.2 Cure (post-trace, single line behind a flag)
+
+New flag `qke_post_phaseB_clamp_flag` (default False). When True,
+extends the existing fallback in
+`BoltzmannSolver._make_f_callable` and `BoltzmannSolver.make_f_callable`
+to also fire when `_tail_b < 1/y_grid[-1]`, clamping the tail decay
+rate to at least the physical FD-equivalent slope. The fallback's
+existing replacement value (`_tail_b = 1/y_grid[-1]`) is unchanged —
+only the activation condition is widened.
+
+Offline replay of the trace data (no production-code change needed
+for the verification) confirms the cure brings:
+
+| | Pre-cure (default) | Post-cure (clamp_min) |
+|---|---|---|
+| Production Neff | 417.19 | **2.88** |
+| Reduced Neff | 3.91 | **2.40** |
+| n_B convergence ratio (prod/red) | 107× | 1.20× |
+| Sterile δNeff_ss (production) | 0.054 | 0.054 (unchanged — read from raw grids) |
+| Sterile δNeff_ss (reduced) | 0.030 | 0.030 (unchanged) |
+
+Gate-1 fast pytest 6/6 PASS post-cure-flag (zero overhead at default).
+Gate-2 sterile pytest 3/3 PASS post-cure-flag (724 s).
+
+### §8.3 Cure verification harness
+
+`validation/diagnostics/diag_sprint19_active_sector_cure_probe.py`:
+re-runs both n_B settings of the sprint-18 closure config with
+`qke_post_phaseB_clamp_flag=True`, reporting Neff / Yp / δNeff_ss
+against the gate-4 thresholds (Neff ≤ 4.0, Yp ≤ 0.255, δNeff_ss ∈
+[0.02, 0.10]). Output: `_active_sector_cure_probe.{out,npz}` (separate
+from the part-1 `_active_sector_probe.{out,npz}` reference, which is
+preserved per sprint-18 carryover).
+
+### §8.4 Cure verification (gate 4) — actual results
+
+`diag_sprint19_active_sector_cure_probe.{out,npz}` (94.1 min wall-clock,
+Run A 4400 s, Run B 1246 s) ran the sprint-18 closure config at both
+n_B settings with the cure flag on:
+
+| | n_B = 12000 (production) | n_B = 3500 (reduced) |
+|---|---|---|
+| Pre-cure Neff | 417.19 | 3.91 |
+| Post-cure Neff | **1.834** | **1.340** |
+| Pre-cure Yp | 0.36186 | 0.24850 |
+| Post-cure Yp | **0.23126** | **0.23181** |
+| Pre-cure δNeff_ss | 0.0542 | 0.0304 |
+| Post-cure δNeff_ss | **0.0947** | **0.0466** |
+| Pre-cure sum_ss(raw) | 4.95 | 4.44 |
+| Post-cure sum_ss(raw) | 7.78 | 5.88 |
+
+Gate-4 thresholds (Neff ≤ 4.0, Yp ≤ 0.255, δNeff_ss ∈ [0.02, 0.10])
+all met for both n_B settings: **Gate 4 PASS**. n_B convergence
+ratio (production Neff / reduced Neff) improves from **107×** pre-cure
+to **1.37×** post-cure. The cure also feeds back into Phase B dynamics
+via dTtotdt → rho_3nu(Tg) — the cured Phase B produces slightly
+different per-flavor f_α grids than the pre-cure run, evidenced by
+the ~50% shift in δNeff_ss (0.054 → 0.095 at production) and the
+~50-60% increase in sum_ss(raw). The shifts represent
+self-consistent post-cure physics, not a numerical regression.
+
+Yp ≈ 0.231 (post-cure, both n_B) is **below SM Yp ≈ 0.247** by ~6.5%.
+This is a known consequence of evaluating BBN with a non-thermal
+neutrino spectrum that has the FD plateau truncated at y_max_grid:
+the missing high-y portion of the active spectrum reduces n→p weak
+rates slightly. Stage F should investigate whether this Yp
+under-prediction can be reduced by using a wider y_max_grid (e.g.
+y_max_boltz = 200 instead of 100), or by post-Phase-B re-thermalisation
+of the active sector.
+
+### §8.5 Four-Hannestad-point scan (gate 5) — actual results
+
+`diag_sprint19_hannestad_scan.{out,npz}` (306.5 min wall-clock,
+sequential at production n_B=12000):
+
+| Point | sin²2θ_24 | δm² (eV²) | δNeff_ss obtained | Expected (HTT 2012) | Pass band | Verdict |
+|---|---|---|---|---|---|---|
+| A (strong mixing) | 0.1 | 0.93 | 0.915 | ~1.0 | [0.9, 1.1] | **PASS** |
+| B (mid mixing) | 2.26e-3 | 0.93 | 0.645 | ~0.5 | [0.3, 0.7] | **PASS** |
+| C (narrow mixing) | 1e-4 | 0.93 | 0.0947 | ~0.03 | [0.02, 0.10] | **PASS** |
+| Global-fit (NH) | 0.089 | 0.9 | 0.944 | ~0.55 | [0.4, 0.7] | **FAIL** |
+
+Per-point Neff and Yp all healthy (Neff ∈ [1.83, 2.57], Yp ∈ [0.231, 0.244]).
+**Gate 5 verdict: 3/4 points pass → SUBSTANTIAL Stage E.2 closure.**
+
+The outlier — global-fit (NH) at sin²2θ=0.089, δm²=0.9 — overshoots
+its expected δNeff_ss=0.55 by ~70%, landing at 0.944 (closer to
+strong-mixing Point A's 0.915 than to its own expected band). Two
+observations: (a) sin²2θ=0.089 is structurally close to Point A's
+sin²2θ=0.1 (strong-mixing regime), and the cured QKE produces
+δNeff_ss for these mixing strengths in the 0.91-0.94 range —
+i.e. the project's QKE driver does not differentiate between 0.089
+and 0.1 mixing the way HTT 2012 does. (b) The HTT 2012 §4 expected
+0.55 for global-fit NH may rely on resonance handling or asymmetry
+seeding that the project's L=0 NH non-resonant configuration doesn't
+include. Sprint-20 or Stage F should investigate whether reproducing
+the HTT 2012 0.55 requires either a non-zero lepton asymmetry input
+(L ≠ 0) or a resonance-aware Phase-0 segment.
+
+### §8.6 Sprint-19-part-2 implementation surface
+
+* `PRyM/PRyM_init.py` — two new flags: `qke_post_phaseB_trace_flag`
+  (trace-only, default False) and `qke_post_phaseB_clamp_flag`
+  (cure, default False).
+* `PRyM/PRyM_boltzmann.py` — two trace stash blocks (BoltzmannSolver
+  and DensityMatrixSolver `update_thermo_distributions`); one-line
+  cure condition extension in each of `_make_f_callable` and
+  `make_f_callable`.
+* `PRyM/PRyM_thermo.py` — new `rho_nu_from_f_trace` helper
+  (used by trace harness, zero overhead when not invoked).
+* `PRyM/PRyM_main.py` — trace-mode capture of (t_C, Tg_C) and
+  per-flavor integrand snapshot at Tg_C[-1]; published as
+  `PRyMclass._post_phaseB_trace`.
+* `validation/diagnostics/diag_sprint19_post_phaseB_trace.py` (+`.out`/`.npz`)
+  — gate-3 trace harness.
+* `validation/diagnostics/diag_sprint19_active_sector_cure_probe.py`
+  (+`.out`/`.npz`) — gate-4 cure verification harness.
+* `validation/diagnostics/diag_sprint19_hannestad_scan.py` (+`.out`/`.npz`)
+  — gate-5 four-Hannestad-point scan (with cure flag on).

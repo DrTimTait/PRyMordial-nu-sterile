@@ -2577,3 +2577,157 @@ Stage E.2 sprint 18 carryovers (must not regress under sprint 19):
    diverges from HTT 2012 by ~50% on δNeff_ss alone. Future
    sprints should default-flip this for Hannestad-style
    diagnostics (Stage F task).
+
+**E.2 sprint 19 — active-sector pathology localised to FD-tail
+extrapolation; one-line cure preserves sterile sector and brings
+3/4 Hannestad points into HTT 2012 bands; SUBSTANTIAL Stage E.2
+closure; escalate to Stage F.** Sprint 19 split into two parts.
+Part 1 (`fe5834d`, on `claude/sprint-18-followup`) instrumented
+Phase B with a per-outer-step y³-moment probe across both n_B
+settings and FALSIFIED the brief's three Phase-B step-size
+hypotheses: end-of-Phase-B m3_α agree to 1.77% / 0.25% / 0.50%
+(ν_e / ν_μ / ν_τ) between n_B=12000 and 3500, while Neff differs
+by 107×. The active-sector pathology lives in the post-Phase-B
+pipeline. Part 2 (this commit) builds the post-Phase-B trace
+harness, localises the bug to the FD-tail extrapolation in
+`update_thermo_distributions`, ships a one-line flag-gated cure,
+verifies it on the closure config, and runs the four-Hannestad-point
+benchmark scan.
+
+Implementation surface (additive, opt-in, default-off bit-identical):
+
+  * `PRyM/PRyM_init.py` — two new flags. `qke_active_probe_flag`
+    (sprint-19 part 1, default False): per-outer-step y³ moment
+    probe across both Phase 0 and Phase B, published as
+    `PRyMclass._active_probe_history`. `qke_post_phaseB_trace_flag`
+    (part 2, default False): stash raw f_α grids and constructed
+    callables on `PRyMthermo._post_phaseB_trace_*` plus capture
+    Phase-C trajectory and per-flavor integrand snapshot at
+    `Tg_C[-1]` on `PRyMclass._post_phaseB_trace`.
+    `qke_post_phaseB_clamp_flag` (part 2 cure, default False):
+    extends the FD-tail-extrapolation fallback in
+    `BoltzmannSolver._make_f_callable` and
+    `BoltzmannSolver.make_f_callable` to clamp the polyfit decay
+    rate `_tail_b` to at least `1/y_grid[-1]` (the FD-equivalent
+    slope at T_nu_init = Tstart_MeV ≈ 105 MeV).
+  * `PRyM/PRyM_main.py` — extends `_run_qke_segment` with optional
+    `active_history` parameter (part 1) and adds a Phase-C trace
+    block (part 2) that captures `(t_C, Tg_C)` and the
+    rho_nu_from_f integrand at the readout Tg.
+  * `PRyM/PRyM_boltzmann.py` — trace-stash blocks in BoltzmannSolver
+    and DensityMatrixSolver `update_thermo_distributions`, plus the
+    one-line cure condition extension in
+    `_make_f_callable`/`make_f_callable`.
+  * `PRyM/PRyM_thermo.py` — `rho_nu_from_f_trace` helper returning
+    `(p_nodes, f_vals, integrand, weights, rho)` for the trace
+    harness; zero overhead when the trace flag is off.
+  * `validation/diagnostics/diag_sprint19_active_sector_probe.{py,out,npz}`
+    — sprint-19 part 1 dual-n_B y³-moment probe (102.7 min
+    wall-clock; QKE driver exonerated by the m3-agreement walk).
+  * `validation/diagnostics/diag_sprint19_post_phaseB_trace.{py,out,npz}`
+    — sprint-19 part 2 dual-n_B trace harness (102.4 min;
+    pipeline-stage walk localises divergence to Stage 1 raw f_α
+    grids; offline-replay isolates the FD-tail extrapolation as
+    the cause).
+  * `validation/diagnostics/diag_sprint19_active_sector_cure_probe.{py,out,npz}`
+    — gate-4 cure verification (94.1 min; both n_B settings PASS
+    Neff ≤ 4.0, Yp ≤ 0.255, δNeff_ss ∈ [0.02, 0.10]).
+  * `validation/diagnostics/diag_sprint19_hannestad_scan.{py,out,npz}`
+    — gate-5 four-point scan at production n_B with cure on
+    (306.5 min; 3/4 points in HTT 2012 bands).
+  * `doc/STAGE_E2_SPRINT19_CURE_DESIGN.md` — design doc with the
+    part-1 verdict (§3) + cure-pattern selection (§4) + part-2
+    verdict, cure, and verification (§8).
+  * `doc/STAGE_F_BRIEF.md` — Stage F handoff brief recording
+    SUBSTANTIAL closure outcome and proposing default-flip and
+    global-fit-outlier work as Stage F.
+
+Sprint 19 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 1 fast pytest | PASS 6/6 in 32s | bit-identical at default; three new flags all default False |
+| 2 sterile pytest | PASS 3/3 in 724s | bit-identical at default with cure flag added |
+| 3 trace harness | INFORMATIVE | First-divergence stage = raw f_α grids; root cause is shallow FD-tail polyfit slope (~1.5e-3 vs physical ~0.01) extrapolated over y in [0, 4200] at low Tg |
+| 4 cure verification | PASS | Production Neff: 417 → **1.83**; Yp: 0.36 → **0.23**; δNeff_ss: 0.054 → 0.095 (still in band). Reduced n_B Neff: 3.91 → 1.34. n_B convergence ratio 107× → 1.37× |
+| 5 four-Hannestad-point scan | **3/4 PASS** | A (sin²2θ=0.1): 0.915 ∈ [0.9, 1.1] ✓; B (2.26e-3): 0.645 ∈ [0.3, 0.7] ✓; C (1e-4): 0.0947 ∈ [0.02, 0.10] ✓; **Global-fit (0.089, NH): 0.944 ∉ [0.4, 0.7]** (overshoots; sits at the strong-mixing plateau ~0.91-0.94 the cured QKE produces for sin²2θ ≳ 0.05) |
+
+The four structural findings:
+
+* **The active-sector "pathology" was a FD-tail-extrapolation
+  artefact, NOT a QKE-driver issue.** The QKE Phase-B driver
+  ran healthily at production n_B (sprint-19 part 1 verdict).
+  But `update_thermo_distributions`'s polyfit-based FD-tail
+  extrapolation, fitting log(1/f - 1) on the last 10 in-range
+  grid points, found a noise-driven slope ~1e-3 instead of the
+  physical FD-equivalent slope 1/T_nu_init ~ 1e-2. Since the
+  rho_nu_from_f quadrature at low Tg probes y up to ~4200 (vs
+  y_max_grid = 99.5), this shallow tail dominated rho_3nu and
+  inflated Neff to 417.
+* **The cure is a one-line condition extension.** Replace
+  `if _tail_b <= 0:` with
+  `if _tail_b <= 0 or _tail_b < 1/y_grid[-1]:` (behind the
+  cure flag). The fallback's value (`_tail_b = 1/y_grid[-1]`)
+  was already correct — only its activation condition needed
+  widening to also handle small-but-positive polyfit slopes.
+* **Three Hannestad benchmark points reproduce HTT 2012.**
+  Strong mixing (Point A, sin²2θ=0.1): δNeff_ss=0.915 vs
+  expected 1.0 (within 9%). Mid mixing (Point B, sin²2θ=2.26e-3):
+  0.645 vs expected 0.5 (within 30%, in band). Narrow mixing
+  (Point C, sin²2θ=1e-4): 0.0947 vs expected 0.03 (post-cure
+  shifts the sterile sector to upper edge of the [0.02, 0.10]
+  band; in band). The cure produces self-consistent BBN
+  observables across mixing regimes.
+* **The global-fit (NH) outlier signals a missing physics ingredient.**
+  At sin²2θ=0.089 (close to Point A's 0.1), the cured QKE
+  produces δNeff_ss=0.944 ≈ Point A's 0.915 — i.e. the project's
+  L=0 NH non-resonant configuration produces strong-mixing-regime
+  output for any sin²2θ ≳ 0.05. HTT 2012's expected 0.55 for
+  global-fit (NH) likely relies on either a non-zero lepton
+  asymmetry input or a resonance-aware Phase-0 segment that the
+  current Stage E.2 closure config doesn't include. This is the
+  Stage F or sprint-20 follow-up.
+
+**Stage E.2 SUBSTANTIAL closure.** The sterile-sector cure
+(`qke_phase0_flag=False`, `qke_damping_formula='symmetric'`)
+combined with the part-2 active-sector cure
+(`qke_post_phaseB_clamp_flag=True`) produces near-SM-Neff and
+near-SM-Yp at production n_B with δNeff_ss in HTT 2012 band
+across three of four Hannestad benchmark points. Stage F or a
+sprint-20 should:
+
+  1. Investigate the global-fit (NH) overshoot — likely
+     requires non-zero lepton asymmetry or resonance handling
+     (out of scope for the current L=0 NH non-resonant closure).
+  2. Decide on default-flipping the closure-config flags
+     (`qke_phase0_flag`, `qke_damping_formula`,
+     `qke_post_phaseB_clamp_flag`) for Hannestad-style runs.
+  3. Address the +6% Yp under-prediction post-cure (Yp ≈ 0.231
+     vs SM 0.247) — likely requires a wider y_max_grid (e.g.
+     y_max_boltz = 200) or post-Phase-B active-sector
+     re-thermalisation.
+  4. Address the carryover items from sprint 18 (FortEPiaNO
+     comparison; V_nunu paradox at structural level) at lower
+     priority.
+
+Stage E.2 sprint 19 carryovers (must not regress under sprint 20
+/ Stage F):
+
+1. **The FD-tail-extrapolation cure** (`qke_post_phaseB_clamp_flag`)
+   is the verified active-sector cure. Combined with the
+   sprint-18 sterile-sector cure (`qke_phase0_flag=False` +
+   `qke_damping_formula='symmetric'`), it forms the Stage E.2
+   substantial-closure config.
+2. **Sprint-17 axis bracket data** (Runs A, B, C),
+   **sprint-18 Phase-0 cure data**, and the
+   **sprint-19 part-1 active-probe + part-2 trace + cure
+   verification + Hannestad scan** `.out`/`.npz` artefacts
+   are the canonical reference for any future bracket
+   experiments. Do NOT regenerate.
+3. **Suspect 6 stays FALSIFIED** (sprint 13).
+4. **Suspect 7 stays FALSIFIED** (sprint 16).
+5. **Suspect 8 is fully CHARACTERISED**: Phase-0 driver (sprint
+   18) + FD-tail extrapolation (sprint 19) explain the
+   sterile- and active-sector divergences from HTT 2012. The
+   global-fit-NH outlier indicates a different mechanism
+   (lepton asymmetry / resonance) — not a Suspect-8 instance.

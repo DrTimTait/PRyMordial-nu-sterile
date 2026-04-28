@@ -199,6 +199,18 @@ def rho_nu_from_f(f_nu, Tg):
     integrand = p_nodes**3 * f_nu(p_nodes, Tg)
     return 1./(2.*np.pi**2) * Tg * np.dot(_gl_x_weights, integrand)
 
+# Stage E.2 sprint 19 part 2 trace helper. Same formula as rho_nu_from_f but
+# returns (p_nodes, integrand_x3, weights, scalar_rho) so the post-Phase-B
+# trace harness can probe per-node integrand values at one Tg without
+# touching the production hot path. Only invoked when
+# PRyMini.qke_post_phaseB_trace_flag is True; zero overhead otherwise.
+def rho_nu_from_f_trace(f_nu, Tg):
+    p_nodes = _gl_x_nodes * Tg
+    f_vals = f_nu(p_nodes, Tg)
+    integrand = p_nodes**3 * f_vals
+    rho = 1./(2.*np.pi**2) * Tg * np.dot(_gl_x_weights, integrand)
+    return p_nodes, f_vals, integrand, _gl_x_weights, float(rho)
+
 # Number density from a general distribution function
 # n = 1/(2*pi^2) * integral dp p^2 f(p, Tg)  [per degree of freedom]
 def n_nu_from_f(f_nu, Tg):

@@ -376,7 +376,8 @@ class PRyMclass(object):
               def _run_qke_segment(rho_in, f_in, Tg_start, a_start, t_start,
                                    sigma_start, Tg_end, n_steps, a_grid_seg,
                                    collect_trajectories=True,
-                                   rho_ss_history=None):
+                                   rho_ss_history=None,
+                                   active_history=None):
                   """Run the Froustey QKE / diagonal-Boltzmann loop body.
 
                   Mutates ``rho_in`` in-place on the QKE path (and returns the
@@ -543,6 +544,23 @@ class PRyMclass(object):
                               (istep, float(a_next), float(Tg_new),
                                rho_loc[:, 3, :].copy()))
 
+                      # Sprint-19 active-sector probe: per-step y³ moments per
+                      # flavor (single scalar per flavor per step; both sectors
+                      # summed). Enabled by the caller when
+                      # PRyMini.qke_active_probe_flag is True; no-op otherwise.
+                      if (active_history is not None
+                              and rho_loc is not None):
+                          _n_diag_probe = rho_loc.shape[1]
+                          _w_y3_probe = _y3_grid * _dy_boltz
+                          _m3_e = float((rho_loc[:, 0, :] * _w_y3_probe[None, :]).sum())
+                          _m3_mu = float((rho_loc[:, 1, :] * _w_y3_probe[None, :]).sum()) if _n_diag_probe > 1 else 0.0
+                          _m3_tau = float((rho_loc[:, 2, :] * _w_y3_probe[None, :]).sum()) if _n_diag_probe > 2 else 0.0
+                          _m3_s = float((rho_loc[:, 3, :] * _w_y3_probe[None, :]).sum()) if _n_diag_probe > 3 else 0.0
+                          active_history.append(
+                              (istep, float(t_loc), float(a_next),
+                               float(Tg_new), float(sigma_loc),
+                               _m3_e, _m3_mu, _m3_tau, _m3_s))
+
                       if(PRyMini.verbose_flag and (istep+1) % max(1, n_steps//5) == 0):
                           print(f"    step {istep+1}/{n_steps}: Tg={Tg_loc:.4f} MeV, a={a_next:.2f}")
 
@@ -562,6 +580,12 @@ class PRyMclass(object):
               # entry state (Tg_boltz_ini, a_boltz_ini, t_B_start, sigma_curr,
               # rho_curr) is updated in-place from the Phase-0 exit so the
               # Phase-B call below is unchanged.
+              # Sprint-19 active-sector probe: shared list across Phase 0 and
+              # Phase B so the harness can reconstruct a single descending-Tg
+              # trajectory regardless of segment chain.
+              _active_hist = ([] if getattr(PRyMini, "qke_active_probe_flag", False)
+                              else None)
+
               if _phase0_active:
                   _n_B_phase0 = (int(PRyMini.n_B_phase0_override)
                                  if PRyMini.n_B_phase0_override is not None
@@ -585,7 +609,8 @@ class PRyMclass(object):
                       Tg_end=PRyMini.T_boltz_start,
                       n_steps=_n_B_phase0, a_grid_seg=_a_grid_phase0,
                       collect_trajectories=False,
-                      rho_ss_history=_rho_ss_hist)
+                      rho_ss_history=_rho_ss_hist,
+                      active_history=_active_hist)
                   self._phase0_rho_ss_history = _rho_ss_hist
                   # Rebuild Phase-B a_grid from the Phase-0 exit a.
                   a_end_est = _a_of_T_entropy(PRyMini.T_boltz_end) * 1.02
@@ -610,7 +635,11 @@ class PRyMclass(object):
                   t_start=t_B_start, sigma_start=sigma_curr,
                   Tg_end=PRyMini.T_boltz_end,
                   n_steps=n_B, a_grid_seg=a_grid,
-                  collect_trajectories=True)
+                  collect_trajectories=True,
+                  active_history=_active_hist)
+              # Sprint-19 active-sector probe: expose the combined Phase 0 +
+              # Phase B trajectory to harnesses. None when the flag is off.
+              self._active_probe_history = _active_hist
 
               t_B = np.array(t_B_list)
               Tg_B = np.array(Tg_B_list)

@@ -87,6 +87,17 @@ n_B_phase0_override = None
 # validation/diagnostics/diag_phase0_pointC.py to localise the Point-C
 # narrow-mixing Phase-0 runaway. Default False: zero overhead, no allocation.
 qke_phase0_diag_flag = False
+# Stage E.2 sprint 19 active-sector probe: per-outer-step active-flavor and
+# sterile y³ moments across both Phase 0 and Phase B. When True,
+# _run_qke_segment appends a tuple
+# (istep, t, a, Tg, sigma, m3_e, m3_mu, m3_tau, m3_s) per outer step to
+# PRyMclass._active_probe_history, where m3_α = Σ_sector (Σ_y y³ rho_αα(y, sector)) · dy
+# is the comoving y³ moment per flavor (single value per step). Used by
+# validation/diagnostics/diag_sprint19_active_sector_probe.py to localise the
+# active-sector pathology that appears at production n_B for the no-Phase-0
+# closure config (Neff=417, Yp=0.36 at n_B=12000 vs Neff=3.91, Yp=0.249 at
+# n_B=3500). Default False: zero overhead, no allocation.
+qke_active_probe_flag = False
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

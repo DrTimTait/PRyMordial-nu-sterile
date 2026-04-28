@@ -1,0 +1,29 @@
+==============================================================================================================
+Stage E.2 sprint 19 active-sector pathology probe
+  Config: damping='symmetric', active_only=True, qke_phase0_flag=False
+  Phase B from T=100 MeV to T=0.005 MeV
+  Sprint-18 sterile-sector closure references:
+    Production n_B=12000: sum_raw=4.9547  δNeff_ss=0.0542  Neff=417.1947  Yp=0.36186
+    Reduced n_B=3500: sum_raw=4.4416  δNeff_ss=0.0304  Neff=3.9090  Yp=0.24850
+  Active-sector pathology: Neff=417, Yp=0.36 at n_B=12000 — investigate.
+  HTT 2012 reference band for sterile sector: δNeff_ss in [0.02, 0.10]
+==============================================================================================================
+
+==============================================================================================================
+Sprint 19 active-sector probe result
+==============================================================================================================
+  Run A (n_B=12000, production):  Neff=417.1947  Yp=0.36186  sum_raw=4.9547  δNeff_ss=0.0542  steps=11977  (4842s)
+  Run B (n_B=3500, reduced reference):  Neff=3.9090  Yp=0.24850  sum_raw=4.4416  δNeff_ss=0.0304  steps=3494  (1320s)
+
+  Tg-aligned divergence walk (5% threshold on m3_α per flavor):
+    Verdict window: Below 5% threshold across all Tg (trajectories track within tolerance)
+    Divergence Tg: (no divergence detected at 5% threshold)
+    Dominant flavor: —
+    Max deviation at divergence: 0.00%
+
+  End-of-Phase-B m3_α relative deviation (production / reduced − 1):
+    ν_e: +1.77%
+    ν_μ: +0.25%
+    ν_τ: +0.50%
+
+  Total wall-clock: 6163s (102.7 min)

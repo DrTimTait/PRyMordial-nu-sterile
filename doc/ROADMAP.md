@@ -3081,3 +3081,115 @@ Stage F sprint 3 carryovers:
    (y_max=200, Ny=200).
 5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
    FALSIFIED / CHARACTERISED).
+
+**F sprint 3b — grid-extent-vs-resolution dichotomy
+FALSIFIED; the gate breakage at y_max=200 is driven by the
+grid-extent itself (extra high-y sterile-resonance physics),
+not by dy doubling; the cure flag's y_max-dependent clamp
+target is the load-bearing knob.** Sprint 3 left an open
+question: was the Neff inflation and δNeff_ss explosion at
+(y_max=200, Ny=100, dy=2.0) caused by the doubled momentum step
+(grid-resolution effect on sterile resonance features) or by
+the wider grid extent (grid-extent effect on FD-plateau
+resolution)? Sprint 3b runs the same Hannestad Point C config
+at (y_max=200, Ny=200, dy=1.0) — holding dy constant at the
+P0 value — to disentangle.
+
+Implementation surface (additive, no production-code changes):
+
+  * `validation/diagnostics/diag_stage_f3b_grid_extent_probe.{py,out,npz}`
+    — single Hannestad Point C run at (y_max=200, Ny=200, dy=1.0)
+    under the closure-config defaults. 147.1 min wall-clock
+    (1.98× P0 — Ny doubled doubles per-step QKE state-space
+    cost as expected).
+
+Sprint F3b verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F3b.1 P0 reference (recap) | ALL-PASS | y_max=100, Ny=100, dy=1.0: Yp=0.231, Neff=1.83, δNeff_ss=0.0947 — Hannestad Point C closure-config production reference. |
+| F3b.2 P1 reference (recap) | GATE-BREAK | y_max=200, Ny=100, dy=2.0: Yp=0.261, Neff=4.10, δNeff_ss=0.391 — sprint 3 finding. |
+| F3b.3 P2 (this run) | **GATE-BREAK** | y_max=200, Ny=200, dy=1.0: Yp=0.262, **Neff=4.33** (worse than P1's 4.10), **δNeff_ss=0.342** (still ~3.4× over HTT band [0.02, 0.10]). |
+
+Per-run results:
+
+| Run | Yp | Neff | δNeff_ss | sum_ss(raw) | wall-clock |
+|---|---|---|---|---|---|
+| F3-P0 (y=100, Ny=100, dy=1.0) | 0.231 | 1.83 ✓ | 0.095 ✓ | 7.78 | 4448 s |
+| F3-P1 (y=200, Ny=100, dy=2.0) | 0.261 | 4.10 ✗ | 0.391 ✗ | 14.18 | 3643 s |
+| F3b-P2 (y=200, Ny=200, dy=1.0) | 0.262 | **4.33 ✗** | **0.342 ✗** | **23.78** | 8826 s |
+
+The four structural findings:
+
+* **Holding dy=1.0 constant DID NOT cure the gate breakage.**
+  P2's Neff (4.33) is actually slightly worse than P1's (4.10);
+  P2's δNeff_ss (0.342) is still 3.4× over the HTT band upper
+  bound. So the dichotomy "extent-only vs resolution-only" is
+  falsified — the gate breakage is structural to the wider
+  grid extent, regardless of dy.
+* **The grid-extent itself injects new sterile-resonance
+  physics.** P2's sum_ss(raw) = 23.78 is more than 3× P0's
+  7.78. The doubled grid extent y ∈ [0, 200] resolves
+  additional high-y modes that have their own active-sterile
+  resonance crossings (different T_res per mode). Including
+  these modes drives sum_ss up regardless of dy. Yp shifts
+  +0.030 (overshooting SM by +0.015) consistently across P1
+  and P2.
+* **The cure flag's y_max-dependent clamp target is the
+  load-bearing knob, not y_max itself.** The
+  `qke_post_phaseB_clamp_flag` cure clamps the FD-tail polyfit
+  decay rate `_tail_b` to `1/y_grid[-1]` — i.e. 0.01 at
+  y_max=100, 0.005 at y_max=200. Both anchors are arbitrary
+  numerical proxies for the physical FD slope at T_nu_init,
+  which is `1/T_nu_init = 1/105 ≈ 0.0095`. At y_max=100 the
+  clamp is too steep (0.01 > 0.0095 by 5%) → marginally too
+  little FD-tail mass at low Tg → Yp 6.5% under. At y_max=200
+  the clamp is too shallow (0.005 < 0.0095 by 47%) → too much
+  FD-tail mass at low Tg → Yp/Neff/δNeff_ss inflation. The
+  right cure is to clamp `_tail_b` to a physical anchor
+  (`1/T_nu_init` or equivalent) that is independent of y_max.
+* **Sprint 3 hypothesis 1 in its strongest form (just bump
+  y_max) is CLEAN-FALSIFIED.** Y_max bumping alone — with or
+  without proportional Ny — does not cure the under-prediction
+  cleanly. The Yp gap is real and tied to the FD-tail
+  extrapolation, but the fix lives in the cure flag's clamp
+  target, not in the grid extent.
+
+**Stage F sprint 3b conclusion (still partial).** The Yp
+under-prediction at the production closure-config
+(y_max=100, Ny=100) is an artefact of the cure flag's clamp
+target being numerically tied to `1/y_grid[-1]` rather than
+to a physical anchor. Sprint 3c should test a flag-gated
+"physical-anchor clamp" variant that uses `1/T_nu_init` (or
+the more general `1/T_nu_at_T_boltz_start`) as the floor on
+`_tail_b`. If that single change recovers Yp toward 0.247
+while preserving Neff/δNeff_ss closure at y_max=100, that's
+the clean fix.
+
+Stage F sprint 3b carryovers:
+
+1. **Do NOT default-flip y_max_boltz** to anything other than
+   the production 100. Both 100 and 200 give different
+   asymmetric cure-flag behaviour; the right knob is the
+   clamp target, not the grid extent.
+2. **Sprint 3c is the natural next step**: prototype a
+   physical-anchor clamp (`_tail_b ← max(_tail_b, 1/T_nu_init)`
+   instead of `1/y_grid[-1]`) behind a new opt-in flag, and
+   run a single Hannestad Point C at y_max=100 with this
+   variant. If Yp recovers and gates stay in band, default-flip
+   the new flag (or change the cure-flag implementation
+   in-place) and re-run the four-Hannestad-point scan.
+3. **The (y_max=200, Ny=200) .out/.npz** is the canonical
+   evidence for the y_max-dependent clamp story; do NOT
+   regenerate.
+4. **The dichotomy lesson**: when a single-parameter probe
+   reveals coupled effects (sprint 3 P0 → P1), the
+   "hold-the-other-thing-constant" follow-up (sprint 3b
+   P0 → P2 at constant dy) can falsify the dichotomy
+   directly instead of leaving it open. Sprint 3b's
+   Ny-doubled run is exactly this disambiguation step;
+   future probes that change a single parameter and see
+   coupled effects should plan the disambiguation up
+   front.
+5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).

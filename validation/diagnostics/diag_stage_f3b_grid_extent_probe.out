@@ -1,0 +1,24 @@
+==============================================================================================================
+Stage F sprint 3b: grid-extent vs grid-resolution disentanglement
+  Hannestad Point C (sin^2(2theta_24)=1e-4, dm^2=0.93 eV^2), n_B=12000
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  Probing: does (y_max=200, Ny=200, dy=1.0) recover Yp toward SM 0.247 while keeping all four gates in closure bands?
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3b grid-extent disentanglement results
+==============================================================================================================
+  [ALL-PASS  ] F3-P0 (y_max=100, Ny=100, dy=1.0)           Yp=0.23126  Neff=1.8340  D/H=2.0737  delta_Neff_ss=0.0947  sum_ss(raw)=7.778  (4448s)
+  [GATE-BREAK] F3-P1 (y_max=200, Ny=100, dy=2.0)           Yp=0.26132  Neff=4.1019  D/H=2.8079  delta_Neff_ss=0.3910  sum_ss(raw)=14.184  (3643s)
+  [GATE-BREAK] F3b-P2 (y_max=200, Ny=200, dy=1.0)          Yp=0.26219  Neff=4.3261  D/H=2.8340  delta_Neff_ss=0.3417  sum_ss(raw)=23.780  (8826s)
+
+  P2 - P0 deltas (extent doubled, resolution preserved):
+    delta(Yp)            = +0.03093
+    delta(Neff)          = +2.4921
+    delta(D/H)           = +0.7603
+    delta(delta_Neff_ss) = +0.2470
+
+  Stage F sprint 3b verdict: HYPOTHESIS 1 PARTIALLY CLEAN
+    P2 recovers 196.5% of Yp gap (Yp=0.2622) but Neff=4.326 > 4.0 and delta_neff_ss=0.3417 not in [0.02, 0.1]. Resolution decoupling helps but does not fully cure. Sprint 3c should investigate which physics piece is grid-resolution-sensitive at moderate y.
+
+  Total wall-clock: 8828s (147.1 min)

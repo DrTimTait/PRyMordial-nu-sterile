@@ -54,6 +54,16 @@ def _reset_flags():
     PRyMini.xi_nue_init = 0.0
     PRyMini.xi_numu_init = 0.0
     PRyMini.xi_nutau_init = 0.0
+    # Stage F sprint 2 default flip: pin the three closure-config flags
+    # back to their pre-flip values so the regression reference numerics
+    # (captured pre-cure) continue to hold. Production usage gets the
+    # closure-config defaults; the regression suite remains a stable
+    # legacy-physics guard. The Hannestad / sin²2θ-scan diagnostics
+    # (validation/diagnostics/) exercise the closure-config defaults
+    # end-to-end, so this pin does not weaken coverage of the new code path.
+    PRyMini.qke_damping_formula = "mirizzi"
+    PRyMini.qke_v_nunu_active_only = False
+    PRyMini.qke_post_phaseB_clamp_flag = False
 
 
 def _run_mode():

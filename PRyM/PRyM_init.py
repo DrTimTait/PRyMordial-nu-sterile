@@ -127,9 +127,14 @@ qke_post_phaseB_trace_flag = False
 # Sprint-19 part 2 trace data (validation/diagnostics/diag_sprint19_post_phaseB_trace)
 # verifies: cure brings Neff at end-of-BBN from 417 → 2.88 (production) and
 # 3.91 → 2.40 (reduced n_B=3500), preserving the sterile-sector closure
-# δNeff_ss in HTT 2012 band [0.02, 0.10]. Default False: zero overhead,
-# bit-identical to pre-cure when off.
-qke_post_phaseB_clamp_flag = False
+# δNeff_ss in HTT 2012 band [0.02, 0.10].
+# Stage F sprint 2 default flip: True. The cure was originally introduced
+# default-False to preserve bit-identical pre-cure behaviour. Stage F
+# sprint 2 verifies the cure does not regress any other code path
+# (Mode 1/2/6 thermal, Mode 3 Boltzmann, Mode 5 QKE; see ROADMAP Stage F
+# sprint 2 record), so the closure-config value becomes the production
+# default. To recover pre-cure behaviour set this back to False.
+qke_post_phaseB_clamp_flag = True
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 
@@ -211,7 +216,12 @@ qke_ode_etdrk2_flag = False
 #     D_{alpha,beta} = 0.5*G_F^2*T^4*E*[(g_alpha^s - g_beta^s)^2 + (g_alpha^a + g_beta^a)^2]
 #     with g^s = sqrt(C_D), g^a = sqrt(C_A).
 #   "gariazzo":  Gariazzo+2019 App. A.17-A.20, sin^2(theta_W)-specific (fallback form).
-qke_damping_formula = "mirizzi"
+# Stage F sprint 2 default flip: 'symmetric'. The sprint-17 → sprint-18
+# axis bracket showed 'symmetric' is the closure-config choice for the
+# Hannestad-style sterile-sector cure (sprint-18 part 2 + sprint-19
+# substantial closure). 'mirizzi' is the more physically motivated
+# pair-specific form, kept available as an opt-in.
+qke_damping_formula = "symmetric"
 # Stage E.2 sprint 4: global multiplier on the pair-damping rate D_{a,b}.
 # Default 1.0 (no effect). Non-unit values multiply every off-diagonal
 # damping entry returned by DensityMatrixSolver._compute_D_pair_matrix.
@@ -237,10 +247,13 @@ qke_v_nunu_scale = 1.0
 # SU(2)_L doublet neutrinos; the sterile (singlet) has zero NC charge, so
 # V_nunu[s, *] = V_nunu[*, s] = V_nunu[s, s] = 0 identically. When True,
 # the sterile row and column of V_nunu_eV are zeroed before being added
-# to H in _build_H_list. Default False preserves pre-sprint-5 behaviour
-# bit-identically; flip to True once validated as a physical fix rather
-# than a diagnostic toggle.
-qke_v_nunu_active_only = False
+# to H in _build_H_list.
+# Stage F sprint 2 default flip: True. Sprint-18 part 2 + sprint-19
+# substantial closure verified this as a physical fix (zero NC charge
+# on the sterile is exact, not a model approximation), forming part of
+# the Stage E.2 closure config. To recover pre-sprint-5 behaviour set
+# this back to False.
+qke_v_nunu_active_only = True
 # Stage E.2 sprint 8: per-step energy-accounting diagnostic inside
 # evolve_step_ode_etdrk2. When True, the Strang-split driver appends a
 # row per time-step to self._energy_hist containing, for each active-

@@ -1,0 +1,22 @@
+==============================================================================================================
+Stage F sprint 3 hypothesis 1: y_max_boltz under-truncation probe
+  Hannestad Point C (sin^2(2theta_24)=1e-4, dm^2=0.93 eV^2), production n_B=12000
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  Probing: does y_max_boltz=200 recover Yp toward SM 0.247 vs y_max_boltz=100 baseline ~0.242?
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3 hypothesis 1 results
+==============================================================================================================
+  P0 (y_max=100, gate-5 baseline)             Yp=0.23126  Neff=1.8340  D/H=2.0737  delta_Neff_ss=0.0947  sum_ss(raw)=7.778  (4448s)
+  P1 (y_max=200, hypothesis 1 test)           Yp=0.26132  Neff=4.1019  D/H=2.8079  delta_Neff_ss=0.3910  sum_ss(raw)=14.184  (3643s)
+
+  delta(Yp) [P1 - P0]:           +0.03006  (SM-reference Yp = 0.2470)
+  delta(Neff) [P1 - P0]:         +2.2679
+  delta(D/H) [P1 - P0]:          +0.7342
+  delta(delta_Neff_ss) [P1 - P0]: +0.2963
+
+  Stage F sprint 3 verdict: HYPOTHESIS 1 CONFIRMED
+    y_max=200 recovers 191.0% of the Yp gap (+0.0157 -> -0.0143); the under-prediction is dominated by FD-plateau truncation. Stage F sprint 3 follow-up: bump y_max_boltz default to 200 MeV (or 250 MeV to give margin for the polyfit tail) and verify all gate-5 points stay in HTT band.
+
+  Total wall-clock: 8092s (134.9 min)

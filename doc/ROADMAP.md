@@ -2973,3 +2973,111 @@ Stage F sprint 2 carryovers:
    defaults. Sprint 2's cross-check caught two stale claims.
 4. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
    FALSIFIED / CHARACTERISED).
+
+**F sprint 3 — Yp under-prediction probe at y_max_boltz=200
+implicates FD-plateau truncation but reveals the naive fix
+(bump y_max with Ny fixed) introduces sterile-sector artifacts;
+hypothesis 1 partially confirmed, sprint 3b should test
+(y_max=200, Ny=200) before any default change.** Sprint-19 part-2
+§8.4 noted Yp ≈ 0.231 in the cured 4-flavor sterile config at
+production n_B=12000 — about 6.5% below SM Yp=0.247. Stage F brief
+§"sprint 3" hypothesis 1 attributed this to truncation of the
+active-sector neutrino spectrum at y_max_boltz=100 MeV (FD
+half-density at y~105 MeV at T_nu_init=105). Sprint 3 (this record)
+re-runs the cured Hannestad Point C config at y_max_boltz=100 and
+y_max_boltz=200 with all other flags held constant, and reads off
+the comparative Yp/Neff/δNeff_ss/D-H.
+
+Implementation surface (additive, opt-in, default-off bit-identical):
+
+  * `validation/diagnostics/diag_stage_f3_y_max_probe.{py,out,npz}`
+    — new harness running Hannestad Point C twice under the
+    closure-config defaults (Stage F sprint 2), varying only
+    `PRyMini.y_max_boltz` from 100 to 200. Sequential 134.9 min
+    wall-clock. No production-code changes.
+
+Sprint F3 verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F3.1 P0 reproducibility | PASS | y_max=100 baseline reproduces sprint-19 part-2 cure-probe values bit-identically (Yp=0.23126, Neff=1.834, δNeff_ss=0.0947). |
+| F3.2 Yp gap recovery | OVERSHOOTS | y_max=200 gives Yp=0.26132 — recovers 191% of the gap to SM 0.247 (i.e. overshoots by +0.014). |
+| F3.3 active-sector health under y_max=200 | **FAIL** | Neff inflates to 4.10 (exceeds gate-4 threshold 4.0); D/H = 2.81 vs gate-4 ~2.07. Active-sector closure no longer holds at y_max=200 with Ny held fixed. |
+| F3.4 sterile-sector closure under y_max=200 | **FAIL** | δNeff_ss inflates to 0.391 (out of HTT band [0.02, 0.10] by 4×); sum_ss(raw) doubles. Sterile sector over-produces. |
+
+Per-run results:
+
+| Quantity | P0 (y_max=100) | P1 (y_max=200) | Δ |
+|---|---|---|---|
+| Yp | 0.23126 | 0.26132 | +0.030 |
+| Neff | 1.834 | 4.102 | +2.27 |
+| δNeff_ss | 0.0947 | 0.391 | +0.30 |
+| D/H | 2.074 | 2.808 | +0.73 |
+| sum_ss(raw) | 7.78 | 14.18 | +1.82× |
+| wall-clock | 4448 s | 3643 s | (P1 faster — fewer y-grid resonant features per step at coarser dy) |
+
+The four structural findings:
+
+* **FD-plateau truncation IS implicated in the Yp
+  under-prediction.** Yp shifted by +0.030 from y_max=100 to
+  y_max=200 — about 2× the +0.016 SM gap. So the original gap
+  cannot be explained without invoking y_max truncation. Brief
+  hypothesis 1 has substance; the harness's "HYPOTHESIS 1
+  CONFIRMED" label is technically correct on the Yp criterion.
+* **But the naive fix (bump y_max with Ny fixed) is not a clean
+  cure.** With Ny held at 100, doubling y_max from 100 to 200
+  doubles the per-unit-y momentum step from 1.0 MeV to 2.0 MeV.
+  The QKE evolution now resolves higher momentum modes (good
+  for the FD-plateau extrapolation) but at half the momentum
+  resolution per unit-y (bad for sterile-sector resonance
+  features at moderate y). The result is Neff inflation and
+  δNeff_ss explosion — both out of the HTT closure bands.
+* **The clean experiment is (y_max=200, Ny=200).** Holding
+  dy = 1.0 MeV constant and only widening the grid extent
+  isolates "grid-extent" effects (FD plateau resolution) from
+  "grid-resolution" effects (sterile resonance features at
+  moderate y). Sprint 3b should run this experiment before any
+  default-flip on y_max_boltz. Cost: 1 extra run at
+  Hannestad Point C, ~75 min wall-clock.
+* **The harness's verdict logic was Yp-only and missed the
+  sterile breakage.** The "HYPOTHESIS 1 CONFIRMED" label fired
+  on the Yp gap criterion alone; a more complete probe must
+  also check the active and sterile health gates simultaneously
+  before declaring closure. Future hypothesis-1-style probes
+  should track all four gate-4/gate-5 criteria (Yp ≤ 0.255,
+  Neff ≤ 4.0, δNeff_ss ∈ HTT band, D/H consistency).
+
+**Stage F sprint 3 conclusion (partial).** Hypothesis 1 has
+substance — y_max truncation is part of the Yp story — but a
+production-ready cure requires the (y_max=200, Ny=200)
+experiment to confirm clean closure and possibly the sprint-19
+cached thermo / nTOp tables (regenerated at the new grid) to
+ensure self-consistency. Until sprint 3b lands a clean version,
+the closure-config defaults should NOT be changed on y_max.
+The Yp ~ 0.231 in the production cured config remains as a
+known ~6.5% under-prediction with documented physical origin
+(FD-plateau truncation interacts with the post-Phase-B FD-tail
+extrapolation).
+
+Stage F sprint 3 carryovers:
+
+1. **Do NOT default-flip `y_max_boltz` to 200** until sprint 3b
+   verifies clean closure under (y_max=200, Ny=200). The
+   sprint-3 evidence shows the naive flip breaks both
+   active-sector and sterile-sector gates.
+2. **The y_max-200 .out/.npz** is the canonical evidence for
+   the grid-extent-vs-resolution dichotomy; do NOT regenerate.
+3. **The harness's verdict-logic lesson**: probes that change
+   only one parameter must still verify all four gate criteria
+   (Yp ≤ 0.255, Neff ≤ 4.0, δNeff_ss ∈ HTT band, D/H consistent
+   with SM) before emitting a CONFIRMED label. Yp-alone is a
+   sufficient indicator for hypothesis attribution but not for
+   declaring a cure.
+4. **Sprint 3 is open**: hypotheses 2 (post-Phase-B
+   active-sector re-thermalisation) and 3 (n→p weak-rate
+   consumption of QKE distributions) remain untested. Sprint 3b
+   should resolve hypothesis 1 cleanly first; sprint 3c and 3d
+   then explore 2 and 3 if Yp under-prediction persists at
+   (y_max=200, Ny=200).
+5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).

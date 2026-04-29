@@ -3320,3 +3320,118 @@ Stage F sprint 3c carryovers:
    verdict matrix instead of a single-axis label.
 5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
    FALSIFIED / CHARACTERISED).
+
+**F sprint 3d — sterile-OFF cured-config baseline reproduces
+SBBN Yp = 0.247 to ±0.001; the +6.5 percent Yp deficit at
+Hannestad Point C is introduced by active-sterile MIXING
+handling, not by the active-only QKE→BBN pipeline. The
+literature consensus (Saviano+ 2013, Kirilova 2003/2024,
+HTT 2012, Hannestad+ 2013) is that sterile-induced Yp shifts
+should be POSITIVE; our −0.016 deficit has the opposite sign,
+strongly indicating a numerical bug in the active-sterile
+mixing handling.** Sprint 3c falsified hypothesis 1c (clamp
+anchor as the Yp lever) but found that 4× sterile suppression
+barely moves Yp. Sprint 3d (this record) tests the simplest
+disambiguation: switch sterile mixing OFF entirely (3-flavor
+SM, all θ_α4 = 0) at the same Hannestad-style cured production
+grid (y_max=100, Ny=100, n_B=12000, T_boltz_start=100,
+T_start=105 MeV, all cure flags ON).
+
+Implementation surface (additive, no production-code changes):
+
+  * `validation/diagnostics/diag_stage_f3d_sterile_off_yp_baseline.{py,out,npz}`
+    — single-run baseline harness; 62 min wall-clock.
+
+Sprint F3d verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F3d.1 sterile-OFF Yp at Hannestad config | **PASS** | Yp = 0.24717 matches SM-SBBN 0.247 within ±0.001. |
+| F3d.2 active-only Neff at Hannestad config | NOTE | Neff = 2.95442 (deviation −0.090 from Bennett+2021 SM 3.044). Documents a separate ~3 percent Hannestad-window Neff loss not present in standard mode-5c regression (T_boltz_start=5). Likely from QED-table zero-clamp at T > 40 MeV plus accumulated QKE evolution drift over the wider Phase-B window. Independent of the Yp bug. |
+| F3d.3 D/H | NOTE | D/H = 2.43712 (vs SBBN ~2.467); within typical QKE-driven D/H sensitivity. |
+
+The four structural findings:
+
+* **The +6.5 percent Yp deficit is in active-sterile MIXING
+  handling, not in the active-only pipeline.** Sterile-OFF
+  cured config gives Yp = 0.247 ± 0.001 at the production
+  Hannestad grid; sterile-ON cured config (Point C) gives
+  Yp = 0.231. The mixing-only delta is −0.016, sign-opposite
+  to the literature consensus.
+* **Literature consensus says Yp should INCREASE under
+  active-sterile mixing**: Saviano+ 2013 (arXiv:1302.1200,
+  closest published QKE+BBN analog at eV-scale Δm²) reports
+  Yp = 0.247 → 0.251–0.256 (ΔYp = +0.004 to +0.010);
+  Kirilova 2003/2024 fitting formula
+  `δYp = 0.013 [δN_kin (1 − δN_s) + δN_s]` is positive in
+  every term; HTT 2012 explicitly states ν_e depletion via
+  active→sterile conversion increases the n/p freeze-out
+  temperature → MORE neutrons → HIGHER Yp. Our −0.016 has
+  no published analog.
+* **The Yp bug is anchor-INSENSITIVE and 4×-sterile-INSENSITIVE.**
+  Sprint 3c showed Yp barely moves (+0.00068) when sterile
+  production drops 4× (sum_ss(raw) 7.78 → 1.95). So the bug is
+  not driven by the magnitude of sterile transfer — it fires
+  on the mere presence of the active-sterile mixing code path,
+  regardless of how much sterile is produced. Suggests a
+  fixed-cost effect somewhere in the mixed-flavor consumer
+  (n→p weak-rate quadrature, sterile contribution to ρ_rad,
+  or weak-rate Pauli-blocking via (1 − f_νe)).
+* **Side-finding: Neff loses ~0.09 at sterile-OFF Hannestad
+  config.** Mode-5c regression (T_boltz_start=5, n_B≈2400)
+  gives Neff = 3.041 ± 1e-3 — bit-identical to Bennett+2021.
+  But sterile-OFF Hannestad config (T_boltz_start=100,
+  n_B=12000) gives Neff = 2.954. The 0.087 loss is consistent
+  with QED-correction-table zero-clamp at T > 40 MeV (the
+  warning emitted on every Hannestad run), accumulated over
+  the wider Phase-B window. Independent of the Yp bug;
+  recorded as a separate Stage F sprint candidate (regenerate
+  PRyMrates/thermo/QED_P_int.txt and siblings via NUDEC_BSM
+  v2 to extend coverage to T > 40 MeV).
+
+**Stage F sprint 3d conclusion (CRITICAL — closes the bug-
+location question).** The Yp gap localises to active-sterile
+mixing handling. Sprint 3e diagnostic targets, in priority
+order:
+
+1. **Pauli-blocking `(1 − f_να)` sign/normalization in
+   weak-rate integrand** — `PRyM_eval_nTOp.py` consumers of
+   `f_nue_general`. The QKE-distorted `f_νe` may be passed
+   to a quadrature that assumes thermal FD normalization
+   somewhere (e.g. f_νe → f_νe / FD_at_y reference); a sign
+   slip or missing reference would produce a sign-opposite
+   Yp shift.
+2. **Sterile double-counting in ρ_rad and spectrum integrals**
+   — when sterile_flag is True, `rho_3nu` may include a
+   sterile contribution while the n→p quadrature also
+   integrates over the full 4-flavor spectrum (instead of
+   just 3 active flavors); a factor-of-4/3 over-count would
+   shift the Hubble rate at weak-freeze-out → wrong Yp.
+3. **Anchor / FD-tail reference temperature in weak-rate
+   quadrature** — the FD-tail extrapolation cure may pass
+   the wrong reference T to the weak-rate integrand,
+   especially if the integrand uses `1/T_nu_init` as a
+   normalisation while the cure's `_tail_b` uses
+   `1/y_grid[-1]` (sprint-3c showed these can be out of
+   sync at y_max=200 but match at y_max=100).
+
+Stage F sprint 3d carryovers:
+
+1. **Sprint 3e** is the active investigation: instrument the
+   n→p weak-rate consumer (`PRyM_eval_nTOp.py` and the
+   `rho_3nu` / `f_α` sites) to localise the bug. Cheapest
+   first: print the integrand contributions at a single
+   weak-freeze-out temperature for sterile-on vs sterile-off
+   runs and diff. The fixed-cost-on-presence character
+   suggests a normalisation issue, not a per-y bug.
+2. **Sprint 3f (separate, lower priority)**: regenerate the
+   QED correction tables to T > 40 MeV (NUDEC_BSM v2) so
+   Hannestad-window Neff is not under-reported by ~0.09.
+3. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).
+4. **The literature-as-oracle lesson**: when a numerical
+   prediction goes against published consensus in BOTH sign
+   and magnitude, the prior on "numerical bug" is high.
+   Sprint 3d's quick literature pass reframed the entire
+   sprint-3 series from "physics finding" to "bug hunt"
+   in 30 minutes of search.

@@ -1,0 +1,20 @@
+==============================================================================================================
+Stage F sprint 3d: sterile-OFF cured-config Yp baseline
+  3-flavor SM (sterile_flag=False, all theta=0)
+  Cure flags: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True (anchor=y_grid)
+  Production grid: y_max=100, Ny=100, n_B=12000
+  Reference: SM-SBBN Yp = 0.247 (Bennett+2021 Neff = 3.044)
+  Probing: does the cured pipeline produce Yp=0.247 in the sterile-OFF limit?
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3d sterile-OFF baseline result
+==============================================================================================================
+  Neff = 2.95442 (SM reference 3.044, deviation -0.08958)
+  Yp   = 0.24717 (SM reference 0.247, deviation +0.00017)
+  D/H  = 2.43712
+
+  Stage F sprint 3d verdict: STERILE-OFF YP CONSISTENT WITH SBBN
+    Yp = 0.24717 matches SM-SBBN 0.247 within +-0.001. The +6.5 percent deficit at sterile-on Point C is downstream of the active-only pipeline; the bug lives in active-sterile mixing handling. Sprint 3e diagnostic targets: weak-rate consumer of distorted f_alpha, or sterile double-counting in rho_rad / spectrum integrals.
+
+  Wall-clock: 3726s (62.1 min)

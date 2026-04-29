@@ -2712,17 +2712,27 @@ class BoltzmannSolver(object):
                 coeffs = np.polyfit(tail_y, tail_l, 1)
                 _tail_b, _tail_a = coeffs[0], coeffs[1]
                 # Stage E.2 sprint 19 part 2 cure: when on, also reject
-                # polyfits that produce a tail decay rate slower than
-                # 1/y_grid[-1] (the FD-equivalent slope for the initial
-                # T_nu_com ~ y_max_grid). Without the cure, a noisy 10-point
-                # tail with ~constant f near 0.27 produces _tail_b ~ 1e-3,
-                # which extrapolated to y ~ 4000 (the y range probed by
+                # polyfits that produce a tail decay rate slower than the
+                # clamp target. Without the cure, a noisy 10-point tail with
+                # ~constant f near 0.27 produces _tail_b ~ 1e-3, which
+                # extrapolated to y ~ 4000 (the y range probed by
                 # rho_nu_from_f at low Tg) gives f ~ 0.02 instead of the
                 # physical exp(-40) ≈ 0, inflating Neff to 417.
+                # Stage F sprint 3c: clamp target selectable via
+                # qke_phaseB_clamp_anchor. "y_grid" -> 1/y_grid[-1]
+                # (sprint-19 default; y_max-dependent). "T_nu_init" ->
+                # 1/(T_start/MeV_to_Kelvin) (y_max-independent; matches the
+                # physical FD slope at initial-condition temperature).
+                if (getattr(PRyMini, "qke_phaseB_clamp_anchor", "y_grid")
+                        == "T_nu_init"):
+                    _clamp_target = (PRyMini.MeV_to_Kelvin
+                                     / PRyMini.T_start)
+                else:
+                    _clamp_target = 1.0 / y_grid[-1]
                 if (_tail_b <= 0
                         or (getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
-                            and _tail_b < 1.0 / y_grid[-1])):
-                    _tail_b = 1.0 / y_grid[-1]
+                            and _tail_b < _clamp_target)):
+                    _tail_b = _clamp_target
                     _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
             else:
                 _tail_a, _tail_b = 0.0, 1.0
@@ -2852,10 +2862,17 @@ class BoltzmannSolver(object):
             coeffs = np.polyfit(tail_y, tail_l, 1)
             _tail_b, _tail_a = coeffs[0], coeffs[1]
             # Stage E.2 sprint 19 part 2 cure: see _make_f_callable comment.
+            # Stage F sprint 3c: clamp target selectable via
+            # qke_phaseB_clamp_anchor; see _make_f_callable for full discussion.
+            if (getattr(PRyMini, "qke_phaseB_clamp_anchor", "y_grid")
+                    == "T_nu_init"):
+                _clamp_target = PRyMini.MeV_to_Kelvin / PRyMini.T_start
+            else:
+                _clamp_target = 1.0 / y_grid[-1]
             if (_tail_b <= 0
                     or (getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
-                        and _tail_b < 1.0 / y_grid[-1])):
-                _tail_b = 1.0 / y_grid[-1]
+                        and _tail_b < _clamp_target)):
+                _tail_b = _clamp_target
                 _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
         else:
             _tail_a, _tail_b = 0.0, 1.0

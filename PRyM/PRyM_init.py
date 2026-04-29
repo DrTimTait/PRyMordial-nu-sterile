@@ -135,6 +135,24 @@ qke_post_phaseB_trace_flag = False
 # sprint 2 record), so the closure-config value becomes the production
 # default. To recover pre-cure behaviour set this back to False.
 qke_post_phaseB_clamp_flag = True
+# Stage F sprint 3c clamp-anchor variant. Selects the physical target
+# the FD-tail polyfit slope is clamped to when qke_post_phaseB_clamp_flag
+# is True. Two values:
+#   "y_grid":     legacy/sprint-19 anchor 1/y_grid[-1]. y_max-dependent;
+#                 0.01 at y_max=100, 0.005 at y_max=200. At the production
+#                 y_max=100 it gives ~5 percent steeper extrapolation than
+#                 the physical FD slope at T_nu_init=105 MeV, contributing
+#                 to a 6.5 percent Yp under-prediction in the cured 4-flavor
+#                 sterile config (sprint-19 part 2 §8.4).
+#   "T_nu_init":  Stage F sprint 3c anchor 1/(T_start/MeV_to_Kelvin) ≈
+#                 0.0095 (independent of y_max). Matches the FD-equivalent
+#                 slope at the initial-condition temperature exactly. Sprint
+#                 3c probe at y_max=100 evaluates whether this single change
+#                 closes the Yp gap while preserving HTT closure on
+#                 Neff/delta_neff_ss.
+# Default "y_grid" preserves bit-identical pre-sprint-3c behaviour for the
+# closure config; flip to "T_nu_init" once sprint 3c verifies the recovery.
+qke_phaseB_clamp_anchor = "y_grid"
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

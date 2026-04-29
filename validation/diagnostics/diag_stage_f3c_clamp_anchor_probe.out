@@ -1,0 +1,23 @@
+==============================================================================================================
+Stage F sprint 3c: physical-anchor clamp probe
+  Hannestad Point C (sin^2(2theta_24)=1e-4, dm^2=0.93 eV^2), n_B=12000, y_max=100, Ny=100
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  Probing: does clamp anchor 'T_nu_init' (1/T_start_MeV=0.0095) recover Yp toward SM 0.247 vs anchor 'y_grid' (1/99.5=0.0101)?
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3c clamp-anchor probe results
+==============================================================================================================
+  [ALL-PASS  ] C0 (anchor='y_grid', sprint-19 baseline)            Yp=0.23126  Neff=1.8340  D/H=2.0737  delta_Neff_ss=0.0947  sum_ss(raw)=7.778  (4916s)
+  [ALL-PASS  ] C1 (anchor='T_nu_init', sprint-3c probe)            Yp=0.23194  Neff=2.1985  D/H=2.0936  delta_Neff_ss=0.0273  sum_ss(raw)=1.948  (4481s)
+
+  C1 - C0 deltas (anchor 'y_grid' -> 'T_nu_init'):
+    delta(Yp)            = +0.00068  (SM-reference Yp = 0.2470)
+    delta(Neff)          = +0.3645
+    delta(D/H)           = +0.0199
+    delta(delta_Neff_ss) = -0.0674
+
+  Stage F sprint 3c verdict: ANCHOR-INSENSITIVE
+    anchor='T_nu_init' shift Yp by +0.00068 (recovery 4.3%). Hypothesis 1c falsified; pivot to hypotheses 2/3 (post-Phase-B re-thermalisation or n->p QKE consumption).
+
+  Total wall-clock: 9398s (156.6 min)

@@ -3193,3 +3193,130 @@ Stage F sprint 3b carryovers:
    front.
 5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
    FALSIFIED / CHARACTERISED).
+
+**F sprint 3c — clamp-anchor flip from `1/y_grid[-1]` to
+`1/T_nu_init` is ANCHOR-INSENSITIVE for Yp (gap recovery only
+4.3%) but produces a striking side-discovery: 4× sterile
+suppression, +20% Neff (toward SM), and δNeff_ss
+0.095 → 0.027 — both still in HTT band. Sprint 3c falsifies
+hypothesis 1c on Yp and motivates sprint 3d to re-run the
+four-Hannestad-point scan under the new anchor to see whether
+it improves the global-fit (NH) outlier.** Sprint 3b localised
+the y_max-dependence of the cure-flag clamp target as the
+plausible Yp under-prediction lever (1/y_grid[-1] = 0.01005 at
+y_max=100 vs the physical FD slope 1/T_nu_init ≈ 0.00952).
+Sprint 3c (this record) implements an opt-in flag
+`qke_phaseB_clamp_anchor` (default `"y_grid"`, alternative
+`"T_nu_init"`) and runs Hannestad Point C twice at the
+production y_max=100 to measure the effect.
+
+Implementation surface (additive, opt-in, default-off bit-identical):
+
+  * `PRyM/PRyM_init.py` — new flag `qke_phaseB_clamp_anchor`
+    (default `"y_grid"`; alternative `"T_nu_init"`). Selects
+    the physical target the FD-tail polyfit slope `_tail_b` is
+    clamped to when `qke_post_phaseB_clamp_flag` is True.
+  * `PRyM/PRyM_boltzmann.py` — both clamp sites (in
+    `_make_f_callable` ~line 2722 and `make_f_callable`
+    ~line 2862) extended to compute `_clamp_target` based on
+    the new flag, then use it in the existing fallback
+    condition. Default branch (`"y_grid"`) preserves
+    bit-identical pre-sprint-3c behaviour.
+  * `validation/diagnostics/diag_stage_f3c_clamp_anchor_probe.{py,out,npz}`
+    — two-run Hannestad Point C harness (157 min sequential,
+    C0 reproduces F3-P0 bit-identically; C1 is the new probe).
+
+Sprint F3c verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F3c.1 fast pytest at default | PASS 6/6 in 33s | `qke_phaseB_clamp_anchor="y_grid"` default reproduces pre-sprint-3c numerics. |
+| F3c.2 full pytest at default | (in flight) | Default-off bit-identity check across all 13 tests. |
+| F3c.3 C0 reproducibility | PASS | y_grid anchor at y_max=100 reproduces F3-P0 (Yp=0.23126, Neff=1.834, δNeff_ss=0.0947) to 4 decimals. |
+| F3c.4 C1 (T_nu_init anchor) | ALL-PASS gates, ANCHOR-INSENSITIVE for Yp | Yp shifts only +0.00068 (4.3% of SM gap), but Neff jumps +20% (1.83 → 2.20), sum_ss(raw) drops 4× (7.78 → 1.95), δNeff_ss drops 71% (0.095 → 0.027 — at lower edge of HTT band [0.02, 0.10]). |
+
+Per-run results (Hannestad Point C, n_B=12000, y_max=100, Ny=100):
+
+| Run | Yp | Neff | δNeff_ss | sum_ss(raw) | wall-clock |
+|---|---|---|---|---|---|
+| C0 (y_grid: 1/99.5 = 0.01005) | 0.23126 | 1.834 | 0.0947 | 7.78 | 4916 s |
+| C1 (T_nu_init: 1/105 = 0.00952) | **0.23194** | **2.199** | **0.0273** | **1.95** | 4481 s |
+
+The four structural findings:
+
+* **Hypothesis 1c (clamp anchor explains Yp gap) is
+  FALSIFIED.** The 5.2% shallower clamp at anchor='T_nu_init'
+  shifts Yp by only +0.00068 — 4.3% of the +0.016 SM gap. The
+  Yp under-prediction in the production cured config is NOT
+  driven by the cure-flag clamp target.
+* **But the anchor change has STRIKING side effects on the
+  active/sterile partition.** sum_ss(raw) drops 4× (7.78 →
+  1.95). δNeff_ss drops 71% (0.095 → 0.027), staying in the
+  HTT band [0.02, 0.10] but at its lower edge. Neff increases
+  +20% (1.834 → 2.199 — closer to SM 3.044). The shallower
+  clamp lets MORE high-y active rho survive the FD-tail
+  extrapolation (good for active-sector Neff) and reduces the
+  effective active-sterile transfer (good for sterile sector
+  to stay in band; the legacy y_grid anchor pushed sterile
+  toward the upper end of HTT).
+* **The active and sterile sectors decouple under the anchor
+  change.** Yp (driven by f_νe at MeV-scale momenta during
+  weak-freeze-out) is essentially anchor-blind; Neff (driven
+  by total rho_ν at low Tg) and δNeff_ss (driven by
+  active-sterile transfer) are highly anchor-sensitive. This
+  is consistent with the Yp gap's source being further
+  downstream than the FD-tail extrapolation — likely in the
+  post-Phase-B active-sector re-thermalisation step or in the
+  n→p weak-rate consumer of the QKE distributions
+  (hypotheses 2 and 3 of Stage F brief §"sprint 3").
+* **The anchor change may benefit the global-fit-(NH)
+  outlier.** Sprint 3 + 3b found the strong-mixing plateau
+  at sin²2θ ≳ 0.01 produces δNeff_ss ~ 0.92-0.94 under the
+  current y_grid anchor — out of the global-fit pass band
+  [0.4, 0.7]. If sterile production drops uniformly by 4× under
+  anchor='T_nu_init' (as it does at narrow Point C), the
+  strong-mixing points would shift by similar factors:
+  Point A 0.915 → ~0.23 (out of [0.9, 1.1]); global-fit
+  0.944 → ~0.24 (in [0.4, 0.7] band — fixed!); Point B
+  0.645 → ~0.16 (out of [0.3, 0.7]). This would trade a
+  Point-A pass for a global-fit pass. Worth investigating —
+  recorded as sprint 3d.
+
+**Stage F sprint 3c conclusion (closes hypothesis 1c on Yp,
+opens sprint 3d on anchor-vs-global-fit-NH).** The Yp gap
+investigation must pivot to hypothesis 2 (post-Phase-B
+active-sector re-thermalisation) or 3 (n→p weak-rate QKE
+consumption). The unexpected anchor side-effect on sterile
+production justifies a separate four-Hannestad-point scan
+under anchor='T_nu_init' (sprint 3d) to evaluate the
+trade-off.
+
+Stage F sprint 3c carryovers:
+
+1. **`qke_phaseB_clamp_anchor` flag is shipped opt-in,
+   default `"y_grid"`.** All current closure-config
+   numerics remain bit-identical at the default. The
+   `"T_nu_init"` value is available for sprint 3d and
+   future investigations but is NOT a production default.
+2. **Sprint 3d**: re-run the four-Hannestad-point scan
+   (`diag_sprint19_hannestad_scan.py` style) with
+   `qke_phaseB_clamp_anchor="T_nu_init"` and report the
+   per-point δNeff_ss versus the y_grid baseline. If the
+   global-fit-(NH) point lands in [0.4, 0.7] without
+   pushing Points A and B out of their bands, this is a
+   clean improvement and the anchor should be considered
+   for default-flip. Cost: ~5 h sequential.
+3. **Sprint 3d (or 3e) on the Yp gap**: prototype either
+   hypothesis 2 (post-Phase-B re-thermalisation: replace
+   each active f_α at end of Phase B with the FD that has
+   the same total energy density) or hypothesis 3 (verify
+   n→p weak rates consume the QKE distributions in a way
+   consistent with the FD assumption). The Yp gap mechanism
+   lives downstream of Phase B.
+4. **The verdict-logic lesson (continued)**: sprint-3 saw
+   gate-only verdict; sprint-3c sees Yp-only verdict missing
+   the active/sterile decoupling. Future probes should track
+   ALL of (Yp, Neff, δNeff_ss, sum_ss) and emit a multi-axis
+   verdict matrix instead of a single-axis label.
+5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).

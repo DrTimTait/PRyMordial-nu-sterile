@@ -1,0 +1,30 @@
+==============================================================================================================
+Stage F sprint 3e: sterile-on vs sterile-off end-of-Phase-B trace
+  Cured config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  Production grid: y_max=100, Ny=100, n_B=12000, T_boltz_start=100, T_start=105 MeV
+  qke_post_phaseB_trace_flag=True so end-of-Phase-B raw f_alpha grids are stashed
+==============================================================================================================
+
+==============================================================================================================
+End-of-Phase-B per-flavor metrics
+==============================================================================================================
+flavor         _tail_b S0   _tail_b S1   sum_raw S0   sum_raw S1    sum_y3 S0    sum_y3 S1    (S1-S0)/S0 sum_y3
+---------------------------------------------------------------------------------------------------------------
+f_nue             0.01000      0.00488       37.986       30.664    7.776e+06    7.196e+06              -0.0745
+f_nuebar          0.01001      0.01703       37.986       30.133    7.776e+06    7.168e+06              -0.0782
+f_numu            0.01001      0.00220       37.986       33.138    7.776e+06    7.401e+06              -0.0482
+f_numubar         0.01001      0.01519       37.987       32.285    7.776e+06    7.381e+06              -0.0508
+f_nutau           0.01001      0.00263       37.986       32.734    7.776e+06    7.368e+06              -0.0525
+f_nutaubar        0.01001      0.01548       37.986       31.938    7.776e+06    7.346e+06              -0.0553
+f_nus                 nan      0.16793          nan        3.262          nan    6.168e+05                 +nan
+f_nusbar              nan     -0.21671          nan        4.516          nan    7.440e+05                 +nan
+
+Active total y3 sum: S0=4.6656e+07  S1=4.3860e+07
+Sterile total y3 sum: S0=0  S1=1.3608e+06
+Grand total y3 sum:  S0=4.6656e+07  S1=4.5220e+07
+Conservation deviation: (S1 - S0) / S0 = -3.0768%
+
+BBN observables: S0 Yp=0.24717 Neff=2.9544  |  S1 Yp=0.23126 Neff=1.8340
+BBN deficit:     dYp = -0.01590 (literature predicts ~+0.005)  dNeff = -1.1204
+
+Total wall-clock: 8784s (146.4 min)

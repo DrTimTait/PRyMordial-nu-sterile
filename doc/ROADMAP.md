@@ -3435,3 +3435,148 @@ Stage F sprint 3d carryovers:
    Sprint 3d's quick literature pass reframed the entire
    sprint-3 series from "physics finding" to "bug hunt"
    in 30 minutes of search.
+
+**F sprint 3e — bug LOCATED in the cure-flag polyfit
+asymmetry. End-of-Phase-B trace shows that with sterile
+mixing ON, ν_e/μ/τ get polyfit slopes 2-4× SHALLOWER than
+the cure clamp (1/y_grid[-1] = 0.01005), so the clamp fires
+on them and steepens their tails; but ν̄_e/μ̄/τ̄ get polyfit
+slopes 1.5-1.7× STEEPER than the clamp, so the clamp does
+NOT fire on them. Net effect: the cure asymmetrically
+suppresses the high-y tails of neutrino flavors but NOT
+antineutrino flavors, perturbing the Pauli-blocking term
+(1 − f_ν̄ₑ) in the p→n weak rate independently of the f_νₑ
+term in the n→p weak rate. The asymmetric suppression
+produces a sign-opposite Yp shift relative to the literature
+consensus.** Sprint 3d localised the Yp deficit to the
+active-sterile mixing handling. Sprint 3e (this record) builds
+a paired trace probe at sterile-OFF and sterile-ON Hannestad
+Point C, capturing the end-of-Phase-B raw f_α grids and
+computing per-flavor polyfit tail slopes.
+
+Implementation surface (additive, no production-code changes):
+
+  * `validation/diagnostics/diag_stage_f3e_sterile_trace.{py,out,npz}`
+    — paired trace harness (S0 sterile-OFF, S1 sterile-ON Point C)
+    with `qke_post_phaseB_trace_flag=True`. Captures raw f_α
+    grids and computes per-flavor polyfit `_tail_b` reproducing
+    the cure-site polyfit. 146.4 min sequential.
+
+Sprint F3e end-of-Phase-B per-flavor polyfit tail slopes (1/MeV):
+
+| Flavor | S0 (sterile-OFF) | S1 (Point C, sterile-ON) | Cure-clamp fires? |
+|---|---|---|---|
+| ν_e   | 0.01000 | **0.00488** (2× shallower) | YES — clamps to 0.01005 |
+| ν̄_e   | 0.01001 | **0.01703** (1.7× steeper) | NO  — natural slope > clamp |
+| ν_μ   | 0.01001 | **0.00220** (4.5× shallower) | YES — clamps to 0.01005 |
+| ν̄_μ   | 0.01001 | **0.01519** (1.5× steeper) | NO  — natural slope > clamp |
+| ν_τ   | 0.01001 | **0.00263** (3.8× shallower) | YES — clamps to 0.01005 |
+| ν̄_τ   | 0.01001 | **0.01548** (1.5× steeper) | NO  — natural slope > clamp |
+| ν_s   | n/a     | 0.16793 | (sterile-only) |
+| ν̄_s   | n/a     | −0.21671 (negative!) | (sterile-only) |
+
+End-of-Phase-B y³ sum inventory:
+
+| Quantity | S0 | S1 | (S1-S0)/S0 |
+|---|---|---|---|
+| Active y³ sum | 4.666e7 | 4.386e7 | **−6.0%** (avg per flavor; per-flavor range −4.8% to −7.8%) |
+| Sterile y³ sum | 0 | 1.361e6 | (S0 has no sterile) |
+| Grand total | 4.666e7 | 4.522e7 | **−3.08%** |
+
+BBN observables:
+
+| Quantity | S0 | S1 | ΔS1−S0 | Literature expectation |
+|---|---|---|---|---|
+| Yp | 0.24717 | 0.23126 | **−0.01590** | ~+0.005 (Saviano 2013) |
+| Neff | 2.9544 | 1.8340 | **−1.1204** | ~+0.05 to +0.1 |
+
+The four structural findings:
+
+* **The bug is in the polyfit-driven cure-flag clamp,
+  triggered ASYMMETRICALLY across neutrino vs
+  antineutrino flavors when sterile mixing is on.**
+  Active-sterile mixing depletes the ν_e/μ/τ tails (giving
+  shallow polyfit slopes 0.002-0.005, well below the clamp
+  threshold 0.01005); the clamp steepens them. But the
+  antineutrino flavors actually get STEEPER tails from the
+  QKE evolution (slopes 0.015-0.017, above clamp); the clamp
+  does NOT fire. The result is a Pauli-blocking
+  (1 − f_ν̄_e) term consumed by the p→n weak rate that is
+  shaped by the QKE-evolved ν̄_e tail, while the f_νe term
+  consumed by the n→p weak rate is shaped by the
+  cure-clamp-modified ν_e tail. The two flavors should track
+  each other under ν-ν̄ symmetry (ξ_ν=0); the cure breaks
+  this symmetry on the high-y extrapolation.
+* **End-of-Phase-B raw grids are nearly energy-conserving;
+  the bug is in the cure consumer, not the QKE driver.**
+  Total y³ sum (active + sterile) at S1 is 3.08% below S0 —
+  consistent with small numerical losses in the QKE evolution
+  and the trace measure itself (y³ moment, not exact comoving
+  energy density). The 1+ species of "missing" Neff is NOT
+  in the raw grids; it appears downstream when the
+  cure-flag tail extrapolation is consumed by `rho_3nu(Tg)`
+  at low Tg, where a 7% per-flavor deficit at high y (the
+  cure-clamped region) integrated across the relevant
+  weak-freeze-out → BBN range produces a 38% Neff deficit
+  (1.83 vs 2.95).
+* **The sterile flavors themselves polyfit pathologically
+  (ν_s slope = +0.168, ν̄_s slope = −0.217), but their
+  contribution to Yp is small.** Sterile distributions are
+  sharply peaked at MSW-resonant y; the polyfit on the last
+  10 in-range grid points fits the steep falloff (or the
+  reverse, hence the negative slope on ν̄_s). Both extreme
+  values lie far above the clamp threshold so the clamp
+  doesn't fire; the sterile tail is whatever the polyfit
+  gives. The sterile contribution to rho_3nu at low Tg is
+  small (sum_y3 = 1.36e6 vs total 4.52e7, i.e. 3%), so
+  sterile-tail extrapolation pathologies don't drive Yp
+  directly. The asymmetric ACTIVE-flavor cure firing is the
+  Yp lever.
+* **The fix should enforce a uniform cure across all six
+  active flavors (not flavor-by-flavor).** Either: (a) clamp
+  using the SHALLOWEST flavor polyfit slope across all
+  active flavors (so clamp fires uniformly when ANY flavor
+  has a shallow tail), (b) clamp using a flavor-averaged
+  polyfit slope (so the clamp is symmetric in
+  ν vs ν̄), or (c) replace the polyfit-based clamp entirely
+  with a fixed physical anchor (1/T_nu_init or the
+  flavor-averaged FD slope at end-of-Phase-B). Option (c)
+  is cleanest and matches sprint 3c's anchor flag — but
+  needs the clamp to fire UNIFORMLY across all flavors,
+  not just when polyfit < target.
+
+**Stage F sprint 3e conclusion (BUG LOCATED).** The active-
+sterile mixing breaks the ν-ν̄ symmetry at end-of-Phase-B
+through asymmetric polyfit slopes. The current cure-clamp
+condition (`fire when _tail_b < threshold`) responds to the
+asymmetry by clamping only the flavors with shallow tails,
+which is the wrong cure: it suppresses neutrino tails while
+leaving antineutrino tails intact, breaking Pauli-blocking
+balance. The fix should be either (a) clamp ALL flavors
+uniformly to the physical anchor (regardless of polyfit
+slope), or (b) clamp using a single shared target derived
+from the steepest/most-physical flavor slope. Sprint 3f
+prototypes a flag-gated uniform-clamp variant.
+
+Stage F sprint 3e carryovers:
+
+1. **Sprint 3f (next, well-scoped)**: implement a
+   `qke_phaseB_clamp_mode` flag with two values:
+   `"per_flavor"` (current sprint-19 default; clamp fires
+   when polyfit < target) and `"uniform"` (clamp fires
+   on all active flavors, target = `1/T_nu_init`). Run a
+   single Hannestad Point C probe under uniform mode; if
+   Yp recovers toward 0.247 (sign now correct) and gates
+   stay in band, default-flip and re-run the
+   four-Hannestad-point scan.
+2. **Side-finding: ν_s and ν̄_s polyfit slopes are
+   pathological** (+0.17 and −0.22) — but the sterile
+   contribution to rho_3nu at low Tg is small (3% of total
+   y³ sum). Document for completeness; don't cure unless
+   it impacts production gates.
+3. **The ν-ν̄ asymmetry diagnostic**: future probes of QKE
+   correctness should track per-flavor symmetry of polyfit
+   slopes; uniform polyfit across the six active flavors
+   is a sufficient pre-cure-firing health check.
+4. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).

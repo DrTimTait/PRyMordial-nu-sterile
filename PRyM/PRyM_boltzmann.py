@@ -2729,9 +2729,19 @@ class BoltzmannSolver(object):
                                      / PRyMini.T_start)
                 else:
                     _clamp_target = 1.0 / y_grid[-1]
-                if (_tail_b <= 0
-                        or (getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
-                            and _tail_b < _clamp_target)):
+                # Stage F sprint 3f: clamp firing mode. "per_flavor" (default)
+                # fires only when polyfit < target on this flavor; "uniform"
+                # fires on every active flavor unconditionally when the cure
+                # flag is on, restoring nu-nubar symmetry on the high-y tail.
+                _clamp_on = getattr(PRyMini, "qke_post_phaseB_clamp_flag",
+                                    False)
+                _clamp_mode = getattr(PRyMini, "qke_phaseB_clamp_mode",
+                                      "per_flavor")
+                _fire_uniform = _clamp_on and _clamp_mode == "uniform"
+                _fire_per_flavor = (_clamp_on
+                                    and _clamp_mode != "uniform"
+                                    and _tail_b < _clamp_target)
+                if _tail_b <= 0 or _fire_uniform or _fire_per_flavor:
                     _tail_b = _clamp_target
                     _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
             else:
@@ -2869,9 +2879,15 @@ class BoltzmannSolver(object):
                 _clamp_target = PRyMini.MeV_to_Kelvin / PRyMini.T_start
             else:
                 _clamp_target = 1.0 / y_grid[-1]
-            if (_tail_b <= 0
-                    or (getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
-                        and _tail_b < _clamp_target)):
+            # Stage F sprint 3f: clamp firing mode; see _make_f_callable.
+            _clamp_on = getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
+            _clamp_mode = getattr(PRyMini, "qke_phaseB_clamp_mode",
+                                  "per_flavor")
+            _fire_uniform = _clamp_on and _clamp_mode == "uniform"
+            _fire_per_flavor = (_clamp_on
+                                and _clamp_mode != "uniform"
+                                and _tail_b < _clamp_target)
+            if _tail_b <= 0 or _fire_uniform or _fire_per_flavor:
                 _tail_b = _clamp_target
                 _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
         else:

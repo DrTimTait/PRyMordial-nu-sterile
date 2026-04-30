@@ -153,6 +153,31 @@ qke_post_phaseB_clamp_flag = True
 # Default "y_grid" preserves bit-identical pre-sprint-3c behaviour for the
 # closure config; flip to "T_nu_init" once sprint 3c verifies the recovery.
 qke_phaseB_clamp_anchor = "y_grid"
+# Stage F sprint 3f: cure-clamp firing mode. Sprint 3e showed that with
+# active-sterile mixing on, the QKE produces SHALLOW polyfit tails for
+# nu_e/mu/tau (slopes ~0.002-0.005) while leaving nu_ebar/mubar/taubar
+# tails STEEPER than the clamp target (slopes ~0.015-0.017). The default
+# "per_flavor" mode fires the clamp only when polyfit < target on each
+# flavor independently, so it clamps the neutrino flavors but NOT the
+# antineutrinos — breaking nu-nubar symmetry on the high-y FD-tail
+# extrapolation. The "(1 - f_nuebar)" Pauli-blocking term in the p->n
+# weak rate is consumed with the QKE-shallow nu_ebar tail while the
+# f_nue term in n->p is consumed with the cure-steepened nu_e tail,
+# producing a sign-opposite Yp shift relative to the literature consensus
+# (Saviano 2013 et al. predict Yp INCREASES under sterile mixing).
+# Two values:
+#   "per_flavor": legacy/sprint-19 default. Clamp fires when polyfit
+#                 < target on each flavor independently. Bit-identical
+#                 to pre-sprint-3f behaviour.
+#   "uniform":    Stage F sprint 3f variant. Clamp fires on every active
+#                 flavor unconditionally when qke_post_phaseB_clamp_flag
+#                 is True, regardless of the per-flavor polyfit slope.
+#                 Restores nu-nubar symmetry on the high-y FD-tail
+#                 extrapolation.
+# Default "per_flavor" preserves bit-identical pre-sprint-3f behaviour
+# for the closure config; flip to "uniform" once sprint 3f verifies the
+# Yp recovery and four-Hannestad-point closure.
+qke_phaseB_clamp_mode = "per_flavor"
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

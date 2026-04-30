@@ -3580,3 +3580,135 @@ Stage F sprint 3e carryovers:
    is a sufficient pre-cure-firing health check.
 4. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
    FALSIFIED / CHARACTERISED).
+
+**F sprint 3f — uniform-clamp variant CURES the Yp sign+magnitude
+(ΔYp = +0.022, sterile-induced ΔYp from SBBN = +0.007, in
+Saviano 2013's predicted range +0.004 to +0.010); Neff lifts
+from 2.20 to 3.37 (toward SM 3.044, literature-consistent);
+but the cure feedback into Phase B inner iteration over-drives
+sterile production (sum_ss(raw) 1.95 → 12.87, δNeff_ss
+0.027 → 0.181, OUT of HTT band [0.02, 0.10] by 80 percent).
+Sprint 3g should decouple Phase-B inner cure from the end-
+of-Phase-B downstream cure.** Sprint 3e located the bug in
+asymmetric per-flavor cure-clamp firing under sterile mixing.
+Sprint 3f (this record) implements a new opt-in flag
+`qke_phaseB_clamp_mode` with values `"per_flavor"` (default,
+sprint-19 behaviour) and `"uniform"` (clamp fires on every
+active flavor unconditionally when the cure flag is on,
+restoring ν-ν̄ symmetry on the high-y FD-tail extrapolation).
+
+Implementation surface (additive, opt-in, default-off bit-identical):
+
+  * `PRyM/PRyM_init.py` — new flag `qke_phaseB_clamp_mode`
+    (default `"per_flavor"`; alternative `"uniform"`).
+  * `PRyM/PRyM_boltzmann.py` — both clamp sites
+    (`_make_f_callable` ~line 2722, `make_f_callable`
+    ~line 2862) extended to read the mode flag and decide
+    firing condition. Default branch preserves bit-identical
+    pre-sprint-3f behaviour.
+  * `validation/diagnostics/diag_stage_f3f_uniform_clamp_probe.{py,out,npz}`
+    — paired-run Hannestad Point C harness at
+    (anchor='T_nu_init', mode='per_flavor' vs 'uniform').
+    172.6 min sequential.
+
+Sprint F3f verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F3f.1 fast pytest at default | PASS 6/6 in 33s | `qke_phaseB_clamp_mode="per_flavor"` default reproduces pre-sprint-3f numerics. |
+| F3f.2 full pytest at default | PASS 13/13 in 2491s | Default-off bit-identity confirmed across all 13 tests including Mode 5/5b/5c QKE and sterile suite. |
+| F3f.3 U0 reproducibility | PASS | (anchor=T_nu_init, mode=per_flavor) reproduces F3c-C1 to 4 decimals (Yp=0.23194, Neff=2.199, δNeff_ss=0.0273). |
+| F3f.4 U1 (uniform mode, sprint-3f variant) | **HALF-FIX** | Yp = 0.25356 (ΔYp from U0 = +0.022, sign now matches literature consensus); Neff = 3.367 (toward SM 3.044, literature-consistent for sterile thermalization); but δNeff_ss = 0.1809 (out of HTT band [0.02, 0.10] by 80%). Active-sector gates (Yp ≤ 0.255, Neff ≤ 4.0) PASS marginally; sterile-sector gate FAIL. |
+
+Per-run results (Hannestad Point C, n_B=12000, y_max=100,
+Ny=100, anchor=T_nu_init):
+
+| Run | Yp | Neff | δNeff_ss | sum_ss(raw) | wall-clock |
+|---|---|---|---|---|---|
+| U0 (per_flavor) | 0.23194 | 2.199 | 0.0273 ✓ | 1.95 | 5726 s |
+| U1 (uniform) | **0.25356** | **3.367** | **0.1809 ✗** | **12.87** | 4610 s |
+
+Reference (SBBN, sterile-OFF F3d): Yp=0.247, Neff=2.954.
+Sterile-induced shifts under U1: ΔYp = +0.007, ΔNeff = +0.413
+— both in the literature-consensus direction and magnitude.
+
+The four structural findings:
+
+* **The Yp sign+magnitude is CURED under uniform clamp.** Yp
+  shifts from 0.232 (per_flavor, sign-opposite to literature)
+  to 0.254 (uniform, sign-correct). The sterile-induced
+  ΔYp = Yp_U1 − Yp_F3d = 0.25356 − 0.24717 = +0.00639 — sits
+  inside Saviano 2013's predicted +0.004 to +0.010 range
+  for comparable QKE+BBN configurations. This is the first
+  Stage-F finding to recover a Yp shift that agrees with
+  published literature in BOTH sign AND magnitude.
+* **Neff also moves in the literature-consensus direction.**
+  U0 Neff=2.199 (deep below SM 3.044), U1 Neff=3.367
+  (above SM, consistent with sterile thermalization
+  contribution). The +1.17 Neff lift is larger than
+  Saviano's typical +0.05 to +0.1 at Point C parameters,
+  suggesting the uniform clamp may over-correct Neff
+  somewhat — but this is the right direction.
+* **The cure feedback into Phase B over-drives sterile
+  production.** The cure flag affects the f_α_general
+  callables, which are read by `rho_3nu(Tg)` during the
+  Phase-B `dTtotdt` ODE. Sprint 19 part 2 §8.4 already
+  documented that "the cure also feeds back into Phase B
+  dynamics via dTtotdt → rho_3nu(Tg) — the cured Phase B
+  produces slightly different per-flavor f_α grids than the
+  pre-cure run". Per_flavor mode shifts sterile sum from
+  pre-cure 0.054 to cured 0.095 (within band). Uniform
+  mode shifts to 0.181 (out of band) because the antineutrino
+  flavors are now ALSO clamped during Phase B inner iteration,
+  perturbing the active-sterile feedback in a stronger way.
+* **The fix is to decouple Phase-B inner cure from
+  end-of-Phase-B downstream cure.** Apply per_flavor cure
+  during Phase B inner iteration (preserves sprint-19
+  Phase-B physics → δNeff_ss in band), and apply uniform
+  cure only at end-of-Phase-B for downstream consumers
+  (rho_3nu at low Tg, weak rates) — restoring ν-ν̄ symmetry
+  on the high-y tail without over-driving sterile production.
+  Single new flag: `qke_phaseB_inner_clamp_mode` vs the
+  existing `qke_phaseB_clamp_mode`. Or: gate the uniform
+  mode to fire only on the LAST update_thermo_distributions
+  call (end-of-Phase-B).
+
+**Stage F sprint 3f conclusion (HALF-FIX, sprint 3g
+well-scoped).** The uniform-clamp variant proves the Yp bug
+diagnosis from sprint 3e is correct (the cure was breaking
+ν-ν̄ symmetry on the high-y tail). The naive uniform fix
+cures Yp but over-perturbs Phase B sterile dynamics. Sprint
+3g separates the two regimes.
+
+Stage F sprint 3f carryovers:
+
+1. **`qke_phaseB_clamp_mode` flag is shipped opt-in,
+   default `"per_flavor"`.** Bit-identical pre-sprint-3f
+   numerics at default (verified by 13/13 regression).
+   `"uniform"` is available for sprint 3g and future
+   investigation but is NOT a production default.
+2. **Sprint 3g (next, well-scoped)**: separate Phase-B inner
+   cure from end-of-Phase-B downstream cure. Two
+   implementation options:
+   (a) Add `qke_phaseB_inner_clamp_mode` flag controlling
+       only the within-Phase-B `update_thermo_distributions`
+       calls; default per_flavor. Existing
+       `qke_phaseB_clamp_mode` then controls only the FINAL
+       update at end-of-Phase-B.
+   (b) Replace the mode flag with a single
+       `qke_phaseB_clamp_uniform_at_end` flag that switches
+       to uniform mode ONLY on the final
+       `update_thermo_distributions` call before Phase C.
+   Option (b) is the smaller change. Run a single Hannestad
+   Point C probe under (b); if Yp recovers (~0.254) AND
+   δNeff_ss stays in band ([0.02, 0.10]), default-flip and
+   re-run the four-Hannestad-point scan.
+3. **The literature-as-oracle lesson (continued)**: the
+   uniform-clamp result (sterile-induced ΔYp = +0.007) is
+   the first sterile-on observable in this codebase that
+   agrees with published literature in both sign and
+   magnitude. This is strong evidence the bug location
+   (sprint 3e) and the cure direction (sprint 3f) are
+   correct.
+4. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).

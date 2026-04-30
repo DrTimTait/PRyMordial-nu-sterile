@@ -1,0 +1,23 @@
+==============================================================================================================
+Stage F sprint 3f: uniform-clamp variant probe
+  Hannestad Point C (sin^2(2theta_24)=1e-4, dm^2=0.93 eV^2), n_B=12000, y_max=100, Ny=100
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  Anchor: 'T_nu_init' (clamp target = 1/T_nu_init = 0.00952)
+  Mode: vary qke_phaseB_clamp_mode in {per_flavor, uniform}
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3f uniform-clamp probe results
+==============================================================================================================
+  [ALL-PASS  ] U0 (per_flavor + T_nu_init anchor)          Yp=0.23194  Neff=2.1985  D/H=2.0936  delta_Neff_ss=0.0273  sum_ss(raw)=1.948  (5726s)
+  [GATE-BREAK] U1 (uniform + T_nu_init anchor)             Yp=0.25356  Neff=3.3672  D/H=2.5980  delta_Neff_ss=0.1809  sum_ss(raw)=12.873  (4610s)
+
+  U1 - U0 deltas (per_flavor -> uniform):
+    delta(Yp)            = +0.02161  (SM-reference Yp = 0.2470)
+    delta(Neff)          = +1.1687
+    delta(delta_Neff_ss) = +0.1536
+
+  Stage F sprint 3f verdict: UNIFORM CLAMP HALF-FIX
+    Uniform clamp shifts Yp from 0.2319 to 0.2536 (recovery 143.6%, sign now correct), but gates broken: delta_neff_ss=0.1809 not in HTT band. Document and pivot to sprint 3g.
+
+  Total wall-clock: 10338s (172.3 min)

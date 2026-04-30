@@ -2733,10 +2733,21 @@ class BoltzmannSolver(object):
                 # fires only when polyfit < target on this flavor; "uniform"
                 # fires on every active flavor unconditionally when the cure
                 # flag is on, restoring nu-nubar symmetry on the high-y tail.
+                # Stage F sprint 3g: when qke_phaseB_clamp_uniform_at_end is
+                # True, override the mode to "uniform" ONLY on the final
+                # end-of-Phase-B update_thermo_distributions call (signalled
+                # by a_of_T being non-None). Inner Phase-B calls keep the
+                # per_flavor mode, preserving the sprint-19 dTtotdt -> rho_3nu
+                # feedback that maintains the HTT-band sterile closure.
                 _clamp_on = getattr(PRyMini, "qke_post_phaseB_clamp_flag",
                                     False)
                 _clamp_mode = getattr(PRyMini, "qke_phaseB_clamp_mode",
                                       "per_flavor")
+                _uniform_at_end = getattr(
+                    PRyMini, "qke_phaseB_clamp_uniform_at_end", False)
+                _is_final_call = a_of_T is not None
+                if _uniform_at_end and _is_final_call:
+                    _clamp_mode = "uniform"
                 _fire_uniform = _clamp_on and _clamp_mode == "uniform"
                 _fire_per_flavor = (_clamp_on
                                     and _clamp_mode != "uniform"
@@ -2880,9 +2891,15 @@ class BoltzmannSolver(object):
             else:
                 _clamp_target = 1.0 / y_grid[-1]
             # Stage F sprint 3f: clamp firing mode; see _make_f_callable.
+            # Stage F sprint 3g: uniform_at_end override; see _make_f_callable.
             _clamp_on = getattr(PRyMini, "qke_post_phaseB_clamp_flag", False)
             _clamp_mode = getattr(PRyMini, "qke_phaseB_clamp_mode",
                                   "per_flavor")
+            _uniform_at_end = getattr(
+                PRyMini, "qke_phaseB_clamp_uniform_at_end", False)
+            _is_final_call = a_of_T_func is not None
+            if _uniform_at_end and _is_final_call:
+                _clamp_mode = "uniform"
             _fire_uniform = _clamp_on and _clamp_mode == "uniform"
             _fire_per_flavor = (_clamp_on
                                 and _clamp_mode != "uniform"

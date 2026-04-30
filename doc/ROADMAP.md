@@ -3712,3 +3712,144 @@ Stage F sprint 3f carryovers:
    correct.
 4. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
    FALSIFIED / CHARACTERISED).
+
+**F sprint 3g — decoupling FAILS for Yp. The end-of-Phase-B
+uniform clamp lifts Neff to 3.30 (toward SM) and preserves
+δNeff_ss in HTT band, but Yp is COMPLETELY UNCHANGED from
+the per_flavor baseline. F3f-U1's Yp recovery was driven by
+the Phase-B inner-iteration uniform clamp via the
+active-sterile feedback loop reshaping the QKE end-state, NOT
+by the static end-of-Phase-B clamp on the downstream callables.
+There is no "best of both worlds" via this axis: full-uniform
+cures Yp but breaks Point C δNeff_ss; per_flavor preserves
+δNeff_ss but doesn't cure Yp; uniform-at-end gives the Neff
+lift but neither extreme of the Yp/δNeff_ss tradeoff.** Sprint
+3f showed full-uniform mode cures Yp at the cost of breaking
+HTT closure. Sprint 3g (this record) implements
+qke_phaseB_clamp_uniform_at_end to apply uniform mode ONLY at
+the final post-Phase-B update_thermo_distributions call
+(distinguished by a non-None a_of_T_func), keeping per_flavor
+during Phase-B inner iteration.
+
+Implementation surface (additive, opt-in, default-off bit-identical):
+
+  * `PRyM/PRyM_init.py` — new flag
+    `qke_phaseB_clamp_uniform_at_end` (default False).
+  * `PRyM/PRyM_boltzmann.py` — both clamp sites
+    (`_make_f_callable` ~line 2722, `make_f_callable`
+    ~line 2862) extended to detect the final-call signal
+    (`a_of_T is not None`) and override `_clamp_mode` to
+    `"uniform"` only on that call when the new flag is True.
+    Default False preserves bit-identical pre-sprint-3g
+    behaviour.
+  * `validation/diagnostics/diag_stage_f3g_decoupled_clamp_probe.{py,out,npz}`
+    — paired-run Hannestad Point C harness at (anchor=T_nu_init,
+    mode=per_flavor, uniform_at_end={False, True}). 175.3 min
+    sequential.
+
+Sprint F3g verification gates:
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| F3g.1 fast pytest at default | PASS 6/6 in 39s | `qke_phaseB_clamp_uniform_at_end=False` default reproduces pre-sprint-3g numerics. |
+| F3g.2 full pytest at default | PASS 13/13 in 2731s | Default-off bit-identity confirmed across all 13 tests. |
+| F3g.3 D0 reproducibility | PASS | (mode=per_flavor, uniform_at_end=False) reproduces F3f-U0 exactly (Yp=0.23194, Neff=2.199, δNeff_ss=0.0273). |
+| F3g.4 D1 (uniform_at_end=True) | **DECOUPLED CURE FAILS** for Yp | Yp = 0.23194 (UNCHANGED from D0 — bit-identical), Neff = 3.295 (lifted +1.10, close to F3f-U1's 3.367), δNeff_ss = 0.0273 (UNCHANGED, in HTT band). End-of-Phase-B clamp moves Neff but NOT Yp. |
+
+Per-run results (Hannestad Point C, n_B=12000, anchor=T_nu_init,
+mode=per_flavor):
+
+| Run | Yp | Neff | δNeff_ss | sum_ss(raw) | wall-clock |
+|---|---|---|---|---|---|
+| D0 (uniform_at_end=False) | 0.23194 | 2.199 | 0.0273 ✓ | 1.95 | 5855 s |
+| D1 (uniform_at_end=True) | 0.23194 | **3.295** | 0.0273 ✓ | 1.95 | 4663 s |
+| F3f-U1 (full uniform reference) | 0.25356 | 3.367 | 0.1809 ✗ | 12.87 | — |
+
+The four structural findings:
+
+* **Neff is sensitive to the end-of-Phase-B clamp; Yp is
+  not.** D1's Neff lifts +1.10 from D0 (via uniform clamp on
+  the FINAL `update_thermo_distributions` call → uniform tail
+  extrapolation in the rho_3nu(Tg) integrand at low Tg →
+  larger downstream-readout radiation density). But D1's Yp
+  is bit-identical to D0. The cached n↔p weak-rate tables
+  (compute_nTOp_flag=False) are static across runs; Yp
+  responds only to changes in the QKE end-state grids
+  (`_boltz_rho_final`), which D1 does NOT change (per_flavor
+  inner iteration is identical to D0).
+* **F3f-U1's Yp recovery was Phase-B-feedback-driven, NOT
+  end-of-Phase-B-driven.** The full-uniform clamp during
+  Phase B inner iteration changes f_α_general callables AT
+  EVERY STEP, which feeds back via rho_3nu(Tg) → dTtotdt
+  → a(T) → next Phase-B step's QKE inputs. This reshapes
+  the QKE end-state (different `_boltz_rho_final`), which
+  is what changes Yp. The end-of-Phase-B static clamp can't
+  reproduce this dynamical effect.
+* **There is no "best of both worlds" via the
+  uniform-vs-per_flavor axis.** The three configurations
+  partition the Yp / δNeff_ss tradeoff:
+  - per_flavor: δNeff_ss in band, Yp wrong sign
+  - uniform-at-end: δNeff_ss in band, Yp wrong sign,
+    Neff lifted
+  - full-uniform: Yp right sign+magnitude, δNeff_ss out
+    of band by 80%
+  The bug fix surface is more nuanced than a binary
+  per_flavor / uniform choice.
+* **Sprint 3h has three candidate directions, in
+  decreasing physics-correctness order:**
+  - **3h-a (cheapest)**: run the four-Hannestad-point
+    scan under F3f-U1 (full-uniform). Accept Point C
+    δNeff_ss out-of-band as a trade for potentially
+    better global-fit-(NH) closure (sprint 1's main open
+    issue: the 0.944 overshoot from expected 0.55). If
+    the global-fit point lands in [0.4, 0.7] under
+    full-uniform, the trade may be net positive.
+  - **3h-b (cleaner)**: symmetrize the polyfit BEFORE
+    clamping. Replace `_tail_b` with the average of ν
+    and ν̄ slopes per flavor, then apply the
+    per_flavor clamp condition. This restores ν-ν̄
+    symmetry without the over-correction of full
+    uniform. Predicted intermediate effect on δNeff_ss;
+    should still cure Yp partially.
+  - **3h-c (root-cause)**: go upstream into
+    `PRyM_eval_nTOp.py` and inspect the n→p weak-rate
+    Pauli-blocking term `(1 − f_ν̄_e)` consumer. If
+    there is a sign / normalization slip in how the
+    QKE-distorted f_ν̄_e is consumed, the bug may live
+    there rather than in the cure-clamp at all. The cure
+    flag's asymmetric firing in sprint 3e may be a
+    SYMPTOM (downstream consumer perturbing the polyfit
+    via dTtotdt feedback), not the root cause.
+
+**Stage F sprint 3g conclusion (decoupling FALSIFIED for Yp;
+opens 3 candidate sprint 3h directions).** The Yp recovery
+mechanism in F3f-U1 lives in the Phase-B inner-iteration
+QKE feedback loop, not in the static end-of-Phase-B clamp.
+A full physics fix needs either (a) accepting the
+Yp-vs-δNeff_ss tradeoff, (b) a finer-grained ν-ν̄
+symmetrisation that doesn't over-correct, or (c) finding the
+root cause in the n→p weak-rate consumer.
+
+Stage F sprint 3g carryovers:
+
+1. **`qke_phaseB_clamp_uniform_at_end` flag is shipped
+   opt-in, default False.** Bit-identical pre-sprint-3g
+   numerics at default (verified by 13/13 regression).
+   The flag is useful as a Neff-lifting knob that
+   preserves δNeff_ss closure, but does NOT cure Yp.
+2. **Sprint 3h-a is the cheapest next move**: run
+   four-Hannestad-point scan under F3f-U1 (full-uniform)
+   to evaluate whether the strong-mixing benchmarks (A,
+   global-fit) recover under uniform mode. Cost ~5h
+   sequential.
+3. **Sprint 3h-b** (polyfit symmetrisation) and **3h-c**
+   (weak-rate consumer audit) require code edits but
+   may be the principled fix.
+4. **The decoupling-experiment lesson**: when a candidate
+   cure has multiple firing surfaces (here: per Phase-B
+   inner-step vs end-of-Phase-B once), instrument BOTH
+   and decouple them. Sprint 3g's experiment falsified
+   the simple decoupling hypothesis directly, saving a
+   longer sprint chain.
+5. **Suspects 6/7/8 statuses** unchanged (FALSIFIED /
+   FALSIFIED / CHARACTERISED).

@@ -1,0 +1,26 @@
+==============================================================================================================
+Stage F sprint 3g: decoupled-clamp probe
+  Hannestad Point C (sin^2(2theta_24)=1e-4, dm^2=0.93 eV^2), n_B=12000, y_max=100, Ny=100
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  Anchor: 'T_nu_init', Mode: 'per_flavor'
+  Probing qke_phaseB_clamp_uniform_at_end in {False, True}
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3g decoupled-clamp probe results
+==============================================================================================================
+  [ALL-PASS  ] D0 (per_flavor mode, uniform_at_end=False)          Yp=0.23194  Neff=2.1985  D/H=2.0936  delta_Neff_ss=0.0273  sum_ss(raw)=1.948  (5855s)
+  [ALL-PASS  ] D1 (per_flavor mode, uniform_at_end=True)           Yp=0.23194  Neff=3.2946  D/H=2.0937  delta_Neff_ss=0.0273  sum_ss(raw)=1.948  (4663s)
+
+  D1 - D0 deltas (uniform_at_end False -> True):
+    delta(Yp)            = -0.00000  (SM-reference Yp = 0.2470)
+    delta(Neff)          = +1.0961
+    delta(delta_Neff_ss) = +0.0000
+
+  F3f-U1 reference (full-uniform): Yp=0.25356, Neff=3.367, delta_Neff_ss=0.1809 (out of band)
+  Targets for D1: Yp ~ 0.254 AND delta_Neff_ss in [0.02, 0.10]
+
+  Stage F sprint 3g verdict: DECOUPLED CURE FAILS
+    D1 gives Yp=0.2319, shift only -0.00000. The full uniform-clamp feedback through Phase B was what drove the F3f-U1 Yp recovery. Re-think the cure design.
+
+  Total wall-clock: 10519s (175.3 min)

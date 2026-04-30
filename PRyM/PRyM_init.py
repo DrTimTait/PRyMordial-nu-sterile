@@ -178,6 +178,21 @@ qke_phaseB_clamp_anchor = "y_grid"
 # for the closure config; flip to "uniform" once sprint 3f verifies the
 # Yp recovery and four-Hannestad-point closure.
 qke_phaseB_clamp_mode = "per_flavor"
+# Stage F sprint 3g: decoupled-clamp variant. Sprint 3f showed that
+# qke_phaseB_clamp_mode='uniform' cures the Yp sign+magnitude (sterile-
+# induced delta_Yp = +0.007, inside Saviano 2013 range +0.004 to +0.010)
+# but over-drives sterile production via cure feedback into the Phase-B
+# inner iteration (delta_neff_ss out of HTT band by ~80 percent at
+# Hannestad Point C). The fix is to apply uniform mode ONLY to the
+# end-of-Phase-B update_thermo_distributions call (which sets the
+# callables consumed by Phase C / BBN weak rates), keeping per_flavor
+# mode during Phase-B inner iteration (which drives dTtotdt -> rho_3nu
+# -> a(T) feedback). The end-of-Phase-B call is the one that passes a
+# non-None a_of_T_func; inner calls pass None.
+# When True, the cure clamp fires in uniform mode on the final call only;
+# inner calls follow qke_phaseB_clamp_mode unchanged. Default False
+# preserves bit-identical pre-sprint-3g behaviour.
+qke_phaseB_clamp_uniform_at_end = False
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

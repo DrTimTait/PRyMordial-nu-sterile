@@ -92,11 +92,17 @@ POINTS = [
         "n_B": 12000,
     },
     {
+        # HTT 2012 page 8 (§3.2) explicit: "(δm²_s, sin²2θ_s) =
+        # (0.9 eV², 0.089). For that point δNeff = 1 in both
+        # hierarchies, i.e. complete thermalization occurs."
+        # The earlier 0.55 / [0.4, 0.7] entry was a citation
+        # error (sprint 3h-d audit); HTT's 0.55 is at a
+        # different IH-resonance illustration point on page 10.
         "label": "Global-fit (NH)",
         "sin2_2theta_24": 0.089,
         "Dm2_41": 0.9,
-        "expected_delta_neff_ss": 0.55,
-        "pass_band": (0.4, 0.7),
+        "expected_delta_neff_ss": 1.0,
+        "pass_band": (0.9, 1.1),
         "n_B": 12000,
     },
 ]

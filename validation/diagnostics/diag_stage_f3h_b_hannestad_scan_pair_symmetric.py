@@ -90,11 +90,14 @@ POINTS = [
         "n_B": 12000,
     },
     {
+        # HTT 2012 page 8 explicit: δNeff = 1 at this point under
+        # L=0 NH (and L=0 IH). The 0.55 / [0.4, 0.7] cited in
+        # earlier sprints was a citation error (sprint 3h-d audit).
         "label": "Global-fit (NH)",
         "sin2_2theta_24": 0.089,
         "Dm2_41": 0.9,
-        "expected_delta_neff_ss": 0.55,
-        "pass_band": (0.4, 0.7),
+        "expected_delta_neff_ss": 1.0,
+        "pass_band": (0.9, 1.1),
         "n_B": 12000,
     },
 ]

@@ -9,7 +9,7 @@ sprint 18's single Point C to all four Hannestad benchmark points:
 | A          | 0.1       | 0.93      | ~1.0                       | [0.9, 1.1]      |
 | B          | 2.26e-3   | 0.93      | ~0.5                       | [0.3, 0.7]      |
 | C          | 1e-4      | 0.93      | ~0.03 (already in band)    | [0.02, 0.10]    |
-| Global-fit | 0.089     | 0.9       | ~0.55 (NH)                 | [0.4, 0.7]      |
+| Global-fit | 0.089     | 0.9       | =1 (HTT page 8, both NH/IH) | [0.9, 1.1]      |
 
 All under cured closure config at production n_B. Sequential ~35 min each
 plus overhead → ~2.5 h. Targets: each point's δNeff_ss must land inside
@@ -69,11 +69,17 @@ POINTS = [
         "n_B": 12000,
     },
     {
+        # HTT 2012 page 8 (§3.2) explicit: δNeff = 1 at this point
+        # under L=0 NH (and L=0 IH). The 0.55 / [0.4, 0.7] cited
+        # in earlier sprints was a citation error — see
+        # doc/STAGE_F_SPRINT3HD_HANNESTAD_AUDIT.md. The NPZ data
+        # from earlier scans is still valid; only the verdict
+        # cell was misclassified.
         "label": "Global-fit (NH)",
         "sin2_2theta_24": 0.089,
         "Dm2_41": 0.9,
-        "expected_delta_neff_ss": 0.55,
-        "pass_band": (0.4, 0.7),
+        "expected_delta_neff_ss": 1.0,
+        "pass_band": (0.9, 1.1),
         "n_B": 12000,
     },
 ]

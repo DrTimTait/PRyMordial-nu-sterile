@@ -1,0 +1,33 @@
+==============================================================================================================
+Stage F sprint 3h-b': four-Hannestad-point scan under pair-OR per_flavor clamp
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  3h-b' cure: anchor='T_nu_init', mode='per_flavor', pair_symmetric=True, rule='min'
+  Production grid: y_max=100, Ny=100, n_B=12000, T_boltz_start=100, T_start=105 MeV
+  References: gate-5 (per_flavor) 3/4 PASS Yp wrong-sign; 3h-a (uniform) 1/4 PASS Yp right-sign; 3h-b (avg-pair) 1/4 PASS active-sector regression at mid/narrow
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3h-b' four-Hannestad-point scan under pair-OR mode
+==============================================================================================================
+  [PASS] A (strong mixing)                       delta_Neff_ss=0.9341 (expected 1.00, band [0.90, 1.10])  Yp=0.2509  Neff=2.393  (4344s)
+  [PASS] B (mid mixing)                          delta_Neff_ss=0.6781 (expected 0.50, band [0.30, 0.70])  Yp=0.2462  Neff=2.942  (5115s)
+  [PASS] C (narrow mixing)                       delta_Neff_ss=0.0276 (expected 0.03, band [0.02, 0.10])  Yp=0.2319  Neff=3.345  (4398s)
+  [FAIL] Global-fit (NH)                         delta_Neff_ss=0.9457 (expected 0.55, band [0.40, 0.70])  Yp=0.2497  Neff=2.758  (5854s)
+
+Comparison vs gate-5 (per_flavor) / 3h-a (uniform) / 3h-b (avg-pair):
+  point                                    g5 dNss  3ha dNss  3hb dNss  3hbp dNss    g5 Yp   3ha Yp   3hb Yp   3hbp Yp   3hbp dYp_st
+  A (strong mixing)                         0.9151    0.9150    0.9431     0.9341   0.2386   0.2509   0.2486    0.2509      +0.00378
+  B (mid mixing)                            0.6454    0.2173    0.4040     0.6781   0.2400   0.2524   0.2385    0.2462      -0.00102
+  C (narrow mixing)                         0.0947    0.1809    0.0273     0.0276   0.2386   0.2536   0.2319    0.2319      -0.01523
+  Global-fit (NH)                           0.9445    0.9448    0.8995     0.9457   0.2429   0.2509   0.2413    0.2497      +0.00256
+
+  Stage E.2 verdict (under 3h-b' cure): SUBSTANTIAL Stage E.2 closure (one outlier: Global-fit (NH))
+    3/4 points pass; outlier delta_neff_ss=0.9457 not in [0.40, 0.70].
+
+  Sterile-induced Yp shifts vs SBBN (Saviano 2013 expected +0.001 to +0.012):
+    A (strong mixing)                       delta_Yp = +0.00378  (POSITIVE (literature-consistent))
+    B (mid mixing)                          delta_Yp = -0.00102  (NEGATIVE (literature-inconsistent))
+    C (narrow mixing)                       delta_Yp = -0.01523  (NEGATIVE (literature-inconsistent))
+    Global-fit (NH)                         delta_Yp = +0.00256  (POSITIVE (literature-consistent))
+
+  Total wall-clock: 19712s (328.5 min)

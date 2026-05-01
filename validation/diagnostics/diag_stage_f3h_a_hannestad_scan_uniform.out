@@ -1,0 +1,33 @@
+==============================================================================================================
+Stage F sprint 3h-a: four-Hannestad-point scan under full-uniform clamp
+  Closure config: damping='symmetric', v_nunu_active_only=True, phase0=False, post-Phase-B clamp=True
+  F3f-U1 cure: anchor='T_nu_init', mode='uniform', uniform_at_end=False
+  Production grid: y_max=100, Ny=100, n_B=12000, T_boltz_start=100, T_start=105 MeV
+  Compares to gate-5 sprint-19 (per_flavor + y_grid) reference: 3/4 points in band, global-fit overshoot 0.944 vs [0.4, 0.7]
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 3h-a four-Hannestad-point scan under uniform mode
+==============================================================================================================
+  [PASS] A (strong mixing)                       delta_Neff_ss=0.9150 (expected 1.00, band [0.90, 1.10])  Yp=0.2509  Neff=3.279  (4498s)
+  [FAIL] B (mid mixing)                          delta_Neff_ss=0.2173 (expected 0.50, band [0.30, 0.70])  Yp=0.2524  Neff=3.445  (5649s)
+  [FAIL] C (narrow mixing)                       delta_Neff_ss=0.1809 (expected 0.03, band [0.02, 0.10])  Yp=0.2536  Neff=3.367  (5169s)
+  [FAIL] Global-fit (NH)                         delta_Neff_ss=0.9448 (expected 0.55, band [0.40, 0.70])  Yp=0.2509  Neff=3.257  (4645s)
+
+Comparison vs gate-5 sprint-19 reference (per_flavor + y_grid):
+  point                                   gate-5 dNss   F3h-a dNss    gate-5 Yp     F3h-a Yp    dYp_sterile
+  A (strong mixing)                            0.9151       0.9150       0.2386       0.2509       +0.00378
+  B (mid mixing)                               0.6454       0.2173       0.2400       0.2524       +0.00525
+  C (narrow mixing)                            0.0947       0.1809       0.2386       0.2536       +0.00639
+  Global-fit (NH)                              0.9445       0.9448       0.2429       0.2509       +0.00378
+
+  Stage E.2 verdict (under F3f-U1 cure): INCOMPLETE Stage E.2 closure (1/4 points)
+    Less coverage than gate-5 sprint-19 (3/4); uniform mode may not be a net improvement.
+
+  Sterile-induced Yp shifts vs SBBN (Saviano 2013 expected +0.001 to +0.012):
+    A (strong mixing)                       delta_Yp = +0.00378  (POSITIVE (literature-consistent))
+    B (mid mixing)                          delta_Yp = +0.00525  (POSITIVE (literature-consistent))
+    C (narrow mixing)                       delta_Yp = +0.00639  (POSITIVE (literature-consistent))
+    Global-fit (NH)                         delta_Yp = +0.00378  (POSITIVE (literature-consistent))
+
+  Total wall-clock: 19962s (332.7 min)

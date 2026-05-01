@@ -193,6 +193,35 @@ qke_phaseB_clamp_mode = "per_flavor"
 # inner calls follow qke_phaseB_clamp_mode unchanged. Default False
 # preserves bit-identical pre-sprint-3g behaviour.
 qke_phaseB_clamp_uniform_at_end = False
+# Stage F sprint 3h-b: pair-symmetrise the polyfit slope used by the
+# per_flavor clamp firing test. Sprint 3e/3g showed that sterile mixing
+# breaks nu-nubar symmetry on the high-y polyfit slope: ν_e drops below
+# the clamp target while ν̄_e stays above, so the per_flavor condition
+# fires the clamp on ν_e but not on ν̄_e. The asymmetric tail then enters
+# n→p Pauli-blocking (1 - f_νebar) with one side FD-suppressed and the
+# other side polyfit-flat, producing a sign-flipped Yp shift. Sprint
+# 3h-a's full-uniform fix cured the Yp sign at the cost of degrading
+# four-point coverage from 3/4 to 1/4. This flag instead replaces the
+# slope used in the per_flavor firing test with the (ν, ν̄) pair-average
+# slope, so the clamp fires on both members of a pair or neither — but
+# leaves each member's per-flavor _tail_a (and the bulk f-grid below
+# y_max_grid) untouched. The aim is to preserve gate-5's 3/4 PASS
+# coverage while restoring the symmetric Yp shift seen under uniform
+# mode. Default False preserves bit-identical pre-sprint-3h-b behaviour.
+qke_phaseB_clamp_pair_symmetric = False
+# Stage F sprint 3h-b' (OR-firing variant): selects how the per_flavor
+# firing test is symmetrised when qke_phaseB_clamp_pair_symmetric is True.
+#   "avg" — pair-average slope used in the firing test (sprint 3h-b
+#           default; lax — fires only when both members straddle the
+#           target, leading to under-firing at mid/narrow mixing where
+#           the (ν, ν̄) asymmetry is small).
+#   "min" — minimum-of-pair slope used in the firing test (sprint 3h-b'
+#           variant; equivalent to logical OR — fires on both members
+#           whenever either member's individual slope is below target,
+#           preserving per_flavor's coverage AND restoring nu-nubar tail
+#           symmetry).
+# Default "avg" preserves bit-identical pre-sprint-3h-b' behaviour.
+qke_phaseB_clamp_pair_symmetric_rule = "avg"
 # Range in time for sampling of thermodynamics background
 t_end = 1.e+7 # [s], chosen as 10 x O(t(T_end))
 

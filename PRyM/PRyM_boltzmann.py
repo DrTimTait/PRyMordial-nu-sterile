@@ -2694,7 +2694,7 @@ class BoltzmannSolver(object):
         current_a = a
         a_func = a_of_T_func
 
-        def _make_f_callable(f_grid, a_val, a_of_T=None):
+        def _make_f_callable(f_grid, a_val, a_of_T=None, tail_b_for_test=None):
             # Fit FD-tail extrapolation parameters: log(1/f - 1) = tail_a + tail_b * y
             f_min = 1.0e-12
             tail_y = []
@@ -2711,6 +2711,12 @@ class BoltzmannSolver(object):
                 tail_l = np.array(tail_l)
                 coeffs = np.polyfit(tail_y, tail_l, 1)
                 _tail_b, _tail_a = coeffs[0], coeffs[1]
+                # Stage F sprint 3h-b: pair-symmetrise the slope used in the
+                # per_flavor firing test only. _tail_b (the value substituted
+                # into the tail when the clamp fires) and _tail_a (derived
+                # from this flavor's f_grid[-1]) are unchanged.
+                _tail_b_test = (_tail_b if tail_b_for_test is None
+                                else float(tail_b_for_test))
                 # Stage E.2 sprint 19 part 2 cure: when on, also reject
                 # polyfits that produce a tail decay rate slower than the
                 # clamp target. Without the cure, a noisy 10-point tail with
@@ -2751,7 +2757,7 @@ class BoltzmannSolver(object):
                 _fire_uniform = _clamp_on and _clamp_mode == "uniform"
                 _fire_per_flavor = (_clamp_on
                                     and _clamp_mode != "uniform"
-                                    and _tail_b < _clamp_target)
+                                    and _tail_b_test < _clamp_target)
                 if _tail_b <= 0 or _fire_uniform or _fire_per_flavor:
                     _tail_b = _clamp_target
                     _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
@@ -2799,8 +2805,50 @@ class BoltzmannSolver(object):
                     return _eval_f(y)
             return f_nu
 
-        PRyMthermo.f_nue_general = _make_f_callable(f_nue_grid, current_a, a_func)
-        PRyMthermo.f_nuebar_general = _make_f_callable(f_nuebar_grid, current_a, a_func)
+        # Stage F sprint 3h-b: pair-symmetric polyfit slope for the
+        # per_flavor clamp firing test. Computes the same polyfit slope
+        # the closure would compute on each flavor's f_grid, then
+        # averages within each (ν, ν̄) pair and passes the average as
+        # tail_b_for_test to both members of the pair. _tail_a (and
+        # therefore the bulk f at y < y_max_grid) is unchanged.
+        _pair_symm = getattr(PRyMini,
+                             "qke_phaseB_clamp_pair_symmetric", False)
+
+        def _polyfit_slope(f_grid):
+            f_min = 1.0e-12
+            ty, tl = [], []
+            for i in range(len(y_grid) - 1, -1, -1):
+                fi = f_grid[i]
+                if fi > f_min and fi < 1.0 - f_min:
+                    ty.append(y_grid[i])
+                    tl.append(np.log(1.0/fi - 1.0))
+                    if len(ty) >= 10:
+                        break
+            if len(ty) < 2:
+                return None
+            return float(np.polyfit(np.array(ty), np.array(tl), 1)[0])
+
+        _pair_rule = getattr(PRyMini,
+                              "qke_phaseB_clamp_pair_symmetric_rule",
+                              "avg")
+
+        def _pair_avg(b1, b2):
+            if b1 is None or b2 is None:
+                return None
+            if _pair_rule == "min":
+                return min(b1, b2)
+            return 0.5 * (b1 + b2)
+
+        if _pair_symm:
+            _b_e = _polyfit_slope(f_nue_grid)
+            _b_eb = _polyfit_slope(f_nuebar_grid)
+            _b_e_pair = _pair_avg(_b_e, _b_eb)
+        else:
+            _b_e_pair = None
+        PRyMthermo.f_nue_general = _make_f_callable(
+            f_nue_grid, current_a, a_func, tail_b_for_test=_b_e_pair)
+        PRyMthermo.f_nuebar_general = _make_f_callable(
+            f_nuebar_grid, current_a, a_func, tail_b_for_test=_b_e_pair)
         if self.n_species == 3:
             PRyMthermo.f_numu_general = _make_f_callable(f_numu_grid, current_a, a_func)
             PRyMthermo.f_numubar_general = _make_f_callable(f_numu_grid, current_a, a_func)
@@ -2816,10 +2864,22 @@ class BoltzmannSolver(object):
             f_numubar_grid = f_all[3].copy()
             f_nutau_grid = f_all[4].copy()
             f_nutaubar_grid = f_all[5].copy()
-            PRyMthermo.f_numu_general = _make_f_callable(f_numu_grid, current_a, a_func)
-            PRyMthermo.f_numubar_general = _make_f_callable(f_numubar_grid, current_a, a_func)
-            PRyMthermo.f_nutau_general = _make_f_callable(f_nutau_grid, current_a, a_func)
-            PRyMthermo.f_nutaubar_general = _make_f_callable(f_nutaubar_grid, current_a, a_func)
+            if _pair_symm:
+                _b_mu_pair = _pair_avg(_polyfit_slope(f_numu_grid),
+                                        _polyfit_slope(f_numubar_grid))
+                _b_tau_pair = _pair_avg(_polyfit_slope(f_nutau_grid),
+                                         _polyfit_slope(f_nutaubar_grid))
+            else:
+                _b_mu_pair = None
+                _b_tau_pair = None
+            PRyMthermo.f_numu_general = _make_f_callable(
+                f_numu_grid, current_a, a_func, tail_b_for_test=_b_mu_pair)
+            PRyMthermo.f_numubar_general = _make_f_callable(
+                f_numubar_grid, current_a, a_func, tail_b_for_test=_b_mu_pair)
+            PRyMthermo.f_nutau_general = _make_f_callable(
+                f_nutau_grid, current_a, a_func, tail_b_for_test=_b_tau_pair)
+            PRyMthermo.f_nutaubar_general = _make_f_callable(
+                f_nutaubar_grid, current_a, a_func, tail_b_for_test=_b_tau_pair)
 
         # Stage E.2 sprint 19 part 2: post-Phase-B trace capture (zero overhead
         # when the flag is off). Stashes the raw f_α grids that the
@@ -2858,11 +2918,15 @@ class BoltzmannSolver(object):
                 "called_from": "BoltzmannSolver.update_thermo_distributions",
             }
 
-    def make_f_callable(self, f_grid, a, a_of_T_func=None):
+    def make_f_callable(self, f_grid, a, a_of_T_func=None,
+                         tail_b_for_test=None):
         """Public interface to create a f(p, Tg) callable from a grid array.
 
         Used by DensityMatrixSolver to create callables for each of the 6
-        neutrino flavors independently.
+        neutrino flavors independently. Optional tail_b_for_test supplies
+        a pair-symmetrised polyfit slope used only by the per_flavor
+        clamp firing test (Stage F sprint 3h-b); the actual _tail_b
+        and _tail_a substituted into the tail are unchanged.
         """
         import PRyM.PRyM_thermo as PRyMthermo  # noqa: F811
         y_grid = self.y_grid
@@ -2882,6 +2946,8 @@ class BoltzmannSolver(object):
             tail_l = np.array(tail_l)
             coeffs = np.polyfit(tail_y, tail_l, 1)
             _tail_b, _tail_a = coeffs[0], coeffs[1]
+            _tail_b_test = (_tail_b if tail_b_for_test is None
+                            else float(tail_b_for_test))
             # Stage E.2 sprint 19 part 2 cure: see _make_f_callable comment.
             # Stage F sprint 3c: clamp target selectable via
             # qke_phaseB_clamp_anchor; see _make_f_callable for full discussion.
@@ -2903,7 +2969,7 @@ class BoltzmannSolver(object):
             _fire_uniform = _clamp_on and _clamp_mode == "uniform"
             _fire_per_flavor = (_clamp_on
                                 and _clamp_mode != "uniform"
-                                and _tail_b < _clamp_target)
+                                and _tail_b_test < _clamp_target)
             if _tail_b <= 0 or _fire_uniform or _fire_per_flavor:
                 _tail_b = _clamp_target
                 _tail_a = np.log(1.0/max(f_grid[-1], f_min) - 1.0) - _tail_b * y_grid[-1]
@@ -6037,12 +6103,61 @@ class DensityMatrixSolver(object):
         f_nutau = rho_all[0, 2].copy()
         f_nutaubar = rho_all[1, 2].copy()
 
-        PRyMthermo.f_nue_general = self._boltz.make_f_callable(f_nue, a, a_of_T_func)
-        PRyMthermo.f_nuebar_general = self._boltz.make_f_callable(f_nuebar, a, a_of_T_func)
-        PRyMthermo.f_numu_general = self._boltz.make_f_callable(f_numu, a, a_of_T_func)
-        PRyMthermo.f_numubar_general = self._boltz.make_f_callable(f_numubar, a, a_of_T_func)
-        PRyMthermo.f_nutau_general = self._boltz.make_f_callable(f_nutau, a, a_of_T_func)
-        PRyMthermo.f_nutaubar_general = self._boltz.make_f_callable(f_nutaubar, a, a_of_T_func)
+        # Stage F sprint 3h-b: pair-symmetric polyfit slope for the
+        # per_flavor clamp firing test (sterile pair excluded — the
+        # asymmetry there is the QKE source the cure is responding to,
+        # not a numerical artefact to be averaged out).
+        _pair_symm = getattr(PRyMini,
+                             "qke_phaseB_clamp_pair_symmetric", False)
+        _y_grid = self._boltz.y_grid
+
+        def _polyfit_slope(f_grid):
+            f_min = 1.0e-12
+            ty, tl = [], []
+            for i in range(len(_y_grid) - 1, -1, -1):
+                fi = f_grid[i]
+                if fi > f_min and fi < 1.0 - f_min:
+                    ty.append(_y_grid[i])
+                    tl.append(np.log(1.0/fi - 1.0))
+                    if len(ty) >= 10:
+                        break
+            if len(ty) < 2:
+                return None
+            return float(np.polyfit(np.array(ty), np.array(tl), 1)[0])
+
+        _pair_rule = getattr(PRyMini,
+                              "qke_phaseB_clamp_pair_symmetric_rule",
+                              "avg")
+
+        def _pair_avg(b1, b2):
+            if b1 is None or b2 is None:
+                return None
+            if _pair_rule == "min":
+                return min(b1, b2)
+            return 0.5 * (b1 + b2)
+
+        if _pair_symm:
+            _b_e_pair = _pair_avg(_polyfit_slope(f_nue),
+                                   _polyfit_slope(f_nuebar))
+            _b_mu_pair = _pair_avg(_polyfit_slope(f_numu),
+                                    _polyfit_slope(f_numubar))
+            _b_tau_pair = _pair_avg(_polyfit_slope(f_nutau),
+                                     _polyfit_slope(f_nutaubar))
+        else:
+            _b_e_pair = _b_mu_pair = _b_tau_pair = None
+
+        PRyMthermo.f_nue_general = self._boltz.make_f_callable(
+            f_nue, a, a_of_T_func, tail_b_for_test=_b_e_pair)
+        PRyMthermo.f_nuebar_general = self._boltz.make_f_callable(
+            f_nuebar, a, a_of_T_func, tail_b_for_test=_b_e_pair)
+        PRyMthermo.f_numu_general = self._boltz.make_f_callable(
+            f_numu, a, a_of_T_func, tail_b_for_test=_b_mu_pair)
+        PRyMthermo.f_numubar_general = self._boltz.make_f_callable(
+            f_numubar, a, a_of_T_func, tail_b_for_test=_b_mu_pair)
+        PRyMthermo.f_nutau_general = self._boltz.make_f_callable(
+            f_nutau, a, a_of_T_func, tail_b_for_test=_b_tau_pair)
+        PRyMthermo.f_nutaubar_general = self._boltz.make_f_callable(
+            f_nutaubar, a, a_of_T_func, tail_b_for_test=_b_tau_pair)
 
         if self.n_flavor == 4:
             f_nus = rho_all[0, 3].copy()

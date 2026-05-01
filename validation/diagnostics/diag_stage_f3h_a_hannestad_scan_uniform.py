@@ -59,7 +59,17 @@ SBBN_NEFF_REFERENCE = 3.044
 ACTIVE_NEFF_MAX = 4.0
 ACTIVE_YP_MAX = 0.255
 
-# Saviano 2013 +-0.005 expected sterile-induced Yp shift bracket.
+# Saviano 2013 (arXiv:1302.1200) Table I sterile-induced Yp shift
+# range. NOTE (sprint 3h-e audit): this range was extracted at
+# Saviano's published parameter point (sin^2 theta ~ 0.025,
+# delta m^2 = 0.89 eV^2, |xi| >= 1e-3 lepton asymmetry, NH).
+# Hannestad benchmark points A/B/C/Global-NH live at L=0; Point C
+# also at sin^2 theta ~ 2.5e-5 (three orders of magnitude narrower
+# than Saviano). Saviano makes NO claim at L=0 NH narrow mixing.
+# These constants are kept only for backward-compatibility with the
+# .out summary labelling; the POSITIVE/NEGATIVE labels in the
+# summary are therefore purely descriptive (sign of the project's
+# Yp shift), NOT a literature consistency check.
 LIT_YP_SHIFT_LO = 0.001
 LIT_YP_SHIFT_HI = 0.012
 

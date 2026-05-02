@@ -1,0 +1,26 @@
+==============================================================================================================
+Stage F sprint 1b' Phase 2 Saviano calibration with Phase 0 RE-ENABLED
+  Saviano-regime mixing: sin^2 theta_es = 0.025, sin^2 theta_mu_s = 0.023, delta m^2_st = 0.89 eV^2, NH
+  Live cure (3h-b' OR): post-Phase-B clamp + pair_symmetric=True, rule='min'
+  Phase 0 ENABLED (qke_phase0_flag=True); T_phase0_start=100, T_boltz_start=5.0 (sprint-pre-19 standard split)
+  Production grid: y_max=100, Ny=100, n_B=12000 (Phase B), n_B_phase0=auto
+  Phase 1 (Phase 0 OFF) baseline available for direct comparison
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 1b' Phase 2 Saviano calibration summary
+==============================================================================================================
+  config                        Phase1 Yp  Phase2 Yp   Sav. Yp    P2 dYp  Sav. dYp     P2-P1    P2-Sav        verdict
+  S1: xi_e=+xi_mu=+1e-3           0.24830    0.25053    0.2570  +0.00353   +0.0100  +0.00223  -0.00647   OUT OF 0.005
+  S2: xi_e=+xi_mu=+1e-2           0.25094    0.25033    0.2560  +0.00333   +0.0090  -0.00061  -0.00567   OUT OF 0.005
+  S3: xi_e=-xi_mu=+1e-3           0.25095    0.24904    0.2590  +0.00204   +0.0120  -0.00191  -0.00996   OUT OF 0.005
+
+  Phase 2 verdict: MIXED Phase-0 effect (some points moved toward, others away)
+    Phase 0 enabling is point-dependent. Suggests resonance crossings at different L produce different effects in PRyM than in Saviano. Diagnostic: inspect per-point dYp_vs_phase1 and Neff/dNss changes.
+
+  Per-point details (Neff, sterile-sector data):
+    S1: xi_e=+xi_mu=+1e-3         Neff=3.2223  D/H=2.5231  sum_ss(raw)=5.8333  dNss=1.2371  (10616s)
+    S2: xi_e=+xi_mu=+1e-2         Neff=3.2022  D/H=2.5131  sum_ss(raw)=5.6623  dNss=1.1013  (10305s)
+    S3: xi_e=-xi_mu=+1e-3         Neff=3.1097  D/H=2.4838  sum_ss(raw)=6.0338  dNss=1.2094  (10781s)
+
+  Total wall-clock: 31704s (528.4 min)

@@ -1,0 +1,26 @@
+==============================================================================================================
+Stage F sprint 1b' Saviano-2013 (arXiv:1302.1200) calibration scan
+  Saviano-regime mixing: sin^2 theta_es = 0.025, sin^2 theta_mu_s = 0.023, delta m^2_st = 0.89 eV^2, NH
+  Live cure (3h-b' OR): post-Phase-B clamp + pair_symmetric=True, rule='min'
+  Phase 0 disabled (closure config); sprint 1b'-Phase 2 will re-enable Phase 0 if Phase 1 fails calibration
+  Production grid: y_max=100, Ny=100, n_B=12000, T_boltz_start=100, T_start=105 MeV
+  Saviano predictions from Table I; baseline Yp = 0.247 (PArthENoPE thermal SBBN per Saviano Sec. III, p.7)
+==============================================================================================================
+
+==============================================================================================================
+Stage F sprint 1b' Saviano calibration summary
+==============================================================================================================
+  config                          PRyM Yp   Saviano Yp   PRyM dYp   Sav. dYp   residual        verdict
+  S1: xi_e=+xi_mu=+1e-3           0.24830       0.2570   +0.00130    +0.0100   -0.00870   OUT OF 0.005
+  S2: xi_e=+xi_mu=+1e-2           0.25094       0.2560   +0.00394    +0.0090   -0.00506   OUT OF 0.005
+  S3: xi_e=-xi_mu=+1e-3           0.25095       0.2590   +0.00395    +0.0120   -0.00805   OUT OF 0.005
+
+  Saviano calibration verdict: FAILED Saviano calibration (0/3 within 0.005)
+    PRyMordial-nu does not reproduce Saviano Table I in Saviano's regime. Indicates either a real pipeline issue (possibly diagnosable now that we have published data to compare against) OR Phase 0 disabled is blocking the resonance physics that drives Saviano's asymmetry mechanism. Sprint 1b'-Phase 2 should re-enable Phase 0 (qke_phase0_flag=True) and re-test.
+
+  Per-point details (Neff, sterile-sector data):
+    S1: xi_e=+xi_mu=+1e-3         Neff=3.1487  D/H=2.4627  sum_ss(raw)=60.0893  dNss=0.9935  (4944s)
+    S2: xi_e=+xi_mu=+1e-2         Neff=3.0419  D/H=2.5320  sum_ss(raw)=57.0540  dNss=0.9825  (4727s)
+    S3: xi_e=-xi_mu=+1e-3         Neff=3.0686  D/H=2.5310  sum_ss(raw)=58.7542  dNss=0.9897  (4809s)
+
+  Total wall-clock: 14481s (241.4 min)
